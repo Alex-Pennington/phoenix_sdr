@@ -1,9 +1,11 @@
 /**
  * @file main.c
- * @brief Phoenix SDR test harness - I/Q capture with decimation to 48kHz
+ * @brief Phoenix SDR - I/Q capture with decimation to 48kHz
  * 
  * Records raw I/Q at 2 MSPS and also outputs decimated 48kHz complex
  * baseband suitable for modem input.
+ * 
+ * Usage: phoenix_sdr -f <freq_MHz> [-d <duration>] [-o <output>] [-g <gain>]
  */
 
 #include "phoenix_sdr.h"
@@ -24,17 +26,28 @@
 #endif
 
 /*============================================================================
- * Configuration
+ * Default Configuration
  *============================================================================*/
 
-#define RAW_FILENAME        "capture_raw.iqr"    /* Full rate I/Q */
-#define DECIM_FILENAME      "capture_48k.iqr"    /* Decimated I/Q */
-#define RECORD_DURATION_SEC 5
-#define CENTER_FREQ_HZ      7074000.0   /* 40m FT8 */
-#define SAMPLE_RATE_HZ      2000000.0
-#define BANDWIDTH_KHZ       200
-#define GAIN_REDUCTION_DB   40
-#define LNA_STATE           4
+#define DEFAULT_DURATION_SEC    5
+#define DEFAULT_GAIN_REDUCTION  40
+#define DEFAULT_OUTPUT_PREFIX   "capture"
+#define SAMPLE_RATE_HZ          2000000.0
+#define BANDWIDTH_KHZ           200
+#define LNA_STATE               4
+
+/* Frequency limits for RSP2 Pro */
+#define MIN_FREQ_MHZ    0.001
+#define MAX_FREQ_MHZ    2000.0
+
+/*============================================================================
+ * Runtime Configuration (from command line)
+ *============================================================================*/
+
+static double   g_center_freq_hz = 0.0;     /* Must be specified */
+static int      g_duration_sec = DEFAULT_DURATION_SEC;
+static int      g_gain_reduction = DEFAULT_GAIN_REDUCTION;
+static char     g_output_prefix[256] = DEFAULT_OUTPUT_PREFIX;
 
 /*============================================================================
  * Globals
@@ -51,6 +64,112 @@ static double g_sample_rate = SAMPLE_RATE_HZ;
 /* Decimator output buffer */
 static decim_complex_t g_decim_buffer[8192];
 static uint64_t g_decim_sample_count = 0;
+
+/* Output filenames (built from prefix) */
+static char g_raw_filename[512];
+static char g_decim_filename[512];
+
+/*============================================================================
+ * Usage / Help
+ *============================================================================*/
+
+static void print_usage(const char *progname) {
+    printf("Phoenix SDR - I/Q Recording for MIL-STD-188-110A Testing\n");
+    printf("Phoenix Nest LLC - https://github.com/Alex-Pennington/phoenix_sdr\n\n");
+    printf("Usage: %s -f <freq_MHz> [options]\n\n", progname);
+    printf("Required:\n");
+    printf("  -f, --freq <MHz>      Center frequency in MHz (e.g., 7.102, 14.100)\n\n");
+    printf("Optional:\n");
+    printf("  -d, --duration <sec>  Recording duration in seconds (default: %d)\n", DEFAULT_DURATION_SEC);
+    printf("  -o, --output <name>   Output filename prefix (default: \"%s\")\n", DEFAULT_OUTPUT_PREFIX);
+    printf("  -g, --gain <dB>       Gain reduction 20-59 dB (default: %d)\n", DEFAULT_GAIN_REDUCTION);
+    printf("  -h, --help            Show this help message\n\n");
+    printf("Output Files:\n");
+    printf("  <name>_raw.iqr        Full-rate I/Q at 2 MSPS\n");
+    printf("  <name>_48k.iqr        Decimated I/Q at 48 kHz (modem-ready)\n\n");
+    printf("Examples:\n");
+    printf("  %s -f 7.074                    # Record 5 sec at 7.074 MHz (40m FT8)\n", progname);
+    printf("  %s -f 14.074 -d 30             # Record 30 sec at 14.074 MHz (20m FT8)\n", progname);
+    printf("  %s -f 7.074 -o ft8_capture     # Custom output filename\n", progname);
+    printf("  %s -f 14.074 -g 30 -d 60       # Lower gain, 60 sec recording\n\n", progname);
+    printf("Frequency Range: %.3f - %.1f MHz (SDRplay RSP2 Pro)\n", MIN_FREQ_MHZ, MAX_FREQ_MHZ);
+}
+
+/*============================================================================
+ * Argument Parsing
+ *============================================================================*/
+
+static bool parse_arguments(int argc, char *argv[]) {
+    bool freq_specified = false;
+    
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            print_usage(argv[0]);
+            exit(0);
+        }
+        else if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--freq") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: -f requires a frequency value in MHz\n");
+                return false;
+            }
+            double freq_mhz = atof(argv[++i]);
+            if (freq_mhz < MIN_FREQ_MHZ || freq_mhz > MAX_FREQ_MHZ) {
+                fprintf(stderr, "Error: Frequency %.6f MHz out of range (%.3f - %.1f MHz)\n",
+                        freq_mhz, MIN_FREQ_MHZ, MAX_FREQ_MHZ);
+                return false;
+            }
+            g_center_freq_hz = freq_mhz * 1e6;
+            freq_specified = true;
+        }
+        else if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--duration") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: -d requires a duration value in seconds\n");
+                return false;
+            }
+            g_duration_sec = atoi(argv[++i]);
+            if (g_duration_sec < 1 || g_duration_sec > 3600) {
+                fprintf(stderr, "Error: Duration must be 1-3600 seconds\n");
+                return false;
+            }
+        }
+        else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--output") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: -o requires an output filename prefix\n");
+                return false;
+            }
+            strncpy(g_output_prefix, argv[++i], sizeof(g_output_prefix) - 1);
+            g_output_prefix[sizeof(g_output_prefix) - 1] = '\0';
+        }
+        else if (strcmp(argv[i], "-g") == 0 || strcmp(argv[i], "--gain") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: -g requires a gain reduction value in dB\n");
+                return false;
+            }
+            g_gain_reduction = atoi(argv[++i]);
+            if (g_gain_reduction < 20 || g_gain_reduction > 59) {
+                fprintf(stderr, "Error: Gain reduction must be 20-59 dB\n");
+                return false;
+            }
+        }
+        else {
+            fprintf(stderr, "Error: Unknown option '%s'\n", argv[i]);
+            fprintf(stderr, "Use -h for help\n");
+            return false;
+        }
+    }
+    
+    if (!freq_specified) {
+        fprintf(stderr, "Error: Frequency is required. Use -f <MHz>\n");
+        fprintf(stderr, "Use -h for help\n");
+        return false;
+    }
+    
+    /* Build output filenames from prefix */
+    snprintf(g_raw_filename, sizeof(g_raw_filename), "%s_raw.iqr", g_output_prefix);
+    snprintf(g_decim_filename, sizeof(g_decim_filename), "%s_48k.iqr", g_output_prefix);
+    
+    return true;
+}
 
 /*============================================================================
  * Signal Handler
@@ -132,16 +251,17 @@ static void on_samples(
     
     /* Check if we've recorded enough */
     double duration = (double)g_sample_count / g_sample_rate;
-    if (duration >= RECORD_DURATION_SEC) {
+    if (duration >= g_duration_sec) {
         g_running = false;
     }
     
     /* Print progress every ~0.5 seconds */
     if (g_callback_count % 50 == 0) {
-        printf("Recording: %.1f / %d sec  (raw: %llu, decim: %llu samples)\n", 
-               duration, RECORD_DURATION_SEC,
+        printf("Recording: %.1f / %d sec  (raw: %llu, decim: %llu samples)\r", 
+               duration, g_duration_sec,
                (unsigned long long)g_sample_count,
                (unsigned long long)g_decim_sample_count);
+        fflush(stdout);
     }
 }
 
@@ -164,8 +284,6 @@ static void on_overload(bool overloaded, void *user_ctx) {
  *============================================================================*/
 
 int main(int argc, char *argv[]) {
-    (void)argc; (void)argv;
-    
     psdr_error_t err;
     iqr_error_t iqr_err;
     decim_error_t decim_err;
@@ -173,6 +291,11 @@ int main(int argc, char *argv[]) {
     size_t num_devices = 0;
     psdr_context_t *ctx = NULL;
     psdr_config_t config;
+    
+    /* Parse command line */
+    if (!parse_arguments(argc, argv)) {
+        return 1;
+    }
     
     printf("===========================================\n");
     printf("Phoenix SDR - I/Q Recording with Decimation\n");
@@ -182,7 +305,7 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, signal_handler);
     
     /* Create decimator */
-    printf("Initializing decimator (2 MSPS → 48 kHz)...\n");
+    printf("Initializing decimator (2 MSPS -> 48 kHz)...\n");
     decim_err = decim_create(&g_decimator, SAMPLE_RATE_HZ, 48000.0);
     if (decim_err != DECIM_OK) {
         fprintf(stderr, "Failed to create decimator: %s\n", decim_strerror(decim_err));
@@ -218,25 +341,25 @@ int main(int argc, char *argv[]) {
     
     /* Configure for HF narrowband */
     psdr_config_defaults(&config);
-    config.freq_hz = CENTER_FREQ_HZ;
+    config.freq_hz = g_center_freq_hz;
     config.sample_rate_hz = SAMPLE_RATE_HZ;
     config.bandwidth = BANDWIDTH_KHZ;
     config.agc_mode = PSDR_AGC_DISABLED;
-    config.gain_reduction = GAIN_REDUCTION_DB;
+    config.gain_reduction = g_gain_reduction;
     config.lna_state = LNA_STATE;
     
     g_sample_rate = config.sample_rate_hz;
     
     printf("Configuration:\n");
-    printf("  Frequency:    %.3f MHz\n", config.freq_hz / 1e6);
+    printf("  Frequency:    %.6f MHz\n", config.freq_hz / 1e6);
     printf("  Sample Rate:  %.3f MSPS (raw)\n", config.sample_rate_hz / 1e6);
     printf("  Output Rate:  48.000 kHz (decimated)\n");
     printf("  Bandwidth:    %d kHz\n", config.bandwidth);
     printf("  Gain Red:     %d dB\n", config.gain_reduction);
     printf("  LNA State:    %d\n", config.lna_state);
-    printf("  Duration:     %d seconds\n", RECORD_DURATION_SEC);
-    printf("  Raw output:   %s\n", RAW_FILENAME);
-    printf("  Decim output: %s\n", DECIM_FILENAME);
+    printf("  Duration:     %d seconds\n", g_duration_sec);
+    printf("  Raw output:   %s\n", g_raw_filename);
+    printf("  Decim output: %s\n", g_decim_filename);
     printf("\n");
     
     err = psdr_configure(ctx, &config);
@@ -268,7 +391,7 @@ int main(int argc, char *argv[]) {
     
     /* Start raw recording */
     iqr_err = iqr_start(g_raw_recorder, 
-                        RAW_FILENAME,
+                        g_raw_filename,
                         config.sample_rate_hz,
                         config.freq_hz,
                         config.bandwidth,
@@ -285,7 +408,7 @@ int main(int argc, char *argv[]) {
     
     /* Start decimated recording */
     iqr_err = iqr_start(g_decim_recorder, 
-                        DECIM_FILENAME,
+                        g_decim_filename,
                         48000.0,              /* Decimated rate */
                         config.freq_hz,
                         config.bandwidth,
@@ -310,7 +433,7 @@ int main(int argc, char *argv[]) {
     };
     
     /* Start streaming */
-    printf("Recording %d seconds of I/Q data...\n\n", RECORD_DURATION_SEC);
+    printf("Recording %d seconds of I/Q data...\n\n", g_duration_sec);
     err = psdr_start(ctx, &callbacks);
     if (err != PSDR_OK) {
         fprintf(stderr, "Start failed: %s\n", psdr_strerror(err));
@@ -329,7 +452,7 @@ int main(int argc, char *argv[]) {
     }
     
     /* Stop streaming */
-    printf("\nStopping stream...\n");
+    printf("\n\nStopping stream...\n");
     psdr_stop(ctx);
     
     /* Stop recordings */
@@ -342,14 +465,14 @@ int main(int argc, char *argv[]) {
     printf("Recording Complete\n");
     printf("===========================================\n");
     printf("\nRaw recording (2 MSPS):\n");
-    printf("  File:          %s\n", RAW_FILENAME);
+    printf("  File:          %s\n", g_raw_filename);
     printf("  Samples:       %llu\n", (unsigned long long)g_sample_count);
     printf("  Duration:      %.2f seconds\n", (double)g_sample_count / g_sample_rate);
     printf("  Size:          %.2f MB\n", 
            (64.0 + g_sample_count * 4.0) / (1024.0 * 1024.0));
     
     printf("\nDecimated recording (48 kHz):\n");
-    printf("  File:          %s\n", DECIM_FILENAME);
+    printf("  File:          %s\n", g_decim_filename);
     printf("  Samples:       %llu\n", (unsigned long long)g_decim_sample_count);
     printf("  Duration:      %.2f seconds\n", (double)g_decim_sample_count / 48000.0);
     printf("  Size:          %.2f MB\n", 

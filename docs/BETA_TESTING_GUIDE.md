@@ -57,7 +57,7 @@ Option B: Build from source (see BUILD.md)
 1. Set up MSDMT to transmit on a test frequency
 2. Run phoenix_sdr to capture:
    ```
-   phoenix_sdr.exe --freq 7102000 --output capture.iqr --duration 30
+   phoenix_sdr.exe -f 7.074 -o capture -d 30
    ```
 3. This captures 30 seconds of I/Q data at the specified frequency
 
@@ -66,7 +66,7 @@ Option B: Build from source (see BUILD.md)
 1. Tune to a known 110A frequency (MARS nets, etc.)
 2. Capture when you hear activity:
    ```
-   phoenix_sdr.exe --freq 14100000 --output ota_capture.iqr --duration 60
+   phoenix_sdr.exe -f 14.074 -o ota_capture -d 60
    ```
 
 ### Step 4: Decode the Capture
@@ -109,7 +109,7 @@ Phoenix Nest supports all 12 MIL-STD-188-110A modes:
 | Parameter | Value | Notes |
 |-----------|-------|-------|
 | Sample Rate | 2 MSPS | Required |
-| Center Frequency | Your target freq | e.g., 7102000 for 7.102 MHz |
+| Center Frequency | Your target freq | e.g., 7074000 for 7.074 MHz |
 | Bandwidth | 200 kHz | Narrowest available |
 | IF Mode | Zero IF | Baseband I/Q |
 | AGC | OFF | Manual gain recommended |
@@ -120,9 +120,8 @@ Phoenix Nest supports all 12 MIL-STD-188-110A modes:
 
 | Band | Frequency | Typical Use |
 |------|-----------|-------------|
-| 40m | 7.102 MHz | ALE/data |
-| 20m | 14.100 MHz | MARS |
-| 20m | 14.236 MHz | SHARES |
+| 40m | 7.074 MHz | FT8 (test signals) |
+| 20m | 14.074 MHz | FT8 (test signals) |
 
 ---
 

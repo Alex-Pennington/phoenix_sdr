@@ -9,12 +9,13 @@ SDRplay RSP2 Pro integration library for Phoenix Nest MARS Suite MIL-STD-188-110
 | SDR Interface | ✅ Working - tested with RSP2 Pro |
 | I/Q Recording | ✅ Working - .iqr format verified |
 | I/Q Playback | ✅ Working |
-| Decimator | ⚠️ WIP - code written, not tested |
-| Modem Integration | 📋 Design doc ready, awaiting team input |
+| Decimator | ✅ Working - 2 MSPS → 48 kHz |
+| Modem Integration | ✅ Ready - IQSource validated (31/31 tests) |
 
 ## Documentation
 
-- **[docs/IQ_INPUT_DESIGN.md](docs/IQ_INPUT_DESIGN.md)** - Design document for modem team describing I/Q input interface
+- **[docs/IQ_INPUT_DESIGN.md](docs/IQ_INPUT_DESIGN.md)** - Design document for modem integration
+- **[docs/BETA_TESTING_GUIDE.md](docs/BETA_TESTING_GUIDE.md)** - Guide for beta testers
 
 ## Requirements
 
@@ -36,28 +37,6 @@ SDRplay RSP2 Pro integration library for Phoenix Nest MARS Suite MIL-STD-188-110
 .\build.ps1 -Clean
 ```
 
-## Project Structure
-
-```
-phoenix_sdr/
-├── build.ps1              # PowerShell build script
-├── README.md              # This file
-├── docs/
-│   └── IQ_INPUT_DESIGN.md # Modem integration design doc
-├── include/
-│   ├── phoenix_sdr.h      # SDR device API
-│   ├── iq_recorder.h      # I/Q recording API
-│   └── decimator.h        # Sample rate conversion (WIP)
-├── src/
-│   ├── main.c             # Test harness
-│   ├── sdr_device.c       # Device enumeration, open, close
-│   ├── sdr_stream.c       # Streaming, callbacks, runtime updates
-│   ├── iq_recorder.c      # I/Q file recording/playback
-│   └── decimator.c        # 2 MSPS → 48 kHz conversion (WIP)
-└── test/
-    └── (future unit tests)
-```
-
 ---
 
 ## Quick Start
@@ -66,13 +45,64 @@ phoenix_sdr/
 # Build
 .\build.ps1
 
-# Run - captures 5 seconds of I/Q at 7.074 MHz (40m FT8)
-.\bin\phoenix_sdr.exe
+# Run - FREQUENCY IS REQUIRED
+.\bin\phoenix_sdr.exe -f 7.074
+
+# Show help
+.\bin\phoenix_sdr.exe -h
 ```
 
-Output:
-- `capture_raw.iqr` - Full rate 2 MSPS recording
-- `capture_48k.iqr` - Decimated 48 kHz recording (when decimator is working)
+## Command-Line Usage
+
+```
+Usage: phoenix_sdr -f <freq_MHz> [options]
+
+Required:
+  -f, --freq <MHz>      Center frequency in MHz (e.g., 7.074, 14.074)
+
+Optional:
+  -d, --duration <sec>  Recording duration in seconds (default: 5)
+  -o, --output <name>   Output filename prefix (default: "capture")
+  -g, --gain <dB>       Gain reduction 20-59 dB (default: 40)
+  -h, --help            Show this help message
+
+Output Files:
+  <name>_raw.iqr        Full-rate I/Q at 2 MSPS
+  <name>_48k.iqr        Decimated I/Q at 48 kHz (modem-ready)
+
+Examples:
+  phoenix_sdr -f 7.074                    # Record 5 sec at 7.074 MHz (40m FT8)
+  phoenix_sdr -f 14.074 -d 30             # Record 30 sec at 14.074 MHz (20m FT8)
+  phoenix_sdr -f 7.074 -o ft8_capture     # Custom output filename
+  phoenix_sdr -f 14.074 -g 30 -d 60       # Lower gain, 60 sec recording
+
+Frequency Range: 0.001 - 2000 MHz (SDRplay RSP2 Pro)
+```
+
+---
+
+## Project Structure
+
+```
+phoenix_sdr/
+├── build.ps1              # PowerShell build script
+├── README.md              # This file
+├── docs/
+│   ├── IQ_INPUT_DESIGN.md # Modem integration design doc
+│   └── BETA_TESTING_GUIDE.md # Beta testing instructions
+├── include/
+│   ├── phoenix_sdr.h      # SDR device API
+│   ├── iq_recorder.h      # I/Q recording API
+│   └── decimator.h        # Sample rate conversion
+├── src/
+│   ├── main.c             # Command-line application
+│   ├── sdr_device.c       # Device enumeration, open, close
+│   ├── sdr_stream.c       # Streaming, callbacks, runtime updates
+│   ├── iq_recorder.c      # I/Q file recording/playback
+│   └── decimator.c        # 2 MSPS → 48 kHz conversion
+└── test/
+    └── (future unit tests)
+```
 
 ---
 
@@ -93,7 +123,7 @@ psdr_open(&ctx, 0);
 // Configure for HF narrowband
 psdr_config_t config;
 psdr_config_defaults(&config);
-config.freq_hz = 7074000.0;  // 40m FT8
+config.freq_hz = 7074000.0;  // 7.074 MHz (40m FT8)
 psdr_configure(ctx, &config);
 
 // Set up callbacks
@@ -156,7 +186,7 @@ iqr_create(&rec, 0);  // 0 = default 64K sample buffer
 
 // Start recording
 iqr_start(rec, 
-    "capture_40m.iqr",    // Output filename
+    "capture.iqr",        // Output filename
     2000000.0,            // Sample rate Hz
     7074000.0,            // Center frequency Hz
     200,                  // Bandwidth kHz
@@ -183,7 +213,7 @@ iqr_destroy(rec);
 
 // Open recording
 iqr_reader_t *reader;
-iqr_open(&reader, "capture_40m.iqr");
+iqr_open(&reader, "capture.iqr");
 
 // Get metadata
 const iqr_header_t *hdr = iqr_get_header(reader);
@@ -229,7 +259,7 @@ Each sample is a signed 16-bit integer, little-endian. File size = 64 + (sample_
 
 ---
 
-## Decimator (WIP)
+## Decimator
 
 The decimator converts 2 MSPS SDR output to 48 kHz for modem input:
 
@@ -238,7 +268,7 @@ The decimator converts 2 MSPS SDR output to 48 kHz for modem input:
      (÷8)          (÷5)        (48/50 resample)
 ```
 
-**Status:** Code written but not yet tested. See `include/decimator.h` and `src/decimator.c`.
+This is handled automatically when you run `phoenix_sdr` - both raw and decimated files are produced.
 
 ---
 
@@ -251,6 +281,8 @@ See **[docs/IQ_INPUT_DESIGN.md](docs/IQ_INPUT_DESIGN.md)** for the full design d
 - IQSource (new direct I/Q path)
 - Format conversion and decimation details
 - Integration options (callback, file, TCP)
+
+The modem's I/Q pipeline has been validated with 31/31 tests passing. See the [pennington_m110a_demod](https://github.com/Alex-Pennington/pennington_m110a_demod) repository for modem-side integration.
 
 ---
 

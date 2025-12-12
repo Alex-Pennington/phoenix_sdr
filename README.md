@@ -2,10 +2,24 @@
 
 SDRplay RSP2 Pro integration library for Phoenix Nest MARS Suite MIL-STD-188-110A modem testing.
 
+## Status
+
+| Component | Status |
+|-----------|--------|
+| SDR Interface | ✅ Working - tested with RSP2 Pro |
+| I/Q Recording | ✅ Working - .iqr format verified |
+| I/Q Playback | ✅ Working |
+| Decimator | ⚠️ WIP - code written, not tested |
+| Modem Integration | 📋 Design doc ready, awaiting team input |
+
+## Documentation
+
+- **[docs/IQ_INPUT_DESIGN.md](docs/IQ_INPUT_DESIGN.md)** - Design document for modem team describing I/Q input interface
+
 ## Requirements
 
 - Windows 10/11 (64-bit)
-- Visual Studio 2019+ Build Tools (or MinGW-w64)
+- MinGW-w64 (via winget) or Visual Studio 2019+ Build Tools
 - SDRplay API 3.x installed: https://www.sdrplay.com/api/
 - SDRplay RSP2 Pro hardware
 
@@ -20,28 +34,45 @@ SDRplay RSP2 Pro integration library for Phoenix Nest MARS Suite MIL-STD-188-110
 
 # Clean
 .\build.ps1 -Clean
-
-# Build and run tests
-.\build.ps1 -Target test
 ```
 
 ## Project Structure
 
 ```
 phoenix_sdr/
-├── build.ps1              # PowerShell build script (MSVC/MinGW)
+├── build.ps1              # PowerShell build script
 ├── README.md              # This file
+├── docs/
+│   └── IQ_INPUT_DESIGN.md # Modem integration design doc
 ├── include/
 │   ├── phoenix_sdr.h      # SDR device API
-│   └── iq_recorder.h      # I/Q recording API
+│   ├── iq_recorder.h      # I/Q recording API
+│   └── decimator.h        # Sample rate conversion (WIP)
 ├── src/
 │   ├── main.c             # Test harness
 │   ├── sdr_device.c       # Device enumeration, open, close
 │   ├── sdr_stream.c       # Streaming, callbacks, runtime updates
-│   └── iq_recorder.c      # I/Q file recording/playback
+│   ├── iq_recorder.c      # I/Q file recording/playback
+│   └── decimator.c        # 2 MSPS → 48 kHz conversion (WIP)
 └── test/
     └── (future unit tests)
 ```
+
+---
+
+## Quick Start
+
+```powershell
+# Build
+.\build.ps1
+
+# Run - captures 5 seconds of I/Q at 7.074 MHz (40m FT8)
+.\bin\phoenix_sdr.exe
+```
+
+Output:
+- `capture_raw.iqr` - Full rate 2 MSPS recording
+- `capture_48k.iqr` - Decimated 48 kHz recording (when decimator is working)
 
 ---
 
@@ -198,13 +229,28 @@ Each sample is a signed 16-bit integer, little-endian. File size = 64 + (sample_
 
 ---
 
-## Typical Workflow
+## Decimator (WIP)
 
-1. **Live Capture**: Connect RSP2 Pro, run test harness with recording enabled
-2. **Collect Samples**: Capture various propagation conditions, signal levels
-3. **Offline Development**: Play back recordings through modem code
-4. **Regression Testing**: Re-run saved captures after code changes
-5. **Integration**: Feed live I/Q stream to modem receive chain
+The decimator converts 2 MSPS SDR output to 48 kHz for modem input:
+
+```
+2,000,000 Hz → 250,000 Hz → 50,000 Hz → 48,000 Hz
+     (÷8)          (÷5)        (48/50 resample)
+```
+
+**Status:** Code written but not yet tested. See `include/decimator.h` and `src/decimator.c`.
+
+---
+
+## Modem Integration
+
+See **[docs/IQ_INPUT_DESIGN.md](docs/IQ_INPUT_DESIGN.md)** for the full design document describing:
+
+- SampleSource abstraction for modem input
+- AudioSource (existing 48kHz path with Hilbert transform)
+- IQSource (new direct I/Q path)
+- Format conversion and decimation details
+- Integration options (callback, file, TCP)
 
 ---
 

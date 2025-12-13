@@ -260,23 +260,16 @@ static float ma_process(float x) {
 }
 
 /*============================================================================
- * Edge Detection State
+ * Edge Detection State (FLDIGI-style: just track max derivative position)
  *============================================================================*/
 
 static float g_prev_envelope = 0.0f;             /* Previous smoothed envelope for derivative */
 static float g_noise_floor = 0.0f;               /* Running estimate of noise floor */
-static volatile float g_edge_threshold = 0.000005f; /* Tunable edge threshold ([ ] keys) - start at 5e-6 */
-static volatile int g_tick_sample_pos = -1;      /* Sample position where tick edge detected (-1 = none) */
-static volatile bool g_tick_detected = false;    /* Flag: tick found this second */
-static volatile float g_tick_derivative = 0.0f;  /* Derivative value at detection (for debug) */
-static volatile float g_max_derivative = 0.0f;   /* Max derivative seen this second (for debug) */
+static volatile float g_max_derivative = 0.0f;   /* Max derivative seen this second */
 static volatile float g_envelope_at_max_deriv = 0.0f; /* Envelope when max derivative occurred */
 static volatile int g_max_deriv_sample_pos = -1;     /* Sample position of max derivative */
 
 /* Display copies - saved at second boundary before reset */
-static int g_tick_sample_pos_display = -1;
-static bool g_tick_detected_display = false;
-static float g_tick_derivative_display = 0.0f;
 static float g_max_derivative_display = 0.0f;
 static float g_envelope_at_max_deriv_display = 0.0f;
 static int g_max_deriv_sample_pos_display = -1;
@@ -336,10 +329,11 @@ static void on_samples(
 
     if (!g_scanning) return;
 
-    /* Check for GPS resync from main thread - apply BEFORE processing */
+    /* Check for GPS resync from main thread - adjusts timing only */
     if (g_resync_pending) {
         g_samples_in_second = g_resync_value;
         g_resync_pending = false;
+        /* Note: per-second reset happens when sample count reaches g_samples_per_second */
     }
 
     /* DEBUG: Track raw sample range */
@@ -377,7 +371,7 @@ static void on_samples(
 
         float energy = filtered * filtered;  /* Power */
         g_debug_sample_count++;
-        
+
         /* Moving average smoothing for edge detection */
         float envelope_smoothed = ma_process(fabsf(filtered));
 
@@ -396,48 +390,38 @@ static void on_samples(
             g_noise_energy_count++;
             if (energy > g_noise_energy_peak) g_noise_energy_peak = energy;
         }
-        
+
         /* Dump mode: write sample data for one second */
         if (g_dump_mode && g_dump_file && g_seconds_measured == g_dump_second) {
             fprintf(g_dump_file, "%d,%.6f,%.6f,%.9f,%.9f\n",
                     sample_pos, g_decim_buffer[i].i, g_decim_buffer[i].q, mag, filtered);
         }
-        
+
         /* Interactive mode: edge detection + bucket visualization */
         if (g_interactive_mode) {
             /* Apply PPS offset to sample position */
             int adjusted_pos = sample_pos + MS_TO_SAMPLES(g_pps_offset_ms);
             if (adjusted_pos < 0) adjusted_pos += g_samples_per_second;
             if (adjusted_pos >= g_samples_per_second) adjusted_pos -= g_samples_per_second;
-            
+
             /* Edge detection: look for sharp rise in smoothed envelope */
             float derivative = envelope_smoothed - g_prev_envelope;
             g_prev_envelope = envelope_smoothed;
-            
+
             /* Track max derivative for debug */
             if (derivative > g_max_derivative) {
                 g_max_derivative = derivative;
                 g_envelope_at_max_deriv = envelope_smoothed;
                 g_max_deriv_sample_pos = adjusted_pos;
             }
-            
-            /* Update noise floor estimate from noise window (slow IIR) */
-            if (adjusted_pos >= MS_TO_SAMPLES(200) && adjusted_pos < MS_TO_SAMPLES(800)) {
-                /* In noise window - update noise floor with slow decay */
-                g_noise_floor = 0.999f * g_noise_floor + 0.001f * envelope_smoothed;
-            }
-            
-            /* Edge detection: derivative spike above threshold + envelope above noise */
-            /* Only detect in first 100ms of second (tick window) */
-            if (!g_tick_detected && adjusted_pos < MS_TO_SAMPLES(100)) {
-                if (derivative > g_edge_threshold && envelope_smoothed > g_noise_floor * 3.0f) {
-                    /* Found rising edge - record position */
-                    g_tick_sample_pos = adjusted_pos;
-                    g_tick_detected = true;
-                    g_tick_derivative = derivative;
-                }
-            }
-            
+
+            /* NOTE: Noise floor is now calculated from buckets at second boundary */
+            /* Old IIR method removed - was tracking wrong window due to PPS offset */
+
+            /* FLDIGI-style: No gating - max derivative position IS the tick position */
+            /* We already track g_max_derivative and g_max_deriv_sample_pos above */
+            /* Human identifies pattern visually from E position each second */
+
             /* Still fill buckets for visualization */
             int bucket = ((adjusted_pos % g_samples_per_second) * NUM_BUCKETS) / g_samples_per_second;
             if (bucket >= 0 && bucket < NUM_BUCKETS) {
@@ -447,6 +431,34 @@ static void on_samples(
         }
 
         g_samples_in_second++;
+
+        /* Detect second boundary by sample count - works in BOTH GPS and WWV modes */
+        if (g_samples_in_second >= g_samples_per_second) {
+            /* Save values for display BEFORE reset */
+            g_max_derivative_display = g_max_derivative;
+            g_envelope_at_max_deriv_display = g_envelope_at_max_deriv;
+            g_max_deriv_sample_pos_display = g_max_deriv_sample_pos;
+
+            /* Also save bucket data for display */
+            for (int b = 0; b < NUM_BUCKETS; b++) {
+                if (g_bucket_count[b] > 0) {
+                    g_bucket_display[b] = g_bucket_energy[b] / g_bucket_count[b];
+                } else {
+                    g_bucket_display[b] = 0.0;
+                }
+                g_bucket_energy[b] = 0.0;
+                g_bucket_count[b] = 0;
+            }
+
+            /* Reset for new second */
+            g_samples_in_second = 0;
+            g_max_derivative = 0.0f;
+            g_envelope_at_max_deriv = 0.0f;
+            g_max_deriv_sample_pos = -1;
+
+            /* Signal that new data is ready */
+            g_bucket_ready = true;
+        }
 
         /* NO WRAP HERE - GPS resync is the sole time authority */
     }
@@ -545,7 +557,7 @@ static int scan_frequency(psdr_context_t *ctx, double freq_mhz, int scan_seconds
 
     /* Reset detection state */
     /* DC blocking removed - bandpass filter rejects DC naturally */
-    biquad_init_bp(&g_bp_1000hz, (float)DECIMATED_RATE_HZ, 1000.0f, 5.0f);  /* Q=5, wider filter */
+    biquad_init_bp(&g_bp_1000hz, (float)DECIMATED_RATE_HZ, 1000.0f, 2.0f);  /* Q=2, BW=500Hz, faster edge response */
     g_tick_energy_sum = 0.0;
     g_tick_energy_peak = 0.0;
     g_tick_energy_count = 0;
@@ -636,14 +648,14 @@ static int scan_frequency(psdr_context_t *ctx, double freq_mhz, int scan_seconds
                     g_tick_peak[g_seconds_measured] = g_tick_energy_peak;
                     g_noise_energy[g_seconds_measured] = noise_avg;
                     g_noise_peak[g_seconds_measured] = g_noise_energy_peak;
-                    
+
                     /* DEBUG: Show per-second results with PEAK SNR */
                     double sec_snr_avg = (noise_avg > 1e-12) ? 10.0 * log10(tick_avg / noise_avg) : 0.0;
                     double sec_snr_peak = (g_noise_energy_peak > 1e-12) ? 10.0 * log10(g_tick_energy_peak / g_noise_energy_peak) : 0.0;
                     printf("\n    [sec %d: avgSNR=%+.1fdB peakSNR=%+.1fdB tick_pk=%.2e noise_pk=%.2e ms=%d]",
                            g_seconds_measured, sec_snr_avg, sec_snr_peak,
                            g_tick_energy_peak, g_noise_energy_peak, gps.millisecond);
-                    
+
                     g_seconds_measured++;
                 }
 
@@ -735,30 +747,22 @@ static void interactive_reset_buckets(void) {
         g_bucket_energy[i] = 0.0;
         g_bucket_count[i] = 0;
     }
-    /* Reset edge detection for new second */
-    g_tick_detected = false;
-    g_tick_sample_pos = -1;
-    g_tick_derivative = 0.0f;
-    g_max_derivative = 0.0f;
-    g_envelope_at_max_deriv = 0.0f;
-    g_max_deriv_sample_pos = -1;
+    /* Max derivative tracking is reset in callback when g_resync_pending is processed */
     /* Note: don't reset g_prev_envelope or g_noise_floor - they carry over */
 }
 
 static void interactive_display(void) {
-    /* Read edge detection results from DISPLAY copies (saved before reset) */
-    bool tick_found = g_tick_detected_display;
-    int tick_pos = g_tick_sample_pos_display;
-    float tick_deriv = g_tick_derivative_display;
-    float max_deriv = g_max_derivative_display;
-    
+    /* FLDIGI-style: Use max derivative position directly (no gating) */
+    int tick_pos = g_max_deriv_sample_pos_display;
+    float tick_deriv = g_max_derivative_display;
+
     /* Convert tick sample position to ms for display */
     int tick_ms = (tick_pos >= 0) ? (tick_pos * 1000 / g_samples_per_second) : -1;
-    
+
     /* Convert to bucket for visualization */
     int tick_bucket = (tick_pos >= 0) ? (tick_pos * NUM_BUCKETS / g_samples_per_second) : -1;
     if (tick_bucket >= NUM_BUCKETS) tick_bucket = NUM_BUCKETS - 1;
-    
+
     /* Also find max energy bucket (for comparison/fallback) */
     double max_energy = 0.0;
     int max_bucket = 0;
@@ -769,11 +773,11 @@ static void interactive_display(void) {
         }
     }
     if (max_energy < 1e-12) max_energy = 1e-12;
-    
+
     /* Voice window gate: seconds 0, 29-51, 59 are garbage */
     int gps_sec = g_last_gps.second;
     bool in_clean_window = (gps_sec >= 1 && gps_sec <= 28) || (gps_sec >= 52 && gps_sec <= 58);
-    
+
     /* Calculate SNR: bucket[0] vs average of buckets 4-19 */
     double noise_avg = 0.0;
     for (int i = 4; i < NUM_BUCKETS; i++) {
@@ -781,25 +785,25 @@ static void interactive_display(void) {
     }
     noise_avg /= (NUM_BUCKETS - 4);
     double snr = (noise_avg > 1e-12) ? 10.0 * log10(g_bucket_display[0] / noise_avg) : 0.0;
-    
-    /* WWV-disciplined mode: apply timing correction based on EDGE-DETECTED tick position */
-    if (g_wwv_disciplined && in_clean_window && tick_found) {
+
+    /* WWV-disciplined mode: apply timing correction based on max derivative position */
+    if (g_wwv_disciplined && in_clean_window && tick_pos >= 0) {
         /* We expect tick edge at sample 0. Calculate error in samples. */
         int error_samples = tick_pos;
         if (error_samples > g_samples_per_second / 2) {
             /* Wrapped - we're fast, not slow */
             error_samples = error_samples - g_samples_per_second;
         }
-        
+
         /* Convert to ms for display, apply correction */
         int error_ms = (error_samples * 1000) / g_samples_per_second;
-        
+
         /* NEGATIVE correction: if tick at sample N (we're late), subtract from counter */
         int correction_samples = -error_samples / WWV_CORRECTION_FACTOR;
         int correction_ms = (correction_samples * 1000) / g_samples_per_second;
-        
+
         printf("[WWV] pos=%dms err=%+dms corr=%+dms ", tick_ms, error_ms, correction_ms);
-        
+
         if (correction_samples != 0) {
             /* Apply correction via resync mechanism (thread-safe) */
             int current = g_samples_in_second;  /* Read once */
@@ -814,30 +818,29 @@ static void interactive_display(void) {
             printf("skip\n");
         }
     }
-    
-    /* Track hit rate - edge detection in first 10ms (bucket 0) counts as hit */
+
+    /* Track hit rate - max derivative in tick window (0-50ms) counts as hit */
     g_total_count++;
-    bool is_hit = tick_found && (tick_ms >= 0 && tick_ms < 10);  /* Within first 10ms */
+    bool is_hit = (tick_ms >= 0 && tick_ms < 50);  /* Max derivative in first 50ms */
     if (is_hit) g_hit_count++;
-    
+
     /* Track clean-window stats separately */
     if (in_clean_window) {
         g_clean_total_count++;
         if (is_hit) g_clean_hit_count++;
     }
-    
+
     int hit_pct = (g_total_count > 0) ? (100 * g_hit_count / g_total_count) : 0;
     int clean_pct = (g_clean_total_count > 0) ? (100 * g_clean_hit_count / g_clean_total_count) : 0;
-    
-    /* One-line output: show EDGE-detected position with ASCII bar */
-    /* E = edge detected position, # = max energy bucket (for comparison) */
-    printf("%.1fMHz %c G%d O%+4d T%.0e |", 
+
+    /* One-line output: show max derivative position with ASCII bar */
+    /* E = max derivative position, # = max energy bucket (for comparison) */
+    printf("%.1fMHz %c G%d O%+4d |",
            WWV_FREQS_MHZ[g_freq_index],
            g_wwv_disciplined ? 'W' : 'G',  /* Mode indicator */
            g_sdr_config.gain_reduction,
-           g_pps_offset_ms,
-           g_edge_threshold);
-    
+           g_pps_offset_ms);
+
     for (int i = 0; i < NUM_BUCKETS; i++) {
         if (tick_bucket >= 0 && i == tick_bucket) {
             printf("E");  /* Edge-detected position */
@@ -849,48 +852,32 @@ static void interactive_display(void) {
             printf("-");
         }
     }
-    
-    /* Show tick detection info */
-    if (tick_found) {
-        printf("| s%02d %c @%3dms d%.2e H%2d%% C%2d%%\n", 
-               gps_sec,
-               in_clean_window ? ' ' : 'V',
-               tick_ms,
-               tick_deriv,
-               hit_pct, clean_pct);
-    } else {
-        printf("| s%02d %c NO-EDGE mx%.2e H%2d%% C%2d%%\n", 
-               gps_sec,
-               in_clean_window ? ' ' : 'V',
-               max_deriv,
-               hit_pct, clean_pct);
-    }
-    
-    /* DIAGNOSTIC: Show all edge detection condition values */
-    int max_deriv_ms = (g_max_deriv_sample_pos_display >= 0) ? 
-                       (g_max_deriv_sample_pos_display * 1000 / g_samples_per_second) : -1;
-    float nf3 = g_noise_floor_display * 3.0f;
-    bool deriv_pass = (max_deriv > g_edge_threshold);
-    bool env_pass = (g_envelope_at_max_deriv_display > nf3);
-    bool window_pass = (max_deriv_ms >= 0 && max_deriv_ms < 100);
-    
-    printf("  [EDGE-DBG] maxD@%dms env=%.2e nf=%.2e nf*3=%.2e thresh=%.2e | deriv:%s env:%s win:%s\n",
-           max_deriv_ms,
+
+    /* Show tick detection info - always show max derivative position */
+    printf("| s%02d %c @%3dms d%.2e H%2d%% C%2d%%\n",
+           gps_sec,
+           in_clean_window ? ' ' : 'V',
+           tick_ms,
+           tick_deriv,
+           hit_pct, clean_pct);
+
+    /* DIAGNOSTIC: Show debug info */
+    float nf15 = g_noise_floor_display * 1.5f;
+    bool in_tick_window = (tick_ms >= 0 && tick_ms < 50);
+
+    printf("  [DBG] env=%.2e nf=%.2e nf*1.5=%.2e | %s\n",
            g_envelope_at_max_deriv_display,
            g_noise_floor_display,
-           nf3,
-           g_edge_threshold,
-           deriv_pass ? "PASS" : "FAIL",
-           env_pass ? "PASS" : "FAIL",
-           window_pass ? "PASS" : "FAIL");
+           nf15,
+           in_tick_window ? "IN-WINDOW" : "out-of-window");
 }
 
 static int run_interactive_mode(psdr_context_t *ctx, int initial_gain, const char *gps_port) {
     psdr_error_t err;
     (void)gps_port;
-    
-    printf("Keys: 1-6=freq +/-=offset <>=gain []=threshold G=mode R=reset Q=quit\n");
-    
+
+    printf("Keys: 1-6=freq +/-=offset <>=gain G=mode R=reset Q=quit\n");
+
     /* Configure initial frequency */
     psdr_config_defaults(&g_sdr_config);
     g_sdr_config.freq_hz = WWV_FREQS_MHZ[g_freq_index] * 1e6;
@@ -901,20 +888,18 @@ static int run_interactive_mode(psdr_context_t *ctx, int initial_gain, const cha
     g_sdr_config.lna_state = 0;
     g_sdr_config.antenna = PSDR_ANT_HIZ;
     g_sdr_ctx = ctx;
-    
+
     err = psdr_configure(ctx, &g_sdr_config);
     if (err != PSDR_OK) {
         printf("Failed to configure SDR\n");
         return -1;
     }
-    
+
     /* Initialize DSP */
-    biquad_init_bp(&g_bp_1000hz, (float)DECIMATED_RATE_HZ, 1000.0f, 5.0f);
+    biquad_init_bp(&g_bp_1000hz, (float)DECIMATED_RATE_HZ, 1000.0f, 2.0f);  /* Q=2, BW=500Hz, faster edge response */
     ma_reset();
     g_prev_envelope = 0.0f;
     g_noise_floor = 0.0f;
-    g_tick_detected = false;
-    g_tick_sample_pos = -1;
     interactive_reset_buckets();
     g_samples_per_second = (int)DECIMATED_RATE_HZ;
     g_interactive_mode = true;
@@ -922,7 +907,7 @@ static int run_interactive_mode(psdr_context_t *ctx, int initial_gain, const cha
     g_total_count = 0;
     g_clean_hit_count = 0;
     g_clean_total_count = 0;
-    
+
     /* Initial GPS sync - read current position in second */
     gps_reading_t gps;
     if (gps_read_time(&g_gps_ctx, &gps, 500) == 0 && gps.valid) {
@@ -933,9 +918,9 @@ static int run_interactive_mode(psdr_context_t *ctx, int initial_gain, const cha
         g_resync_pending = true;
         printf("Warning: No GPS sync, starting at 0\n");
     }
-    
+
     if (g_decimator) decim_reset(g_decimator);
-    
+
     /* Set up callbacks and start streaming */
     psdr_callbacks_t callbacks = {
         .on_samples = on_samples,
@@ -943,17 +928,17 @@ static int run_interactive_mode(psdr_context_t *ctx, int initial_gain, const cha
         .on_overload = on_overload,
         .user_ctx = NULL
     };
-    
+
     g_scanning = true;
     err = psdr_start(ctx, &callbacks);
     if (err != PSDR_OK) {
         printf("Failed to start streaming\n");
         return -1;
     }
-    
+
     int last_gps_second = -1;
     bool need_reconfig = false;
-    
+
     /* Main interactive loop */
     while (g_running) {
         /* Check for keyboard input */
@@ -968,14 +953,14 @@ static int run_interactive_mode(psdr_context_t *ctx, int initial_gain, const cha
                 case 'q': case 'Q':
                     g_running = false;
                     break;
-                    
+
                 case '1': g_freq_index = 0; need_reconfig = true; break;  /* 2.5 MHz */
                 case '2': g_freq_index = 1; need_reconfig = true; break;  /* 5.0 MHz */
                 case '3': g_freq_index = 2; need_reconfig = true; break;  /* 10 MHz */
                 case '4': g_freq_index = 3; need_reconfig = true; break;  /* 15 MHz */
                 case '5': g_freq_index = 4; need_reconfig = true; break;  /* 20 MHz */
                 case '6': g_freq_index = 5; need_reconfig = true; break;  /* 25 MHz */
-                
+
                 case '+': case '=':
                     g_pps_offset_ms += 10;
                     if (g_pps_offset_ms > 500) g_pps_offset_ms = 500;
@@ -984,7 +969,7 @@ static int run_interactive_mode(psdr_context_t *ctx, int initial_gain, const cha
                     g_pps_offset_ms -= 10;
                     if (g_pps_offset_ms < -500) g_pps_offset_ms = -500;
                     break;
-                    
+
                 case '>': case '.':
                     if (g_sdr_config.gain_reduction > 20) {
                         g_sdr_config.gain_reduction -= 3;
@@ -997,80 +982,69 @@ static int run_interactive_mode(psdr_context_t *ctx, int initial_gain, const cha
                         psdr_update(ctx, &g_sdr_config);
                     }
                     break;
-                    
+
                 case 'r': case 'R':
                     g_pps_offset_ms = -440;  /* Reset to calibrated default */
                     break;
-                    
+
                 case 'g': case 'G':
                     g_wwv_disciplined = !g_wwv_disciplined;
                     printf("[MODE] %s\n", g_wwv_disciplined ? "WWV-disciplined" : "GPS-disciplined");
                     break;
-                    
-                case '[':
-                    g_edge_threshold *= 0.8f;  /* Decrease threshold (more sensitive) */
-                    if (g_edge_threshold < 1e-7f) g_edge_threshold = 1e-7f;
-                    printf("[THRESHOLD] %.1e (more sensitive)\n", g_edge_threshold);
-                    break;
-                case ']':
-                    g_edge_threshold *= 1.25f;  /* Increase threshold (less sensitive) */
-                    if (g_edge_threshold > 1e-3f) g_edge_threshold = 1e-3f;
-                    printf("[THRESHOLD] %.1e (less sensitive)\n", g_edge_threshold);
-                    break;
             }
         }
-        
+
         /* Reconfigure if frequency changed */
         if (need_reconfig) {
             g_scanning = false;
             psdr_stop(ctx);
-            
+
             g_sdr_config.freq_hz = WWV_FREQS_MHZ[g_freq_index] * 1e6;
             psdr_configure(ctx, &g_sdr_config);
-            
+
             biquad_reset(&g_bp_1000hz);
             ma_reset();
             g_prev_envelope = 0.0f;
             g_noise_floor = 0.0f;
             if (g_decimator) decim_reset(g_decimator);
             interactive_reset_buckets();
-            
+
             /* Reset hit counters */
             g_hit_count = 0;
             g_total_count = 0;
             g_clean_hit_count = 0;
             g_clean_total_count = 0;
-            
+
             g_scanning = true;
             psdr_start(ctx, &callbacks);
             need_reconfig = false;
         }
-        
+
         /* Read GPS and detect second boundary */
         gps_reading_t gps;
         if (gps_read_time(&g_gps_ctx, &gps, 50) == 0 && gps.valid) {
             if (gps.second != last_gps_second && last_gps_second >= 0) {
-                /* Second boundary - copy buckets to display and reset */
-                for (int i = 0; i < NUM_BUCKETS; i++) {
+                /* Second boundary - calculate noise floor from bucket display data */
+                /* Note: bucket display values are saved by callback at sample boundary */
+
+                /* Calculate noise floor from quiet buckets (4-16 = 200-850ms adjusted) */
+                /* These buckets avoid tick (0-3) and pre-tick (17-19) */
+                double noise_sum = 0.0;
+                int noise_count = 0;
+                for (int i = 4; i <= 16; i++) {
                     if (g_bucket_count[i] > 0) {
-                        g_bucket_display[i] = g_bucket_energy[i] / g_bucket_count[i];
-                    } else {
-                        g_bucket_display[i] = 0.0;
+                        noise_sum += g_bucket_display[i];  /* Use averaged values */
+                        noise_count++;
                     }
                 }
-                
-                /* Save edge detection values BEFORE reset */
-                g_tick_detected_display = g_tick_detected;
-                g_tick_sample_pos_display = g_tick_sample_pos;
-                g_tick_derivative_display = g_tick_derivative;
-                g_max_derivative_display = g_max_derivative;
-                g_envelope_at_max_deriv_display = g_envelope_at_max_deriv;
-                g_max_deriv_sample_pos_display = g_max_deriv_sample_pos;
+                if (noise_count > 0) {
+                    g_noise_floor = (float)sqrt(noise_sum / noise_count);  /* sqrt because buckets store energy (squared) */
+                }
                 g_noise_floor_display = g_noise_floor;
-                
-                g_bucket_ready = true;
-                interactive_reset_buckets();
-                
+
+                /* Note: max derivative display values are saved by callback at sample boundary */
+                /* Note: bucket reset also happens in callback */
+
                 /* Re-sync sample counter to GPS - only in GPS-disciplined mode */
                 if (!g_wwv_disciplined) {
                     int expected = g_samples_per_second;
@@ -1083,23 +1057,23 @@ static int run_interactive_mode(psdr_context_t *ctx, int initial_gain, const cha
                 }
                 g_last_gps_ms = gps.millisecond;
                 memcpy(&g_last_gps, &gps, sizeof(gps));
-                
+
                 /* Update display */
                 interactive_display();
             }
             last_gps_second = gps.second;
         }
-        
+
         sleep_ms(10);
     }
-    
+
     g_scanning = false;
     g_interactive_mode = false;
     psdr_stop(ctx);
-    
+
     printf("\n\nInteractive mode ended.\n");
     printf("Final PPS offset: %+d ms\n", g_pps_offset_ms);
-    
+
     return 0;
 }
 
@@ -1180,7 +1154,7 @@ int main(int argc, char *argv[]) {
             interactive = true;
         }
     }
-    
+
     /* Open dump file if requested */
     if (g_dump_mode && dump_file[0]) {
         g_dump_file = fopen(dump_file, "w");
@@ -1369,7 +1343,7 @@ int main(int argc, char *argv[]) {
     psdr_close(ctx);
     decim_destroy(g_decimator);
     gps_close(&g_gps_ctx);
-    
+
     if (g_dump_file) {
         fclose(g_dump_file);
         printf("Waveform data written to dump file\n");

@@ -33,14 +33,14 @@ The chain is in `tools/wwv_scan.c`, function `on_samples()`:
 // STEP 1: Raw samples from SDR
 xi[0], xq[0]  // Should be non-zero, varying int16 values
 
-// STEP 2: Decimation (2MHz → 48kHz)  
+// STEP 2: Decimation (2MHz → 48kHz)
 g_decim_buffer[i].i, .q  // Should be non-zero floats
 
 // STEP 3: Envelope detection
 float mag = sqrtf(I*I + Q*Q);  // Should be > 0
 
 // STEP 4: DC blocking (remove carrier, keep modulation)
-float ac = dc_block_process(&g_dc_block, mag);  
+float ac = dc_block_process(&g_dc_block, mag);
 // During tick: should show 1000 Hz oscillation
 // Between ticks: should be ~0
 
@@ -72,7 +72,7 @@ Add this to `on_samples()` in wwv_scan.c:
 static int debug_samples = 0;
 if (debug_samples++ < 100 && debug_samples % 10 == 0) {
     // Check raw samples
-    printf("RAW[%d]: xi=%d xq=%d count=%u\n", 
+    printf("RAW[%d]: xi=%d xq=%d count=%u\n",
            debug_samples, xi[0], xq[0], count);
 }
 
@@ -80,7 +80,7 @@ if (debug_samples++ < 100 && debug_samples % 10 == 0) {
 static int debug_decim = 0;
 if (debug_decim++ < 20) {
     printf("DECIM: I=%.1f Q=%.1f mag=%.4f ac=%.6f filt=%.6f\n",
-           g_decim_buffer[i].i, g_decim_buffer[i].q, 
+           g_decim_buffer[i].i, g_decim_buffer[i].q,
            mag, ac, filtered);
 }
 ```
@@ -92,7 +92,7 @@ if (debug_decim++ < 20) {
 RAW: xi=-1234 xq=567 count=65536
 
 # After decimation (floats, should be non-trivial)
-DECIM: I=0.0234 Q=-0.0156 
+DECIM: I=0.0234 Q=-0.0156
 
 # Envelope (always positive)
 mag=0.0280

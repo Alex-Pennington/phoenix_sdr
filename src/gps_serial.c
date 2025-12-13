@@ -57,6 +57,9 @@ static int parse_gps_line(const char *line, gps_reading_t *gps) {
         return 0;
     }
     
+    /* Initialize millisecond to detect parse failures */
+    gps->millisecond = -1;
+    
     /* Try format: YYYY-MM-DDTHH:MM:SS.mmm */
     int parsed = sscanf(line, "%d-%d-%dT%d:%d:%d.%d",
         &gps->year, &gps->month, &gps->day,

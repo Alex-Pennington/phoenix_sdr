@@ -1,0 +1,10 @@
+File: wwv_5minute_48k.iqr
+Sample Rate: 48000 Hz
+Duration: 300.08 sec
+Analyzing 7.70 to 8.00 sec
+
+WWV (1000Hz):  max=0.043488 avg=0.033932 ratio=1.28
+WWVH (1200Hz): max=0.015918 avg=0.009908 ratio=1.61
+
+Thresholds at 1.5x avg: WWV=0.050898 WWVH=0.014862
+

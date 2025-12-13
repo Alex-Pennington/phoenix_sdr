@@ -1100,54 +1100,106 @@ static void score_chain(marker_chain_t *chain, marker_candidate_t *candidates) {
     chain->score = score;
 }
 
+/* Global debug flag for verbose pulse measurement */
+static int g_pulse_debug = 0;
+
 /**
  * Measure pulse duration at a given second position
  * Returns duration in ms, or 0 if no pulse detected
+ * 
+ * WWV BCD encoding: The tone is ON for 200ms (binary 0), 500ms (binary 1), 
+ * or 800ms (position marker). Silent seconds (29, 59) have no tone.
+ * 
+ * Energy ratio method:
+ * Compare energy in early part of second vs late part.
+ * - 200ms pulse: most energy in 0-300ms
+ * - 500ms pulse: energy spread 0-600ms  
+ * - 800ms pulse: energy through 0-850ms
+ * - Silent: low energy throughout
  */
 static int measure_pulse_duration(int minute_ms, int second) {
     int tick_ms = minute_ms + second * 1000;
     
-    /* Bounds check */
-    if (tick_ms < 0 || tick_ms + 900 >= g_env_count) return 0;
+    /* Bounds check - need full second of data */
+    if (tick_ms < 0 || tick_ms + 1000 >= g_env_count) return 0;
     
-    /* Use adaptive threshold based on local statistics */
-    float local_mean = g_local_mean[tick_ms];
-    float local_std = g_local_std[tick_ms];
-    float threshold = local_mean + 0.5f * local_std;  /* Lower threshold for pulse detection */
+    /* Compute energy in different time windows */
+    float e_0_200 = 0, e_200_400 = 0, e_400_600 = 0, e_600_800 = 0, e_800_1000 = 0;
     
-    /* Scan forward from tick position to find pulse boundaries */
-    int pulse_start = -1;
-    int pulse_end = -1;
-    int consecutive_above = 0;
-    int consecutive_below = 0;
+    for (int i = tick_ms; i < tick_ms + 200 && i < g_env_count; i++)
+        e_0_200 += g_envelope[i];
+    for (int i = tick_ms + 200; i < tick_ms + 400 && i < g_env_count; i++)
+        e_200_400 += g_envelope[i];
+    for (int i = tick_ms + 400; i < tick_ms + 600 && i < g_env_count; i++)
+        e_400_600 += g_envelope[i];
+    for (int i = tick_ms + 600; i < tick_ms + 800 && i < g_env_count; i++)
+        e_600_800 += g_envelope[i];
+    for (int i = tick_ms + 800; i < tick_ms + 1000 && i < g_env_count; i++)
+        e_800_1000 += g_envelope[i];
     
-    /* Search window: -50ms to +900ms from tick position */
-    int search_start = tick_ms - 50;
-    int search_end = tick_ms + 900;
-    if (search_start < 0) search_start = 0;
-    if (search_end >= g_env_count) search_end = g_env_count - 1;
+    e_0_200 /= 200;
+    e_200_400 /= 200;
+    e_400_600 /= 200;
+    e_600_800 /= 200;
+    e_800_1000 /= 200;
     
-    for (int i = search_start; i < search_end; i++) {
-        if (g_smooth[i] > threshold) {
-            consecutive_above++;
-            consecutive_below = 0;
-            if (pulse_start < 0 && consecutive_above >= 10) {
-                pulse_start = i - 10;  /* Backtrack to start */
-            }
-        } else {
-            consecutive_below++;
-            consecutive_above = 0;
-            if (pulse_start >= 0 && consecutive_below >= 20) {
-                pulse_end = i - 20;  /* Backtrack to end */
-                break;
-            }
-        }
+    /* Total early energy vs late baseline */
+    float total = e_0_200 + e_200_400 + e_400_600 + e_600_800;
+    float baseline = e_800_1000;
+    
+    /* Check for silent second */
+    float contrast = (total / 4.0f) / (baseline + 1e-9f);
+    if (contrast < 1.2f) {
+        if (g_pulse_debug) printf("      Sec %d: SILENT (contrast=%.2f)\n", second, contrast);
+        return 0;
     }
     
-    if (pulse_start < 0 || pulse_end < 0) return 0;
-    if (pulse_end <= pulse_start) return 0;
+    /* Determine duration based on energy ratios */
+    /* For 200ms pulse: e_0_200 >> e_200_400 */
+    /* For 500ms pulse: e_0_200+e_200_400 >> e_400_600+e_600_800 */
+    /* For 800ms pulse: all windows have similar energy */
     
-    return pulse_end - pulse_start;
+    float early = e_0_200 + e_200_400;  /* 0-400ms */
+    float mid = e_400_600;               /* 400-600ms */
+    float late = e_600_800;              /* 600-800ms */
+    
+    /* Ratio of early to late parts */
+    float early_mid_ratio = early / (mid + baseline + 1e-9f);
+    float early_late_ratio = early / (late + baseline + 1e-9f);
+    float mid_late_ratio = mid / (late + baseline + 1e-9f);
+    
+    int duration;
+    
+    /* Decision tree based on energy distribution */
+    if (early_late_ratio > 3.0f && early_mid_ratio > 2.0f) {
+        /* Very front-loaded - 200ms pulse */
+        duration = 200;
+    } else if (early_late_ratio > 1.8f && mid_late_ratio < 1.5f) {
+        /* Energy in first half, not much in middle - 200-300ms */
+        duration = 250;
+    } else if (mid_late_ratio > 1.5f && early_late_ratio < 2.0f) {
+        /* Energy extends through middle but drops at end - 500ms pulse */
+        duration = 500;
+    } else if (late / (baseline + 1e-9f) > 1.5f) {
+        /* Energy extends through late period - 800ms marker */
+        duration = 800;
+    } else {
+        /* Unclear - estimate based on weighted sum */
+        float weighted = e_0_200 * 100 + e_200_400 * 300 + e_400_600 * 500 + e_600_800 * 700;
+        float total_e = e_0_200 + e_200_400 + e_400_600 + e_600_800;
+        duration = (int)(weighted / (total_e + 1e-9f));
+    }
+    
+    /* Clamp and validate */
+    if (duration < 150) duration = 200;
+    if (duration > 850) duration = 800;
+    
+    if (g_pulse_debug) {
+        printf("      Sec %d: dur=%d (e_early=%.4f, e_mid=%.4f, e_late=%.4f, e_base=%.4f)\n",
+               second, duration, early, mid, late, baseline);
+    }
+    
+    return duration;
 }
 
 /**
@@ -1191,10 +1243,93 @@ static int classify_pulse(int duration_ms) {
  * Note: Pulses START at the second boundary. The minute marker (sec 0)
  * is an 800ms pulse that starts at the minute boundary.
  */
+/* Debug: dump envelope values around a second tick */
+static void debug_dump_second(int minute_ms, int second) {
+    int tick_ms = minute_ms + second * 1000;
+    if (tick_ms < 0 || tick_ms + 1000 >= g_env_count) return;
+    
+    /* Compute baseline (min) and peak as measure_pulse_duration does */
+    float baseline = 999.0f;
+    for (int i = tick_ms + 850; i < tick_ms + 950; i++) {
+        if (g_envelope[i] < baseline) baseline = g_envelope[i];
+    }
+    if (baseline > 900.0f) baseline = 0.001f;
+    
+    float peak = 0;
+    for (int i = tick_ms; i < tick_ms + 850 && i < g_env_count - 5; i++) {
+        float avg = 0;
+        for (int j = 0; j < 5; j++) avg += g_envelope[i + j];
+        avg /= 5.0f;
+        if (avg > peak) peak = avg;
+    }
+    
+    float contrast = peak / (baseline + 1e-9f);
+    printf("    Sec %2d: baseline=%.4f, peak=%.4f, contrast=%.2f\n", 
+           second, baseline, peak, contrast);
+}
+
 static void decode_bcd_time(int marker_start_ms, int marker_end_ms, double start_sec) {
     printf("\n  ============================================\n");
     printf("  BCD TIME CODE DECODE\n");
     printf("  ============================================\n");
+    
+    /* Debug: dump envelope stats for first few seconds */
+    printf("  Debug: Envelope analysis at marker_start_ms=%d\n", marker_start_ms);
+    printf("    Sec  0-19: ");
+    for (int s = 0; s < 20; s++) {
+        int tick_ms = marker_start_ms + s * 1000;
+        if (tick_ms < 0 || tick_ms + 1000 >= g_env_count) { printf("--- "); continue; }
+        float baseline = 999.0f;
+        for (int i = tick_ms + 850; i < tick_ms + 950; i++)
+            if (g_envelope[i] < baseline) baseline = g_envelope[i];
+        if (baseline > 900.0f) baseline = 0.001f;
+        float peak = 0;
+        for (int i = tick_ms; i < tick_ms + 850 && i < g_env_count - 5; i++) {
+            float avg = 0;
+            for (int j = 0; j < 5; j++) avg += g_envelope[i + j];
+            avg /= 5.0f;
+            if (avg > peak) peak = avg;
+        }
+        float contrast = peak / (baseline + 1e-9f);
+        printf("%.1f ", contrast);
+    }
+    printf("\n    Sec 20-39: ");
+    for (int s = 20; s < 40; s++) {
+        int tick_ms = marker_start_ms + s * 1000;
+        if (tick_ms < 0 || tick_ms + 1000 >= g_env_count) { printf("--- "); continue; }
+        float baseline = 999.0f;
+        for (int i = tick_ms + 850; i < tick_ms + 950; i++)
+            if (g_envelope[i] < baseline) baseline = g_envelope[i];
+        if (baseline > 900.0f) baseline = 0.001f;
+        float peak = 0;
+        for (int i = tick_ms; i < tick_ms + 850 && i < g_env_count - 5; i++) {
+            float avg = 0;
+            for (int j = 0; j < 5; j++) avg += g_envelope[i + j];
+            avg /= 5.0f;
+            if (avg > peak) peak = avg;
+        }
+        float contrast = peak / (baseline + 1e-9f);
+        printf("%.1f ", contrast);
+    }
+    printf("\n    Sec 40-59: ");
+    for (int s = 40; s < 60; s++) {
+        int tick_ms = marker_start_ms + s * 1000;
+        if (tick_ms < 0 || tick_ms + 1000 >= g_env_count) { printf("--- "); continue; }
+        float baseline = 999.0f;
+        for (int i = tick_ms + 850; i < tick_ms + 950; i++)
+            if (g_envelope[i] < baseline) baseline = g_envelope[i];
+        if (baseline > 900.0f) baseline = 0.001f;
+        float peak = 0;
+        for (int i = tick_ms; i < tick_ms + 850 && i < g_env_count - 5; i++) {
+            float avg = 0;
+            for (int j = 0; j < 5; j++) avg += g_envelope[i + j];
+            avg /= 5.0f;
+            if (avg > peak) peak = avg;
+        }
+        float contrast = peak / (baseline + 1e-9f);
+        printf("%.1f ", contrast);
+    }
+    printf("\n\n");
     
     /* Search for best alignment by looking for position markers at expected locations */
     /* Try offsets from -500ms to +500ms to find best alignment */
@@ -1235,6 +1370,7 @@ static void decode_bcd_time(int marker_start_ms, int marker_end_ms, double start
     
     /* Measure all 60 pulse durations */
     printf("  Pulse durations (ms):\n");
+    g_pulse_debug = 1;  /* Enable verbose pulse debug */
     for (int sec = 0; sec < 60; sec++) {
         durations[sec] = measure_pulse_duration(minute_start_ms, sec);
         pulses[sec] = classify_pulse(durations[sec]);
@@ -1544,9 +1680,12 @@ static int select_best_chain(marker_chain_t *chains, int num_chains,
     
     if (best_marker_idx >= 0) {
         marker_candidate_t *c = &candidates[winner->indices[best_marker_idx]];
+        /* Use the refined start for better alignment */
+        int refined_start_ms = (int)(refined_starts[best_marker_idx] + 0.5f);
         printf("\n  Using marker %d (dur=%dms, closest to 800ms) for BCD decode\n",
                best_marker_idx + 1, c->duration_ms);
-        decode_bcd_time(c->start_ms, c->end_ms, start_sec);
+        printf("  Refined start: %d ms (vs raw %d ms)\n", refined_start_ms, c->start_ms);
+        decode_bcd_time(refined_start_ms, c->end_ms, start_sec);
     }
     
     return best;

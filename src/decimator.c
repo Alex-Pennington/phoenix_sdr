@@ -163,11 +163,12 @@ static void init_polyphase_coeffs(void) {
     }
     
     /* Distribute into polyphase branches */
+    /* Note: For decimation (not interpolation), we don't multiply by STAGE3_UP */
     for (int phase = 0; phase < STAGE3_UP; phase++) {
         for (int tap = 0; tap < STAGE3_TAPS_PER_PHASE; tap++) {
             int idx = tap * STAGE3_UP + phase;
             if (idx < STAGE3_TOTAL_TAPS) {
-                stage3_polyphase[phase][tap] = sinc[idx] * STAGE3_UP;
+                stage3_polyphase[phase][tap] = sinc[idx];
             } else {
                 stage3_polyphase[phase][tap] = 0.0f;
             }

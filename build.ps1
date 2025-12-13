@@ -39,9 +39,7 @@ $CFLAGS_RELEASE = @("-O2", "-DNDEBUG")
 
 $LDFLAGS = @(
     "-L`"$SDRplayLib`"",
-    "-lsdrplay_api",
-    "-lwinmm",   # Windows multimedia (audio monitoring)
-    "-lws2_32"   # Winsock (NTP time)
+    "-lsdrplay_api"
 )
 
 # Select build type
@@ -191,8 +189,15 @@ function Build-Tools {
     $ToolsDir = "tools"
     $toolSources = Get-ChildItem -Path $ToolsDir -Filter "*.c" -ErrorAction SilentlyContinue
     
-    # Build iq_recorder.o (shared dependency)
+    # Build shared library objects
     $iqrObj = Build-Object "$SrcDir\iq_recorder.c"
+    $decimatorObj = Build-Object "$SrcDir\decimator.c"
+    $gpsObj = Build-Object "$SrcDir\gps_serial.c"
+    $sdrDeviceObj = Build-Object "$SrcDir\sdr_device.c"
+    $sdrStreamObj = Build-Object "$SrcDir\sdr_stream.c"
+    
+    # SDR-dependent tools (need full library)
+    $sdrTools = @("wwv_scan")
     
     foreach ($src in $toolSources) {
         $toolName = [System.IO.Path]::GetFileNameWithoutExtension($src.Name)
@@ -201,8 +206,24 @@ function Build-Tools {
         # Compile tool source
         $toolObj = Build-Object $src.FullName
         
-        # Link with iq_recorder (tools need file reading)
-        $allArgs = @("-o", "`"$BinDir\$toolName.exe`"", $toolObj, $iqrObj, "-lm", "-lws2_32")
+        # Check if this tool needs full SDR library
+        if ($sdrTools -contains $toolName) {
+            # Link with SDR library + all dependencies
+            $allArgs = @(
+                "-o", "`"$BinDir\$toolName.exe`"",
+                $toolObj,
+                $iqrObj,
+                $decimatorObj,
+                $gpsObj,
+                $sdrDeviceObj,
+                $sdrStreamObj,
+                "-lm"
+            ) + $LDFLAGS
+        } else {
+            # Simple tool - just iq_recorder
+            $allArgs = @("-o", "`"$BinDir\$toolName.exe`"", $toolObj, $iqrObj, "-lm", "-lws2_32")
+        }
+        
         $argString = $allArgs -join " "
         
         $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru

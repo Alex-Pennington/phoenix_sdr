@@ -3,7 +3,7 @@
  * @brief Metadata file handling for IQR recordings
  *
  * Creates a .meta file alongside each .iqr recording with human-readable
- * info. Written at start, updated at end. Survives crashes.
+ * info. GPS PPS is the primary time source. Written at start, updated at end.
  */
 
 #ifndef IQR_META_H
@@ -23,10 +23,20 @@ typedef struct {
     int32_t  gain_reduction;
     uint32_t lna_state;
     
-    /* Timing - from NTP at recording start */
+    /* Primary timing (GPS preferred, system clock fallback) */
     int64_t  start_time_us;      /* Unix time, microseconds */
     char     start_time_iso[32]; /* ISO 8601 string */
     int      start_second;       /* Second within minute (0-59) */
+    double   offset_to_next_minute; /* Seconds from start to next minute marker */
+    
+    /* GPS timing details (when available) */
+    bool     gps_valid;          /* GPS had fix at start */
+    char     gps_time_iso[32];   /* GPS UTC time ISO 8601 */
+    int64_t  gps_time_us;        /* GPS Unix time, microseconds */
+    int      gps_satellites;     /* Number of satellites */
+    double   gps_pc_offset_ms;   /* PC time - GPS time (ms) */
+    char     gps_port[32];       /* COM port used */
+    double   gps_latency_ms;     /* Serial latency compensation */
     
     /* Updated at recording end */
     int64_t  end_time_us;        /* Unix time, microseconds */
@@ -34,12 +44,8 @@ typedef struct {
     uint64_t sample_count;
     double   duration_sec;
     
-    /* Derived - for WWV analysis */
-    double   offset_to_next_minute; /* Seconds from start to next minute marker */
-    
     /* Status */
     bool     recording_complete; /* False until properly closed */
-    char     ntp_server[64];     /* Server used for time */
 } iqr_meta_t;
 
 /**
@@ -70,15 +76,5 @@ int iqr_meta_write_end(const char *iqr_filename, const iqr_meta_t *meta);
  * @return 0 on success, -1 on error
  */
 int iqr_meta_read(const char *iqr_filename, iqr_meta_t *meta);
-
-/**
- * Initialize metadata with NTP time
- * Queries NTP server and populates timing fields
- *
- * @param meta          Metadata to initialize
- * @param ntp_server    NTP server (NULL for default)
- * @return 0 on success, -1 on NTP failure
- */
-int iqr_meta_init_time(iqr_meta_t *meta, const char *ntp_server);
 
 #endif /* IQR_META_H */

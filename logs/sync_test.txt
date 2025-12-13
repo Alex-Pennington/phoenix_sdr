@@ -1,0 +1,245 @@
+iqr_open: Opened wwv_5Mhz_g40_1234_48k.iqr
+  Sample rate: 48000 Hz
+  Center freq: 5000000 Hz
+  Samples: 8644116
+  Duration: 180.09 seconds
+===========================================
+WWV Sync Detector
+===========================================
+File: wwv_5Mhz_g40_1234_48k.iqr
+Sample Rate: 48000 Hz
+Center Freq: 0 Hz
+Duration: 180.09 sec
+Mode: WIDEBAND
+Analyzing: 0.00 to 120.00 sec
+
+Pass 1: Extracting envelope...
+  120000 ms of envelope data
+Pass 2: Computing baseline (trailing window)...
+Pass 3: Finding minute markers...
+  Trying DROPOUT detection (ratio < 0.85)...
+  Found 11 candidate(s)
+
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.01] 
+    
+    [59:1.03] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.33] 
+    
+    [59:0.93] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.85] 
+    
+    [59:1.46] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.96] 
+    
+    [59:1.18] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.83] 
+    
+    [59:0.78] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.94] 
+    
+    [59:1.31] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.96] 
+    
+    [59:0.70] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.49] 
+    
+    
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.68] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+  Tick verification (comparing level at tick vs mid-second):
+    
+Pass 4: Checking 60-second spacing...
+-------------------------------------------
+Candidate 1: Minute marker at t=12.283 sec
+  Mode: DROPOUT
+  Start: 11.686 sec, End: 12.283 sec
+  Duration: 597 ms (expected 800ms)
+  Min ratio: 0.65
+
+  Results:
+    Ticks detected: 19 (of ~57 expected)
+    Avg tick/gap ratio: 1.29
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 70%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 12.283 sec into file
+-------------------------------------------
+Candidate 2: Minute marker at t=15.005 sec
+  Mode: DROPOUT
+  Start: 14.166 sec, End: 15.005 sec
+  Duration: 839 ms (expected 800ms)
+  Min ratio: 0.50
+
+  Results:
+    Ticks detected: 16 (of ~57 expected)
+    Avg tick/gap ratio: 1.27
+    Second 29: HAS TICK (bad)
+    Second 59: SILENT (good)
+    Confidence: 54%
+
+-------------------------------------------
+Candidate 3: Minute marker at t=29.822 sec
+  Mode: DROPOUT
+  Start: 29.214 sec, End: 29.822 sec
+  Duration: 608 ms (expected 800ms)
+  Min ratio: 0.64
+
+  Results:
+    Ticks detected: 16 (of ~57 expected)
+    Avg tick/gap ratio: 1.23
+    Second 29: SILENT (good)
+    Second 59: HAS TICK (bad)
+    Confidence: 64%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 29.822 sec into file
+-------------------------------------------
+Candidate 4: Minute marker at t=39.081 sec
+  Mode: DROPOUT
+  Start: 38.318 sec, End: 39.081 sec
+  Duration: 763 ms (expected 800ms)
+  Min ratio: 0.56
+
+  Results:
+    Ticks detected: 15 (of ~57 expected)
+    Avg tick/gap ratio: 1.31
+    Second 29: SILENT (good)
+    Second 59: HAS TICK (bad)
+    Confidence: 53%
+
+-------------------------------------------
+Candidate 5: Minute marker at t=43.336 sec
+  Mode: DROPOUT
+  Start: 42.542 sec, End: 43.336 sec
+  Duration: 794 ms (expected 800ms)
+  Min ratio: 0.61
+
+  Results:
+    Ticks detected: 17 (of ~57 expected)
+    Avg tick/gap ratio: 1.25
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 75%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 43.336 sec into file
+-------------------------------------------
+Candidate 6: Minute marker at t=47.253 sec
+  Mode: DROPOUT
+  Start: 46.617 sec, End: 47.253 sec
+  Duration: 636 ms (expected 800ms)
+  Min ratio: 0.68
+
+  Results:
+    Ticks detected: 18 (of ~57 expected)
+    Avg tick/gap ratio: 1.24
+    Second 29: SILENT (good)
+    Second 59: HAS TICK (bad)
+    Confidence: 66%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 47.253 sec into file
+-------------------------------------------
+Candidate 7: Minute marker at t=50.258 sec
+  Mode: DROPOUT
+  Start: 49.725 sec, End: 50.258 sec
+  Duration: 533 ms (expected 800ms)
+  Min ratio: 0.65
+
+  Results:
+    Ticks detected: 17 (of ~57 expected)
+    Avg tick/gap ratio: 1.23
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 67%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 50.258 sec into file
+-------------------------------------------
+Candidate 8: Minute marker at t=70.136 sec
+  Mode: DROPOUT
+  Start: 69.565 sec, End: 70.136 sec
+  Duration: 571 ms (expected 800ms)
+  Min ratio: 0.59
+
+  Results:
+    Ticks detected: 11 (of ~57 expected)
+    Avg tick/gap ratio: 1.29
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 66%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 70.136 sec into file
+-------------------------------------------
+Candidate 9: Minute marker at t=90.098 sec
+  Mode: DROPOUT
+  Start: 89.235 sec, End: 90.098 sec
+  Duration: 863 ms (expected 800ms)
+  Min ratio: 0.57
+
+  Results:
+    Ticks detected: 7 (of ~57 expected)
+    Avg tick/gap ratio: 1.19
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 87%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 90.098 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 10: Minute marker at t=107.110 sec
+  Mode: DROPOUT
+  Start: 106.426 sec, End: 107.110 sec
+  Duration: 684 ms (expected 800ms)
+  Min ratio: 0.62
+
+  Results:
+    Ticks detected: 3 (of ~57 expected)
+    Avg tick/gap ratio: 1.26
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 85%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 107.110 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 11: Minute marker at t=113.444 sec
+  Mode: DROPOUT
+  Start: 112.605 sec, End: 113.444 sec
+  Duration: 839 ms (expected 800ms)
+  Min ratio: 0.63
+
+  Results:
+    Ticks detected: 2 (of ~57 expected)
+    Avg tick/gap ratio: 1.27
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 75%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 113.444 sec into file
+===========================================

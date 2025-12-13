@@ -1,0 +1,121 @@
+iqr_open: Opened wwv_600_48k.iqr
+  Sample rate: 48000 Hz
+  Center freq: 10000000 Hz
+  Samples: 28802826
+  Duration: 600.06 seconds
+===========================================
+WWV Sync Detector
+===========================================
+File: wwv_600_48k.iqr
+Sample Rate: 48000 Hz
+Center Freq: 0 Hz
+Duration: 600.06 sec
+Mode: 1000Hz BANDPASS
+Analyzing: 0.00 to 120.00 sec
+
+Pass 1: Extracting envelope...
+  120000 ms of envelope data
+Pass 2: Computing baseline (trailing window)...
+Pass 3: Computing adaptive thresholds (mean + 1.5*sigma)...
+  Adaptive threshold: min=0.0037, max=0.0158, avg=0.0107
+  Local std dev: min=0.0007, max=0.0048, avg=0.0020
+Pass 4: Finding minute markers...
+  Trying ADAPTIVE detection (mean + 1.5*sigma)...
+  Found 9 candidate(s)
+
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.30] 
+    
+    [59:1.85] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.91] 
+    
+    [59:1.63] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.23] 
+    
+    [59:0.81] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.96] 
+    
+    
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.96] 
+    
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.47] 
+    
+  Tick verification (comparing level at tick vs mid-second):
+    
+  Tick verification (comparing level at tick vs mid-second):
+    
+  Tick verification (comparing level at tick vs mid-second):
+    
+Pass 5: Checking 60-second spacing...
+  Filtered: 9 -> 2 candidates with 60s partners
+-------------------------------------------
+Candidate 1: Minute marker at t=3.831 sec
+  Mode: ADAPTIVE
+  Start: 3.068 sec, End: 3.831 sec
+  Duration: 763 ms (expected 800ms)
+  Peak sigmas: 7.84 σ above mean
+
+  Results:
+    Ticks detected: 18 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: HAS TICK (bad)
+    Confidence: 60%
+
+-------------------------------------------
+Candidate 2: Minute marker at t=62.510 sec
+  Mode: ADAPTIVE
+  Start: 61.804 sec, End: 62.510 sec
+  Duration: 706 ms (expected 800ms)
+  Peak sigmas: 5.34 σ above mean
+
+  Results:
+    Ticks detected: 14 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 96%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 62.510 sec into file
+  >>> LOCK CONFIRMED <<<
+
+Pass 6: Building marker chains...
+  Found 1 chain(s) with 60s spacing
+  Chain 1: 2 markers, score=55.9, sec59_silent=1/2
+
+===========================================
+BEST CHAIN SELECTED (Chain 1 of 1)
+===========================================
+  Chain length: 2 markers
+  Score: 55.9 / 100
+  Sec 59 silent: 1/2 (50%)
+  Sec 29 silent: 1/2 (50%)
+  Avg duration error: 66 ms (from 800ms)
+  Avg confidence: 78%
+
+  Chain members:
+    [1] t=3.831s, dur=763ms, sec29=TICK, sec59=TICK
+    [2] t=62.510s, dur=706ms, sec29=silent, sec59=silent
+
+  ============================================
+  TIMING RESULT
+  ============================================
+  First minute boundary: 3.171 sec into recording
+  Recording started: 56.830 sec after UTC minute
+  Offset from file start to minute: 3170.5 ms
+  ============================================
+  Quality: FAIR - Use with caution
+
+===========================================

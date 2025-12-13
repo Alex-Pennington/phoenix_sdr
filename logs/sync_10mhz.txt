@@ -1,0 +1,44 @@
+iqr_open: Opened wwv_gain30_48k.iqr
+  Sample rate: 48000 Hz
+  Center freq: 10000000 Hz
+  Samples: 4322070
+  Duration: 90.04 seconds
+===========================================
+WWV Sync Detector
+===========================================
+File: wwv_gain30_48k.iqr
+Sample Rate: 48000 Hz
+Center Freq: 0 Hz
+Duration: 90.04 sec
+Mode: 1000Hz BANDPASS
+Analyzing: 0.00 to 120.00 sec
+
+Pass 1: Extracting envelope...
+  90043 ms of envelope data
+Pass 2: Computing baseline (trailing window)...
+Pass 3: Finding minute markers...
+  Trying DROPOUT detection (ratio < 0.85)...
+  Found 1 candidate(s)
+
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.10] 
+    
+    [59:1.07] 
+-------------------------------------------
+Candidate 1: Minute marker at t=22.421 sec
+  Mode: DROPOUT
+  Start: 21.878 sec, End: 22.421 sec
+  Duration: 543 ms (expected 800ms)
+  Min ratio: 0.67
+
+  Results:
+    Ticks detected: 7 (of ~57 expected)
+    Avg tick/gap ratio: 1.16
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 61%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 22.421 sec into file
+===========================================

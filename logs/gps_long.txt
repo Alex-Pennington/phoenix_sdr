@@ -1,0 +1,45 @@
+===========================================
+GPS Time Reader
+===========================================
+Port: COM6
+Duration: 30 seconds
+
+Connected to COM6. Waiting for GPS data...
+
+    Waiting for GPS fix...
+>>> 2025-12-13T13:18:21.000 UTC  SAT: 0  PC offset: +300 ms
+>>> 2025-12-13T13:18:22.000 UTC  SAT:11  PC offset: +302 ms
+>>> 2025-12-13T13:18:23.000 UTC  SAT:11  PC offset: +301 ms
+>>> 2025-12-13T13:18:24.000 UTC  SAT:11  PC offset: +300 ms
+>>> 2025-12-13T13:18:25.000 UTC  SAT:11  PC offset: +301 ms
+>>> 2025-12-13T13:18:26.000 UTC  SAT:11  PC offset: +301 ms
+>>> 2025-12-13T13:18:27.000 UTC  SAT:11  PC offset: +302 ms
+>>> 2025-12-13T13:18:28.000 UTC  SAT:11  PC offset: +299 ms
+>>> 2025-12-13T13:18:29.000 UTC  SAT:11  PC offset: +301 ms
+>>> 2025-12-13T13:18:30.000 UTC  SAT:11  PC offset: +305 ms
+>>> 2025-12-13T13:18:31.000 UTC  SAT:11  PC offset: +301 ms
+>>> 2025-12-13T13:18:32.000 UTC  SAT:11  PC offset: +301 ms
+>>> 2025-12-13T13:18:33.000 UTC  SAT:11  PC offset: +302 ms
+>>> 2025-12-13T13:18:34.000 UTC  SAT:11  PC offset: +303 ms
+>>> 2025-12-13T13:18:35.000 UTC  SAT:11  PC offset: +301 ms
+>>> 2025-12-13T13:18:36.000 UTC  SAT:11  PC offset: +307 ms
+>>> 2025-12-13T13:18:37.000 UTC  SAT:11  PC offset: +302 ms
+>>> 2025-12-13T13:18:38.000 UTC  SAT:11  PC offset: +303 ms
+>>> 2025-12-13T13:18:39.000 UTC  SAT:11  PC offset: +301 ms
+>>> 2025-12-13T13:18:40.000 UTC  SAT:11  PC offset: +303 ms
+>>> 2025-12-13T13:18:41.000 UTC  SAT:11  PC offset: +301 ms
+>>> 2025-12-13T13:18:42.000 UTC  SAT:11  PC offset: +299 ms
+>>> 2025-12-13T13:18:43.000 UTC  SAT:11  PC offset: +303 ms
+>>> 2025-12-13T13:18:44.000 UTC  SAT:11  PC offset: +301 ms
+>>> 2025-12-13T13:18:45.000 UTC  SAT:11  PC offset: +303 ms
+>>> 2025-12-13T13:18:46.000 UTC  SAT:11  PC offset: +300 ms
+>>> 2025-12-13T13:18:47.000 UTC  SAT:11  PC offset: +301 ms
+>>> 2025-12-13T13:18:48.000 UTC  SAT:11  PC offset: +301 ms
+
+===========================================
+SUMMARY
+===========================================
+Valid seconds received: 28
+Average PC-GPS offset: 302 ms
+(Positive = PC ahead of GPS)
+===========================================

@@ -1,0 +1,5 @@
+ee7a1c5 PHASE 2.1 COMPLETE
+b2a5712 Add Goertzel algorithm and configurable tone frequency to WWV detector
+2315769 Add WWV tick detection and audio monitoring
+215a903 Add command-line frequency selection
+3484148 Add beta testing guide for amateur radio operators and MARS members

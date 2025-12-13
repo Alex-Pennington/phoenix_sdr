@@ -2,11 +2,10 @@
  * @file iqr_meta.c
  * @brief Metadata file implementation
  *
- * Simple key=value format, one per line. Easy to read/parse.
+ * Simple key=value format, one per line. GPS PPS is primary time source.
  */
 
 #include "iqr_meta.h"
-#include "ntp_time.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -24,50 +23,6 @@ static void get_meta_filename(const char *iqr_filename, char *meta_filename, siz
     } else {
         strncat(meta_filename, ".meta", len - strlen(meta_filename) - 1);
     }
-}
-
-int iqr_meta_init_time(iqr_meta_t *meta, const char *ntp_server) {
-    if (!meta) return -1;
-    
-    const char *server = ntp_server ? ntp_server : "time.nist.gov";
-    strncpy(meta->ntp_server, server, sizeof(meta->ntp_server) - 1);
-    meta->ntp_server[sizeof(meta->ntp_server) - 1] = '\0';
-    
-    ntp_time_t t = ntp_get_utc(server, 3000);
-    if (!t.valid) {
-        fprintf(stderr, "[META] NTP query failed, using system time\n");
-        /* Fallback to system time */
-        struct timespec ts;
-        timespec_get(&ts, TIME_UTC);
-        meta->start_time_us = (int64_t)ts.tv_sec * 1000000 + ts.tv_nsec / 1000;
-        
-        time_t now = ts.tv_sec;
-        struct tm *utc = gmtime(&now);
-        snprintf(meta->start_time_iso, sizeof(meta->start_time_iso),
-                 "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
-                 utc->tm_year + 1900, utc->tm_mon + 1, utc->tm_mday,
-                 utc->tm_hour, utc->tm_min, utc->tm_sec,
-                 (int)(ts.tv_nsec / 1000000));
-        meta->start_second = utc->tm_sec;
-        strcpy(meta->ntp_server, "(system clock)");
-    } else {
-        meta->start_time_us = (int64_t)(t.unix_time * 1000000.0);
-        ntp_format_iso(&t, meta->start_time_iso, sizeof(meta->start_time_iso));
-        meta->start_second = (int)(t.unix_seconds % 60);
-    }
-    
-    /* Calculate offset to next minute marker */
-    int ms_in_sec = (int)((meta->start_time_us % 1000000) / 1000);
-    meta->offset_to_next_minute = (60 - meta->start_second) - (ms_in_sec / 1000.0);
-    if (meta->offset_to_next_minute < 0) meta->offset_to_next_minute += 60.0;
-    
-    meta->recording_complete = false;
-    meta->end_time_us = 0;
-    meta->end_time_iso[0] = '\0';
-    meta->sample_count = 0;
-    meta->duration_sec = 0.0;
-    
-    return 0;
 }
 
 int iqr_meta_write_start(const char *iqr_filename, const iqr_meta_t *meta) {
@@ -95,12 +50,23 @@ int iqr_meta_write_start(const char *iqr_filename, const iqr_meta_t *meta) {
     fprintf(f, "\n");
     
     fprintf(f, "[timing]\n");
-    fprintf(f, "ntp_server = %s\n", meta->ntp_server);
+    fprintf(f, "time_source = %s\n", meta->gps_valid ? "GPS_PPS" : "system_clock");
     fprintf(f, "start_time_us = %lld\n", (long long)meta->start_time_us);
     fprintf(f, "start_time_utc = %s\n", meta->start_time_iso);
     fprintf(f, "start_second = %d\n", meta->start_second);
     fprintf(f, "offset_to_next_minute = %.6f\n", meta->offset_to_next_minute);
     fprintf(f, "\n");
+    
+    if (meta->gps_valid) {
+        fprintf(f, "[gps]\n");
+        fprintf(f, "gps_time_utc = %s\n", meta->gps_time_iso);
+        fprintf(f, "gps_time_us = %lld\n", (long long)meta->gps_time_us);
+        fprintf(f, "satellites = %d\n", meta->gps_satellites);
+        fprintf(f, "pc_offset_ms = %.1f\n", meta->gps_pc_offset_ms);
+        fprintf(f, "port = %s\n", meta->gps_port);
+        fprintf(f, "latency_ms = %.1f\n", meta->gps_latency_ms);
+        fprintf(f, "\n");
+    }
     
     fprintf(f, "[status]\n");
     fprintf(f, "recording_complete = false\n");
@@ -110,7 +76,7 @@ int iqr_meta_write_start(const char *iqr_filename, const iqr_meta_t *meta) {
     fprintf(f, "end_time_utc = \n");
     
     fclose(f);
-    fprintf(stderr, "[META] Created %s\n", meta_filename);
+    printf("[META] Created %s\n", meta_filename);
     return 0;
 }
 
@@ -139,12 +105,23 @@ int iqr_meta_write_end(const char *iqr_filename, const iqr_meta_t *meta) {
     fprintf(f, "\n");
     
     fprintf(f, "[timing]\n");
-    fprintf(f, "ntp_server = %s\n", meta->ntp_server);
+    fprintf(f, "time_source = %s\n", meta->gps_valid ? "GPS_PPS" : "system_clock");
     fprintf(f, "start_time_us = %lld\n", (long long)meta->start_time_us);
     fprintf(f, "start_time_utc = %s\n", meta->start_time_iso);
     fprintf(f, "start_second = %d\n", meta->start_second);
     fprintf(f, "offset_to_next_minute = %.6f\n", meta->offset_to_next_minute);
     fprintf(f, "\n");
+    
+    if (meta->gps_valid) {
+        fprintf(f, "[gps]\n");
+        fprintf(f, "gps_time_utc = %s\n", meta->gps_time_iso);
+        fprintf(f, "gps_time_us = %lld\n", (long long)meta->gps_time_us);
+        fprintf(f, "satellites = %d\n", meta->gps_satellites);
+        fprintf(f, "pc_offset_ms = %.1f\n", meta->gps_pc_offset_ms);
+        fprintf(f, "port = %s\n", meta->gps_port);
+        fprintf(f, "latency_ms = %.1f\n", meta->gps_latency_ms);
+        fprintf(f, "\n");
+    }
     
     fprintf(f, "[status]\n");
     fprintf(f, "recording_complete = true\n");
@@ -154,7 +131,7 @@ int iqr_meta_write_end(const char *iqr_filename, const iqr_meta_t *meta) {
     fprintf(f, "end_time_utc = %s\n", meta->end_time_iso);
     
     fclose(f);
-    fprintf(stderr, "[META] Updated %s (recording complete)\n", meta_filename);
+    printf("[META] Updated %s (recording complete)\n", meta_filename);
     return 0;
 }
 
@@ -198,7 +175,7 @@ int iqr_meta_read(const char *iqr_filename, iqr_meta_t *meta) {
         else if (strcmp(key, "bandwidth_khz") == 0) meta->bandwidth_khz = (uint32_t)atoi(val);
         else if (strcmp(key, "gain_reduction") == 0) meta->gain_reduction = atoi(val);
         else if (strcmp(key, "lna_state") == 0) meta->lna_state = (uint32_t)atoi(val);
-        else if (strcmp(key, "ntp_server") == 0) strncpy(meta->ntp_server, val, sizeof(meta->ntp_server) - 1);
+        else if (strcmp(key, "time_source") == 0) meta->gps_valid = (strcmp(val, "GPS_PPS") == 0);
         else if (strcmp(key, "start_time_us") == 0) meta->start_time_us = atoll(val);
         else if (strcmp(key, "start_time_utc") == 0) strncpy(meta->start_time_iso, val, sizeof(meta->start_time_iso) - 1);
         else if (strcmp(key, "start_second") == 0) meta->start_second = atoi(val);
@@ -208,6 +185,20 @@ int iqr_meta_read(const char *iqr_filename, iqr_meta_t *meta) {
         else if (strcmp(key, "duration_sec") == 0) meta->duration_sec = atof(val);
         else if (strcmp(key, "end_time_us") == 0) meta->end_time_us = atoll(val);
         else if (strcmp(key, "end_time_utc") == 0) strncpy(meta->end_time_iso, val, sizeof(meta->end_time_iso) - 1);
+        /* GPS fields */
+        else if (strcmp(key, "gps_time_utc") == 0) strncpy(meta->gps_time_iso, val, sizeof(meta->gps_time_iso) - 1);
+        else if (strcmp(key, "gps_time_us") == 0) meta->gps_time_us = atoll(val);
+        else if (strcmp(key, "satellites") == 0) meta->gps_satellites = atoi(val);
+        else if (strcmp(key, "pc_offset_ms") == 0) meta->gps_pc_offset_ms = atof(val);
+        else if (strcmp(key, "port") == 0) strncpy(meta->gps_port, val, sizeof(meta->gps_port) - 1);
+        else if (strcmp(key, "latency_ms") == 0) meta->gps_latency_ms = atof(val);
+        /* Legacy NTP fields for backwards compatibility */
+        else if (strcmp(key, "ntp_server") == 0) { /* ignore */ }
+        else if (strcmp(key, "gps_valid") == 0) meta->gps_valid = (strcmp(val, "true") == 0);
+        else if (strcmp(key, "gps_satellites") == 0) meta->gps_satellites = atoi(val);
+        else if (strcmp(key, "gps_pc_offset_ms") == 0) meta->gps_pc_offset_ms = atof(val);
+        else if (strcmp(key, "gps_port") == 0) strncpy(meta->gps_port, val, sizeof(meta->gps_port) - 1);
+        else if (strcmp(key, "gps_latency_ms") == 0) meta->gps_latency_ms = atof(val);
     }
     
     fclose(f);

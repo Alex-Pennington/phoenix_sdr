@@ -1,291 +1,251 @@
-# Phoenix SDR - RSP2 Pro Integration
+# Phoenix Nest MARS Suite - SDR Component
 
-SDRplay RSP2 Pro integration library for Phoenix Nest MARS Suite MIL-STD-188-110A modem testing.
+## The Big Picture
 
-## Status
+This project is part of the **Phoenix Nest MARS Suite**, an open-source implementation of **MIL-STD-188-110A** - a military standard for HF (High Frequency) data modems. The goal is to enable digital communication over HF radio, specifically for MARS (Military Auxiliary Radio System) operations.
 
-| Component | Status |
-|-----------|--------|
-| SDR Interface | ✅ Working - tested with RSP2 Pro |
-| I/Q Recording | ✅ Working - .iqr format verified |
-| I/Q Playback | ✅ Working |
-| Decimator | ✅ Working - 2 MSPS → 48 kHz |
-| Modem Integration | ✅ Ready - IQSource validated (31/31 tests) |
+### Why This Matters
+HF radio can communicate over thousands of miles without any infrastructure (no internet, no cell towers, no satellites). This makes it critical for:
+- Emergency communications
+- Remote operations
+- Military auxiliary support
+- When all else fails
 
-## Documentation
+### Project Components
+```
+Phoenix Nest MARS Suite
+├── SDR Capture (THIS PROJECT) ← We are here
+│   ├── Hardware interface (SDRplay RSP2 Pro)
+│   ├── Signal capture and recording
+│   ├── GPS timing synchronization
+│   └── WWV validation (current focus)
+│
+├── MIL-STD-188-110A Modem (future)
+│   ├── MELP-e voice codec
+│   ├── PSK/QAM modulation
+│   └── FEC encoding
+│
+└── MARS-ALE Integration (future)
+    └── Automatic Link Establishment
+```
 
-- **[docs/IQ_INPUT_DESIGN.md](docs/IQ_INPUT_DESIGN.md)** - Design document for modem integration
-- **[docs/BETA_TESTING_GUIDE.md](docs/BETA_TESTING_GUIDE.md)** - Guide for beta testers
+## Current Focus: WWV Timing Validation
 
-## Requirements
+### What is WWV?
+WWV is a time signal radio station operated by NIST in Fort Collins, Colorado. It broadcasts:
+- Precise time (from atomic clocks)
+- Standard frequencies (2.5, 5, 10, 15, 20, 25 MHz)
+- A distinctive "tick" - 5ms pulse of 1000 Hz tone every second
 
-- Windows 10/11 (64-bit)
-- MinGW-w64 (via winget) or Visual Studio 2019+ Build Tools
-- SDRplay API 3.x installed: https://www.sdrplay.com/api/
-- SDRplay RSP2 Pro hardware
+### Why WWV for Testing?
+WWV is the **perfect smoke test** for our SDR chain because:
+
+1. **Always on** - Broadcasts 24/7/365
+2. **Known signal** - We know exactly what it should look like
+3. **Predictable timing** - GPS-synchronized, we can verify our timing
+4. **Multiple frequencies** - Tests our tuning across HF band
+5. **MARS funds WWV** - It's literally our reference standard
+
+### The Validation Goal
+```
+If we can:
+  1. Tune to WWV frequency ✓
+  2. Detect the 1000 Hz tick with good SNR ← STUCK HERE
+  3. Verify timing matches GPS
+  4. Record clean IQ data
+
+Then we know:
+  - SDR hardware works
+  - Our capture code works
+  - Our timing is accurate
+  - We're ready to build the modem
+```
+
+## Current Task: WWV Scanner
+
+### What wwv_scan Does
+1. Connects to GPS (for precise timing)
+2. Opens SDR (RSP2 Pro)
+3. Scans each WWV frequency (2.5, 5, 10, 15, 20, 25 MHz)
+4. For each frequency:
+   - Tunes SDR
+   - Waits for GPS second boundary
+   - Measures energy in "tick window" (0-50ms) 
+   - Measures energy in "noise window" (200-800ms)
+   - Calculates SNR = tick_energy / noise_energy
+5. Reports best frequency
+6. User can then record on that frequency
+
+### What's Broken
+**SDRuno** (commercial software) shows **35+ dB SNR** on 15 MHz WWV.
+**Our wwv_scan** shows **~0 dB SNR** on all frequencies.
+
+Same hardware, same antenna, same signal - different results.
+
+### Signal Processing Chain
+```
+┌─────────────────────────────────────────────────────────────┐
+│ SDRplay RSP2 Pro                                            │
+│ - Tuned to WWV frequency (e.g., 15 MHz)                    │
+│ - 2 MHz sample rate                                         │
+│ - Zero-IF mode (signal centered at 0 Hz)                   │
+│ - Outputs I/Q samples (int16)                              │
+└─────────────────┬───────────────────────────────────────────┘
+                  │ Raw I/Q @ 2 MHz
+                  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Decimator                                                   │
+│ - 2 MHz → 48 kHz (factor of ~41.67)                        │
+│ - Anti-aliasing filter                                      │
+│ - Output: float I/Q                                        │
+└─────────────────┬───────────────────────────────────────────┘
+                  │ I/Q @ 48 kHz
+                  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ AM Envelope Detection                                       │
+│ - magnitude = sqrt(I² + Q²)                                │
+│ - Extracts amplitude modulation                            │
+│ - WWV tick is AM: carrier + 1000 Hz tone                   │
+└─────────────────┬───────────────────────────────────────────┘
+                  │ Envelope signal
+                  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ DC Blocking Filter                                          │
+│ - Removes carrier (DC component of envelope)               │
+│ - Passes AC (the 1000 Hz modulation)                       │
+│ - y[n] = x[n] - x[n-1] + 0.995 * y[n-1]                   │
+└─────────────────┬───────────────────────────────────────────┘
+                  │ AC component only
+                  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 1000 Hz Bandpass Filter                                     │
+│ - Biquad IIR, Q=5                                          │
+│ - Passes 1000 Hz tick tone                                 │
+│ - Rejects other frequencies                                │
+└─────────────────┬───────────────────────────────────────────┘
+                  │ 1000 Hz component
+                  ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Energy Measurement (GPS-synchronized windows)               │
+│                                                             │
+│ Second boundary (from GPS)                                  │
+│ ├── 0-50ms: TICK WINDOW - measure energy here              │
+│ ├── 50-200ms: skip (filter settling)                       │
+│ ├── 200-800ms: NOISE WINDOW - measure energy here          │
+│ └── 800-1000ms: skip (next tick coming)                    │
+│                                                             │
+│ SNR = 10 * log10(tick_energy / noise_energy)               │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### The Mystery
+Unit tests prove the DSP math is correct:
+- Synthetic signal with 1000 Hz modulation → high SNR ✓
+- Synthetic signal with no modulation → 0 dB SNR ✓
+
+So either:
+1. **Raw samples are wrong** - SDR not configured correctly
+2. **Decimator loses the signal** - Bug in downsampling  
+3. **Envelope doesn't show modulation** - Signal not where we expect
+4. **Something else upstream** - We're missing something
+
+### Debug Strategy
+Add printf statements or breakpoints to see actual values:
+```c
+// In on_samples() callback:
+printf("RAW: xi[0]=%d xq[0]=%d\n", xi[0], xq[0]);
+
+// After decimation:
+printf("DECIM: I=%.2f Q=%.2f\n", g_decim_buffer[0].i, g_decim_buffer[0].q);
+
+// After envelope:
+printf("MAG: %.4f\n", mag);
+
+// After DC block:
+printf("AC: %.6f\n", ac);
+
+// After bandpass:
+printf("FILT: %.6f\n", filtered);
+```
+
+Find where the signal disappears!
+
+## File Organization
+
+```
+D:\claude_sandbox\phoenix_sdr\
+│
+├── include/
+│   └── version.h            # Version: 0.2.0
+│
+├── src/
+│   ├── phoenix_sdr.h        # Main header, types, API
+│   ├── main.c               # Recording application
+│   ├── sdr_device.c         # SDRplay open/close/enumerate
+│   ├── sdr_stream.c         # Configure, start, stop, callbacks
+│   ├── decimator.c          # 2MHz → 48kHz conversion
+│   ├── gps_serial.c         # GPS NEO-6M serial interface
+│   ├── iq_recorder.c        # IQ file writing
+│   └── iqr_meta.c           # Recording metadata
+│
+├── tools/
+│   ├── wwv_scan.c           # ← MAIN DEBUG TARGET
+│   ├── wwv_sync.c           # Time sync from WWV
+│   ├── wwv_analyze.c        # Analyze recorded IQ
+│   ├── gps_time.c           # Display GPS time
+│   └── ...                  # Other utilities
+│
+├── test/
+│   └── test_dsp.c           # DSP unit tests (all pass)
+│
+├── build.ps1                # Build script
+├── PROGRESS.md              # Status document
+└── README.md                # This file
+```
 
 ## Building
 
 ```powershell
-# Debug build
-.\build.ps1
-
-# Release build
-.\build.ps1 -Release
-
-# Clean
+# Full clean build
 .\build.ps1 -Clean
-```
-
----
-
-## Quick Start
-
-```powershell
-# Build
 .\build.ps1
+.\build.ps1 -Target tools
+.\build.ps1 -Target test
 
-# Run - FREQUENCY IS REQUIRED
-.\bin\phoenix_sdr.exe -f 7.074
+# Run tests
+.\bin\test_test_dsp.exe
 
-# Show help
-.\bin\phoenix_sdr.exe -h
+# Run scanner
+.\bin\wwv_scan.exe -scantime 10
 ```
 
-## Command-Line Usage
+## Hardware Setup
 
-```
-Usage: phoenix_sdr -f <freq_MHz> [options]
+### SDRplay RSP2 Pro
+- USB connection
+- Hi-Z antenna input (for HF)
+- SDRplay API 3.15 installed
 
-Required:
-  -f, --freq <MHz>      Center frequency in MHz (e.g., 7.074, 14.074)
+### GPS (NEO-6M on Arduino)
+- COM6 @ 115200 baud
+- Outputs: `2025-12-13T16:45:30.123 [VALID, SAT:8, NMEA:42, ms:123]`
+- Used for precise second-boundary timing
 
-Optional:
-  -d, --duration <sec>  Recording duration in seconds (default: 5)
-  -o, --output <name>   Output filename prefix (default: "capture")
-  -g, --gain <dB>       Gain reduction 20-59 dB (default: 40)
-  -h, --help            Show this help message
+### Antenna
+- HF antenna connected to Hi-Z port
+- Same antenna works great with SDRuno
 
-Output Files:
-  <name>_raw.iqr        Full-rate I/Q at 2 MSPS
-  <name>_48k.iqr        Decimated I/Q at 48 kHz (modem-ready)
+## Key Contacts & References
 
-Examples:
-  phoenix_sdr -f 7.074                    # Record 5 sec at 7.074 MHz (40m FT8)
-  phoenix_sdr -f 14.074 -d 30             # Record 30 sec at 14.074 MHz (20m FT8)
-  phoenix_sdr -f 7.074 -o ft8_capture     # Custom output filename
-  phoenix_sdr -f 14.074 -g 30 -d 60       # Lower gain, 60 sec recording
+- **Steve Hajducek (N2CKH)** - Created MS-DMT and MARS-ALE, 45+ years radio experience
+- **Charles Brain (G4GUO)** - Created brain_core modem, PC-ALE, PC-HFDL
+- **WWV** - NIST time station, Fort Collins CO, nist.gov
+- **SDRplay API** - sdrplay.com/api
 
-Frequency Range: 0.001 - 2000 MHz (SDRplay RSP2 Pro)
-```
+## Next Steps
 
----
-
-## Project Structure
-
-```
-phoenix_sdr/
-├── build.ps1              # PowerShell build script
-├── README.md              # This file
-├── docs/
-│   ├── IQ_INPUT_DESIGN.md # Modem integration design doc
-│   └── BETA_TESTING_GUIDE.md # Beta testing instructions
-├── include/
-│   ├── phoenix_sdr.h      # SDR device API
-│   ├── iq_recorder.h      # I/Q recording API
-│   └── decimator.h        # Sample rate conversion
-├── src/
-│   ├── main.c             # Command-line application
-│   ├── sdr_device.c       # Device enumeration, open, close
-│   ├── sdr_stream.c       # Streaming, callbacks, runtime updates
-│   ├── iq_recorder.c      # I/Q file recording/playback
-│   └── decimator.c        # 2 MSPS → 48 kHz conversion
-└── test/
-    └── (future unit tests)
-```
-
----
-
-## SDR API Usage
-
-```c
-#include "phoenix_sdr.h"
-
-// Enumerate devices
-psdr_device_info_t devices[8];
-size_t num_devices;
-psdr_enumerate(devices, 8, &num_devices);
-
-// Open device
-psdr_context_t *ctx;
-psdr_open(&ctx, 0);
-
-// Configure for HF narrowband
-psdr_config_t config;
-psdr_config_defaults(&config);
-config.freq_hz = 7074000.0;  // 7.074 MHz (40m FT8)
-psdr_configure(ctx, &config);
-
-// Set up callbacks
-psdr_callbacks_t cb = {
-    .on_samples = my_sample_handler,
-    .on_overload = my_overload_handler,
-    .user_ctx = my_data
-};
-
-// Start streaming
-psdr_start(ctx, &cb);
-
-// ... process samples in callback ...
-
-// Cleanup
-psdr_stop(ctx);
-psdr_close(ctx);
-```
-
-### Sample Callback
-
-```c
-void my_sample_handler(
-    const int16_t *xi,      // I samples (real)
-    const int16_t *xq,      // Q samples (imaginary)  
-    uint32_t count,         // Number of samples
-    bool reset,             // True if buffers should be flushed
-    void *user_ctx          // Your context pointer
-) {
-    // Process I/Q samples here
-    // WARNING: Called from API thread - keep fast or copy & defer
-}
-```
-
-### Default Configuration
-
-| Parameter      | Default Value | Notes |
-|----------------|---------------|-------|
-| Sample Rate    | 2 MSPS        | 14-bit mode |
-| Bandwidth      | 200 kHz       | Narrowest available |
-| IF Mode        | Zero IF       | Baseband I/Q |
-| AGC            | Disabled      | Manual gain for modem work |
-| Gain Reduction | 40 dB         | Moderate |
-| LNA State      | 4             | Mid-range |
-
----
-
-## I/Q Recording API
-
-Record raw I/Q samples to disk for offline analysis, regression testing, and modem development without live RF.
-
-### Recording
-
-```c
-#include "iq_recorder.h"
-
-// Create recorder
-iqr_recorder_t *rec;
-iqr_create(&rec, 0);  // 0 = default 64K sample buffer
-
-// Start recording
-iqr_start(rec, 
-    "capture.iqr",        // Output filename
-    2000000.0,            // Sample rate Hz
-    7074000.0,            // Center frequency Hz
-    200,                  // Bandwidth kHz
-    40,                   // Gain reduction dB
-    4                     // LNA state
-);
-
-// In your sample callback:
-void on_samples(const int16_t *xi, const int16_t *xq, 
-                uint32_t count, bool reset, void *ctx) {
-    iqr_recorder_t *rec = (iqr_recorder_t *)ctx;
-    iqr_write(rec, xi, xq, count);
-}
-
-// Stop recording
-iqr_stop(rec);
-iqr_destroy(rec);
-```
-
-### Playback
-
-```c
-#include "iq_recorder.h"
-
-// Open recording
-iqr_reader_t *reader;
-iqr_open(&reader, "capture.iqr");
-
-// Get metadata
-const iqr_header_t *hdr = iqr_get_header(reader);
-printf("Sample rate: %.0f Hz\n", hdr->sample_rate_hz);
-printf("Duration: %.2f sec\n", 
-       (double)hdr->sample_count / hdr->sample_rate_hz);
-
-// Read samples
-int16_t xi[4096], xq[4096];
-uint32_t num_read;
-
-while (iqr_read(reader, xi, xq, 4096, &num_read) == IQR_OK && num_read > 0) {
-    // Process samples - feed to modem, etc.
-    process_iq_samples(xi, xq, num_read);
-}
-
-// Cleanup
-iqr_close(reader);
-```
-
-### I/Q File Format (.iqr)
-
-Binary format optimized for streaming and random access:
-
-| Offset | Size | Field | Description |
-|--------|------|-------|-------------|
-| 0 | 4 | Magic | "IQR1" |
-| 4 | 4 | Version | Format version (1) |
-| 8 | 8 | Sample Rate | Hz (double) |
-| 16 | 8 | Center Freq | Hz (double) |
-| 24 | 4 | Bandwidth | kHz (uint32) |
-| 28 | 4 | Gain Reduction | dB (int32) |
-| 32 | 4 | LNA State | 0-8 (uint32) |
-| 36 | 8 | Start Time | Unix µs (int64) |
-| 44 | 8 | Sample Count | Total samples (uint64) |
-| 52 | 4 | Flags | Reserved |
-| 56 | 8 | Reserved | Padding |
-| **64** | ... | **Data** | **Interleaved I/Q (int16 pairs)** |
-
-Data section contains interleaved samples: `I0, Q0, I1, Q1, I2, Q2, ...`
-
-Each sample is a signed 16-bit integer, little-endian. File size = 64 + (sample_count × 4) bytes.
-
----
-
-## Decimator
-
-The decimator converts 2 MSPS SDR output to 48 kHz for modem input:
-
-```
-2,000,000 Hz → 250,000 Hz → 50,000 Hz → 48,000 Hz
-     (÷8)          (÷5)        (48/50 resample)
-```
-
-This is handled automatically when you run `phoenix_sdr` - both raw and decimated files are produced.
-
----
-
-## Modem Integration
-
-See **[docs/IQ_INPUT_DESIGN.md](docs/IQ_INPUT_DESIGN.md)** for the full design document describing:
-
-- SampleSource abstraction for modem input
-- AudioSource (existing 48kHz path with Hilbert transform)
-- IQSource (new direct I/Q path)
-- Format conversion and decimation details
-- Integration options (callback, file, TCP)
-
-The modem's I/Q pipeline has been validated with 31/31 tests passing. See the [pennington_m110a_demod](https://github.com/Alex-Pennington/pennington_m110a_demod) repository for modem-side integration.
-
----
-
-## License
-
-Copyright (c) 2024 Phoenix Nest LLC
+1. **Debug wwv_scan** - Find where signal disappears
+2. **Get working SNR** - Should see 20-35 dB like SDRuno
+3. **Record WWV** - Capture IQ file on best frequency
+4. **Validate recording** - Confirm tick detection in recorded file
+5. **Move to modem** - Start MIL-STD-188-110A implementation

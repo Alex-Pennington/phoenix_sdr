@@ -8,8 +8,8 @@
 #include <stdio.h>
 #include <string.h>
 
-/* External context definition from sdr_device.c */
-extern struct psdr_context {
+/* Context structure definition (shared with sdr_device.c) */
+struct psdr_context {
     sdrplay_api_DeviceT         device;
     sdrplay_api_DeviceParamsT  *params;
     sdrplay_api_CallbackFnsT    api_callbacks;
@@ -36,6 +36,7 @@ static void stream_callback_a(
     unsigned int reset,
     void *cbContext
 ) {
+    (void)params;  /* Unused but required by API */
     psdr_context_t *ctx = (psdr_context_t *)cbContext;
     
     if (!ctx || !ctx->user_callbacks.on_samples) return;
@@ -82,10 +83,7 @@ static void event_callback(
                     ctx->user_callbacks.user_ctx
                 );
             }
-            printf("Event: Gain change - gRdB=%d lnaGRdB=%d currGain=%.2f\n",
-                   params->gainParams.gRdB,
-                   params->gainParams.lnaGRdB,
-                   params->gainParams.currGain);
+            /* Verbose logging removed - user callback handles output */
             break;
             
         case sdrplay_api_PowerOverloadChange:
@@ -97,9 +95,7 @@ static void event_callback(
                     ctx->user_callbacks.user_ctx
                 );
             }
-            printf("Event: Power overload %s\n",
-                   (params->powerOverloadParams.powerOverloadChangeType == 
-                    sdrplay_api_Overload_Detected) ? "DETECTED" : "corrected");
+            /* Verbose logging removed - user callback handles output */
             
             /* CRITICAL: Must acknowledge overload event */
             sdrplay_api_Update(ctx->device.dev, tuner,
@@ -171,13 +167,21 @@ psdr_error_t psdr_configure(psdr_context_t *ctx, const psdr_config_t *config) {
     if (ch) {
         ch->tunerParams.rfFreq.rfHz = config->freq_hz;
         ch->tunerParams.bwType = map_bandwidth(config->bandwidth);
-        ch->tunerParams.ifType = sdrplay_api_IF_Zero;  /* Always ZIF for this project */
+        
+        /* Zero-IF mode - signal at baseband, rely on DC offset correction */
+        ch->tunerParams.ifType = sdrplay_api_IF_Zero;
+        ch->tunerParams.loMode = sdrplay_api_LO_Auto;
+        
         ch->tunerParams.gain.gRdB = config->gain_reduction;
         ch->tunerParams.gain.LNAstate = (unsigned char)config->lna_state;
         
         /* Control parameters */
         ch->ctrlParams.agc.enable = map_agc(config->agc_mode);
         ch->ctrlParams.agc.setPoint_dBfs = -60;
+        
+        /* CRITICAL: Enable DC offset and IQ imbalance correction */
+        ch->ctrlParams.dcOffset.DCenable = 1;      /* Remove DC spike */
+        ch->ctrlParams.dcOffset.IQenable = 1;      /* Correct IQ imbalance */
         
         /* Decimation */
         if (config->decimation > 1) {
@@ -189,7 +193,7 @@ psdr_error_t psdr_configure(psdr_context_t *ctx, const psdr_config_t *config) {
         }
         
         /* RSP2-specific */
-        const char *ant_name = "?";
+        const char *ant_name;
         switch (config->antenna) {
             case PSDR_ANT_A:
                 ch->rsp2TunerParams.antennaSel = sdrplay_api_Rsp2_ANTENNA_A;
@@ -206,17 +210,18 @@ psdr_error_t psdr_configure(psdr_context_t *ctx, const psdr_config_t *config) {
                 ch->rsp2TunerParams.amPortSel = sdrplay_api_Rsp2_AMPORT_1;   /* AMPORT_1 = Hi-Z */
                 ant_name = "Hi-Z";
                 break;
+            default:
+                ant_name = "?";
+                break;
         }
         
         ch->rsp2TunerParams.biasTEnable = config->bias_t ? 1 : 0;
         ch->rsp2TunerParams.rfNotchEnable = config->rf_notch ? 1 : 0;
+        
+        printf("psdr_configure: freq=%.0f Hz, SR=%.0f Hz, BW=%d kHz, gain=%d dB, ant=%s\n",
+               config->freq_hz, config->sample_rate_hz, 
+               config->bandwidth, config->gain_reduction, ant_name);
     }
-    
-    printf("psdr_configure: freq=%.0f Hz, SR=%.0f Hz, BW=%d kHz, gain=%d dB, ant=%s\n",
-           config->freq_hz, config->sample_rate_hz, 
-           config->bandwidth, config->gain_reduction,
-           (config->antenna == PSDR_ANT_A) ? "A" : 
-           (config->antenna == PSDR_ANT_B) ? "B" : "Hi-Z");
     
     return PSDR_OK;
 }

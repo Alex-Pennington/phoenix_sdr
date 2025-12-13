@@ -10,6 +10,7 @@
 
 #include "phoenix_sdr.h"
 #include "iq_recorder.h"
+#include "iqr_meta.h"
 #include "decimator.h"
 #include "audio_monitor.h"
 #include <stdio.h>
@@ -73,6 +74,10 @@ static uint64_t g_decim_sample_count = 0;
 /* Output filenames (built from prefix) */
 static char g_raw_filename[512];
 static char g_decim_filename[512];
+
+/* Metadata for recordings */
+static iqr_meta_t g_raw_meta;
+static iqr_meta_t g_decim_meta;
 
 /*============================================================================
  * Usage / Help
@@ -467,6 +472,33 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
+    /* Get NTP time for metadata BEFORE starting recordings */
+    printf("Getting NTP time from time.nist.gov...\n");
+    if (iqr_meta_init_time(&g_raw_meta, NULL) < 0) {
+        fprintf(stderr, "Warning: NTP failed, using system time\n");
+    } else {
+        printf("NTP time: %s (second %d of minute)\n", 
+               g_raw_meta.start_time_iso, g_raw_meta.start_second);
+        printf("Next minute marker at: %.3f sec into recording\n\n",
+               g_raw_meta.offset_to_next_minute);
+    }
+    
+    /* Copy timing to decimated metadata */
+    memcpy(&g_decim_meta, &g_raw_meta, sizeof(iqr_meta_t));
+    
+    /* Fill in recording parameters */
+    g_raw_meta.sample_rate_hz = config.sample_rate_hz;
+    g_raw_meta.center_freq_hz = config.freq_hz;
+    g_raw_meta.bandwidth_khz = config.bandwidth;
+    g_raw_meta.gain_reduction = config.gain_reduction;
+    g_raw_meta.lna_state = config.lna_state;
+    
+    g_decim_meta.sample_rate_hz = 48000.0;
+    g_decim_meta.center_freq_hz = config.freq_hz;
+    g_decim_meta.bandwidth_khz = config.bandwidth;
+    g_decim_meta.gain_reduction = config.gain_reduction;
+    g_decim_meta.lna_state = config.lna_state;
+    
     /* Start raw recording */
     iqr_err = iqr_start(g_raw_recorder, 
                         g_raw_filename,
@@ -484,6 +516,9 @@ int main(int argc, char *argv[]) {
         if (g_audio_monitor) audio_destroy(g_audio_monitor);
         return 1;
     }
+    
+    /* Write raw metadata at start (survives crash) */
+    iqr_meta_write_start(g_raw_filename, &g_raw_meta);
     
     /* Start decimated recording */
     iqr_err = iqr_start(g_decim_recorder, 
@@ -503,6 +538,9 @@ int main(int argc, char *argv[]) {
         if (g_audio_monitor) audio_destroy(g_audio_monitor);
         return 1;
     }
+    
+    /* Write decimated metadata at start */
+    iqr_meta_write_start(g_decim_filename, &g_decim_meta);
     
     /* Start audio monitor if enabled */
     if (g_audio_monitor) {
@@ -559,6 +597,21 @@ int main(int argc, char *argv[]) {
     printf("Finalizing recordings...\n");
     iqr_stop(g_raw_recorder);
     iqr_stop(g_decim_recorder);
+    
+    /* Update metadata with final stats */
+    g_raw_meta.sample_count = g_sample_count;
+    g_raw_meta.duration_sec = (double)g_sample_count / g_sample_rate;
+    g_raw_meta.recording_complete = true;
+    g_raw_meta.end_time_us = g_raw_meta.start_time_us + 
+                             (int64_t)(g_raw_meta.duration_sec * 1000000.0);
+    iqr_meta_write_end(g_raw_filename, &g_raw_meta);
+    
+    g_decim_meta.sample_count = g_decim_sample_count;
+    g_decim_meta.duration_sec = (double)g_decim_sample_count / 48000.0;
+    g_decim_meta.recording_complete = true;
+    g_decim_meta.end_time_us = g_decim_meta.start_time_us + 
+                               (int64_t)(g_decim_meta.duration_sec * 1000000.0);
+    iqr_meta_write_end(g_decim_filename, &g_decim_meta);
     
     /* Print final stats */
     printf("\n===========================================\n");

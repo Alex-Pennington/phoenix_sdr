@@ -1,0 +1,234 @@
+iqr_open: Opened wwv_5Mhz_g40_1234_48k.iqr
+  Sample rate: 48000 Hz
+  Center freq: 5000000 Hz
+  Samples: 8644116
+  Duration: 180.09 seconds
+===========================================
+WWV Sync Detector
+===========================================
+File: wwv_5Mhz_g40_1234_48k.iqr
+Sample Rate: 48000 Hz
+Center Freq: 0 Hz
+Duration: 180.09 sec
+Mode: GOERTZEL
+Tone Freq: 600 Hz
+Analyzing: 0.00 to 180.00 sec
+
+Pass 1: Extracting envelope...
+  Goertzel: block=240 samples (5.0ms), step=48 samples (1.0ms)
+  Target: 600 Hz, Resolution: 200.0 Hz
+  179996 ms of envelope data
+Pass 2: Computing baseline (trailing window)...
+Pass 3: Computing adaptive thresholds (mean + 1.5*sigma)...
+  Adaptive threshold: min=0.7150, max=2.4254, avg=1.2448
+  Local std dev: min=0.1333, max=0.7799, avg=0.3081
+Pass 4: Finding minute markers...
+  Trying ADAPTIVE detection (mean + 1.5*sigma)...
+  Found 7 candidate(s)
+
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.02] 
+    
+    [59:0.72] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:2.28] 
+    
+    [59:1.70] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.71] 
+    
+    [59:0.87] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.78] 
+    
+    [59:0.50] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.71] 
+    
+    [59:0.71] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.77] 
+    
+    
+  Tick verification (comparing level at tick vs mid-second):
+    
+Pass 5: Checking 60-second spacing...
+  Filtered: 7 -> 6 candidates with 60s partners
+-------------------------------------------
+Candidate 1: Minute marker at t=13.380 sec
+  Mode: ADAPTIVE
+  Start: 12.929 sec, End: 13.380 sec
+  Duration: 451 ms (expected 800ms)
+  Peak sigmas: 3.87 σ above mean
+
+  Results:
+    Ticks detected: 22 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 93%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 13.380 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 2: Minute marker at t=68.729 sec
+  Mode: ADAPTIVE
+  Start: 68.322 sec, End: 68.729 sec
+  Duration: 407 ms (expected 800ms)
+  Peak sigmas: 5.31 σ above mean
+
+  Results:
+    Ticks detected: 19 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: HAS TICK (bad)
+    Confidence: 49%
+
+-------------------------------------------
+Candidate 3: Minute marker at t=73.405 sec
+  Mode: ADAPTIVE
+  Start: 72.643 sec, End: 73.405 sec
+  Duration: 762 ms (expected 800ms)
+  Peak sigmas: 5.27 σ above mean
+
+  Results:
+    Ticks detected: 20 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 100%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 73.405 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 4: Minute marker at t=104.733 sec
+  Mode: ADAPTIVE
+  Start: 104.301 sec, End: 104.733 sec
+  Duration: 432 ms (expected 800ms)
+  Peak sigmas: 4.70 σ above mean
+
+  Results:
+    Ticks detected: 28 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 96%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 104.733 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 5: Minute marker at t=130.103 sec
+  Mode: ADAPTIVE
+  Start: 129.445 sec, End: 130.103 sec
+  Duration: 658 ms (expected 800ms)
+  Peak sigmas: 10.13 σ above mean
+
+  Results:
+    Ticks detected: 20 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 100%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 130.103 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 6: Minute marker at t=165.521 sec
+  Mode: ADAPTIVE
+  Start: 164.829 sec, End: 165.521 sec
+  Duration: 692 ms (expected 800ms)
+  Peak sigmas: 4.57 σ above mean
+
+  Results:
+    Ticks detected: 5 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 100%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 165.521 sec into file
+  >>> LOCK CONFIRMED <<<
+
+Pass 6: Building marker chains...
+  Found 3 chain(s) with 60s spacing
+  Chain 1: 2 markers, score=67.8, sec59_silent=2/2
+  Chain 2: 2 markers, score=38.2, sec59_silent=1/2
+  Chain 3: 2 markers, score=63.9, sec59_silent=2/2
+
+===========================================
+BEST CHAIN SELECTED (Chain 1 of 3)
+===========================================
+  Chain length: 2 markers
+  Score: 67.8 / 100
+  Sec 59 silent: 2/2 (100%)
+  Sec 29 silent: 2/2 (100%)
+  Avg duration error: 194 ms (from 800ms)
+  Avg confidence: 96%
+
+  Chain members (with refined edge detection):
+    [1] start=12954.8ms, end=13312.7ms, dur=358ms (was 451ms), sec29=silent, sec59=silent
+    [2] start=72713.7ms, end=73407.5ms, dur=694ms (was 762ms), sec29=silent, sec59=silent
+
+  TIMING CALCULATION:
+  Using marker START for timing (WWV minute starts at pulse onset)
+    Marker 1: start=12954.8ms, offset=12954.8ms, weight=0.88
+    Marker 2: start=72713.7ms, offset=12713.7ms, weight=1.65
+    Weighted average offset: 12797.2 ms
+
+  ============================================
+  TIMING RESULT
+  ============================================
+  First minute boundary: 12.797 sec into recording
+  Recording started: 47.203 sec after UTC minute
+  Offset from file start to minute: 12797.2 ms
+  ============================================
+  Quality: GOOD - Reliable timing
+
+
+  Using marker 2 (dur=762ms, closest to 800ms) for BCD decode
+
+  ============================================
+  BCD TIME CODE DECODE
+  ============================================
+  Alignment offset: -500 ms (found 2/7 markers)
+  Minute starts at: 72.143 sec into file
+  Pulse durations (ms):
+    ?0???????? ??????10?? ?????0???- 
+    ?????????? ?0???????? ?????????- 
+  Numeric durations:
+     20 315  24  97  68  24  58  28  20  47 
+     13  15 103  15   0  26 497 154  82  37 
+    118  29  47  23  21 177  19  24   0   0 
+      0  52  16  11  32  12 143  19  34   0 
+     83 249  16  16  13  23  55  19 108   0 
+     21  78  19  13  20  13   0  64 116   0 
+    
+  Legend: 0=200ms, 1=500ms, M=800ms marker, -=silent, ?=invalid
+
+  Position markers: [0:FAIL] [9:FAIL] [19:FAIL] [29:silent] [39:FAIL] [49:FAIL] [59:silent] 
+  Markers valid: 2/7
+
+  WARNING: Insufficient valid markers for reliable decode
+
+  DECODED TIME (UTC):
+    Time: 20:00:00 UTC (some values invalid)
+    Date: Day -1 of 2000
+    WARNING: Time decode may be unreliable
+
+  Raw BCD bits:
+    Minutes: 00000000 -> 0
+    Hours:   000000100 -> 20
+    Day:     000000000-0000 -> -1
+    Year:    000000000 -> 0
+===========================================

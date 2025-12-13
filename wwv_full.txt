@@ -1,0 +1,1209 @@
+iqr_open: Opened wwv_600_48k.iqr
+  Sample rate: 48000 Hz
+  Center freq: 10000000 Hz
+  Samples: 28802826
+  Duration: 600.06 seconds
+===========================================
+WWV Sync Detector
+===========================================
+File: wwv_600_48k.iqr
+Sample Rate: 48000 Hz
+Center Freq: 0 Hz
+Duration: 600.06 sec
+Mode: 1000Hz BANDPASS
+Analyzing: 0.00 to 600.00 sec
+
+Pass 1: Extracting envelope...
+  600000 ms of envelope data
+Pass 2: Computing baseline (trailing window)...
+Pass 3: Computing adaptive thresholds (mean + 1.5*sigma)...
+  Adaptive threshold: min=0.0024, max=0.0545, avg=0.0149
+  Local std dev: min=0.0003, max=0.0159, avg=0.0027
+Pass 4: Finding minute markers...
+  Trying ADAPTIVE detection (mean + 1.5*sigma)...
+  Found 58 candidate(s)
+
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.30] 
+    
+    [59:1.85] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.91] 
+    
+    [59:1.63] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.23] 
+    
+    [59:0.81] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.19] 
+    
+    [59:1.24] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.71] 
+    
+    [59:1.10] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.96] 
+    
+    [59:1.35] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.43] 
+    
+    [59:1.17] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.96] 
+    
+    [59:0.64] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.47] 
+    
+    [59:0.89] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.15] 
+    
+    [59:1.11] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.67] 
+    
+    [59:1.25] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.56] 
+    
+    [59:0.64] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:2.25] 
+    
+    [59:1.02] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.00] 
+    
+    [59:0.55] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.49] 
+    
+    [59:0.97] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.73] 
+    
+    [59:0.98] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.88] 
+    
+    [59:0.86] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.01] 
+    
+    [59:1.35] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.06] 
+    
+    [59:1.45] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.58] 
+    
+    [59:0.46] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.34] 
+    
+    [59:0.81] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.16] 
+    
+    [59:0.60] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.56] 
+    
+    [59:1.53] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.51] 
+    
+    [59:1.04] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.20] 
+    
+    [59:0.92] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.21] 
+    
+    [59:0.98] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.89] 
+    
+    [59:0.79] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.23] 
+    
+    [59:1.06] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.73] 
+    
+    [59:1.17] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.79] 
+    
+    [59:1.53] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.08] 
+    
+    [59:0.91] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.09] 
+    
+    [59:1.38] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.53] 
+    
+    [59:0.80] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.50] 
+    
+    [59:0.53] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.63] 
+    
+    [59:1.47] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.09] 
+    
+    [59:1.15] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.61] 
+    
+    [59:0.87] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.01] 
+    
+    [59:0.88] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.72] 
+    
+    [59:1.64] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.23] 
+    
+    [59:0.64] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.94] 
+    
+    [59:1.24] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.78] 
+    
+    [59:0.68] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.05] 
+    
+    [59:0.49] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.91] 
+    
+    [59:1.12] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.83] 
+    
+    [59:1.01] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.63] 
+    
+    [59:0.92] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.46] 
+    
+    [59:1.11] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.26] 
+    
+    [59:0.84] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.38] 
+    
+    [59:1.13] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.59] 
+    
+    [59:0.56] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:4.97] 
+    
+    [59:0.69] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.96] 
+    
+    [59:0.96] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.23] 
+    
+    [59:0.93] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:2.06] 
+    
+    [59:1.08] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.09] 
+    
+    [59:0.77] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:1.09] 
+    
+    [59:0.93] 
+  Tick verification (comparing level at tick vs mid-second):
+    
+    [29:0.91] 
+    
+    
+  Tick verification (comparing level at tick vs mid-second):
+    
+Pass 5: Checking 60-second spacing...
+  Filtered: 58 -> 50 candidates with 60s partners
+-------------------------------------------
+Candidate 1: Minute marker at t=3.831 sec
+  Mode: ADAPTIVE
+  Start: 3.068 sec, End: 3.831 sec
+  Duration: 763 ms (expected 800ms)
+  Peak sigmas: 7.84 σ above mean
+
+  Results:
+    Ticks detected: 18 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: HAS TICK (bad)
+    Confidence: 60%
+
+-------------------------------------------
+Candidate 2: Minute marker at t=9.255 sec
+  Mode: ADAPTIVE
+  Start: 8.699 sec, End: 9.255 sec
+  Duration: 556 ms (expected 800ms)
+  Peak sigmas: 3.33 σ above mean
+
+  Results:
+    Ticks detected: 18 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: HAS TICK (bad)
+    Confidence: 73%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 9.255 sec into file
+-------------------------------------------
+Candidate 3: Minute marker at t=17.587 sec
+  Mode: ADAPTIVE
+  Start: 16.968 sec, End: 17.587 sec
+  Duration: 619 ms (expected 800ms)
+  Peak sigmas: 3.35 σ above mean
+
+  Results:
+    Ticks detected: 13 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: SILENT (good)
+    Confidence: 72%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 17.587 sec into file
+-------------------------------------------
+Candidate 4: Minute marker at t=37.473 sec
+  Mode: ADAPTIVE
+  Start: 37.050 sec, End: 37.473 sec
+  Duration: 423 ms (expected 800ms)
+  Peak sigmas: 3.74 σ above mean
+
+  Results:
+    Ticks detected: 17 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: HAS TICK (bad)
+    Confidence: 49%
+
+-------------------------------------------
+Candidate 5: Minute marker at t=49.360 sec
+  Mode: ADAPTIVE
+  Start: 48.954 sec, End: 49.360 sec
+  Duration: 406 ms (expected 800ms)
+  Peak sigmas: 3.44 σ above mean
+
+  Results:
+    Ticks detected: 25 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 93%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 49.360 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 6: Minute marker at t=62.510 sec
+  Mode: ADAPTIVE
+  Start: 61.804 sec, End: 62.510 sec
+  Duration: 706 ms (expected 800ms)
+  Peak sigmas: 5.34 σ above mean
+
+  Results:
+    Ticks detected: 14 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: HAS TICK (bad)
+    Confidence: 76%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 62.510 sec into file
+-------------------------------------------
+Candidate 7: Minute marker at t=79.472 sec
+  Mode: ADAPTIVE
+  Start: 79.000 sec, End: 79.472 sec
+  Duration: 472 ms (expected 800ms)
+  Peak sigmas: 2.25 σ above mean
+
+  Results:
+    Ticks detected: 19 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: HAS TICK (bad)
+    Confidence: 51%
+
+-------------------------------------------
+Candidate 8: Minute marker at t=81.729 sec
+  Mode: ADAPTIVE
+  Start: 81.184 sec, End: 81.729 sec
+  Duration: 545 ms (expected 800ms)
+  Peak sigmas: 5.30 σ above mean
+
+  Results:
+    Ticks detected: 23 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 96%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 81.729 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 9: Minute marker at t=116.119 sec
+  Mode: ADAPTIVE
+  Start: 115.303 sec, End: 116.119 sec
+  Duration: 816 ms (expected 800ms)
+  Peak sigmas: 5.39 σ above mean
+
+  Results:
+    Ticks detected: 24 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: HAS TICK (bad)
+    Confidence: 64%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 116.119 sec into file
+-------------------------------------------
+Candidate 10: Minute marker at t=119.930 sec
+  Mode: ADAPTIVE
+  Start: 119.333 sec, End: 119.930 sec
+  Duration: 597 ms (expected 800ms)
+  Peak sigmas: 5.26 σ above mean
+
+  Results:
+    Ticks detected: 22 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 97%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 119.930 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 11: Minute marker at t=125.528 sec
+  Mode: ADAPTIVE
+  Start: 124.624 sec, End: 125.528 sec
+  Duration: 904 ms (expected 800ms)
+  Peak sigmas: 4.96 σ above mean
+
+  Results:
+    Ticks detected: 13 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: SILENT (good)
+    Confidence: 75%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 125.528 sec into file
+-------------------------------------------
+Candidate 12: Minute marker at t=133.678 sec
+  Mode: ADAPTIVE
+  Start: 133.127 sec, End: 133.678 sec
+  Duration: 551 ms (expected 800ms)
+  Peak sigmas: 5.21 σ above mean
+
+  Results:
+    Ticks detected: 18 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 93%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 133.678 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 13: Minute marker at t=142.397 sec
+  Mode: ADAPTIVE
+  Start: 141.941 sec, End: 142.397 sec
+  Duration: 456 ms (expected 800ms)
+  Peak sigmas: 4.13 σ above mean
+
+  Results:
+    Ticks detected: 17 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: SILENT (good)
+    Confidence: 70%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 142.397 sec into file
+-------------------------------------------
+Candidate 14: Minute marker at t=142.968 sec
+  Mode: ADAPTIVE
+  Start: 142.463 sec, End: 142.968 sec
+  Duration: 505 ms (expected 800ms)
+  Peak sigmas: 4.95 σ above mean
+
+  Results:
+    Ticks detected: 29 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 99%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 142.968 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 15: Minute marker at t=159.758 sec
+  Mode: ADAPTIVE
+  Start: 158.748 sec, End: 159.758 sec
+  Duration: 1010 ms (expected 800ms)
+  Peak sigmas: 7.43 σ above mean
+
+  Results:
+    Ticks detected: 18 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: HAS TICK (bad)
+    Confidence: 74%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 159.758 sec into file
+-------------------------------------------
+Candidate 16: Minute marker at t=191.701 sec
+  Mode: ADAPTIVE
+  Start: 190.987 sec, End: 191.701 sec
+  Duration: 714 ms (expected 800ms)
+  Peak sigmas: 3.12 σ above mean
+
+  Results:
+    Ticks detected: 23 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 100%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 191.701 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 17: Minute marker at t=200.176 sec
+  Mode: ADAPTIVE
+  Start: 199.535 sec, End: 200.176 sec
+  Duration: 641 ms (expected 800ms)
+  Peak sigmas: 2.92 σ above mean
+
+  Results:
+    Ticks detected: 24 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: SILENT (good)
+    Confidence: 80%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 200.176 sec into file
+-------------------------------------------
+Candidate 18: Minute marker at t=201.713 sec
+  Mode: ADAPTIVE
+  Start: 200.924 sec, End: 201.713 sec
+  Duration: 789 ms (expected 800ms)
+  Peak sigmas: 5.22 σ above mean
+
+  Results:
+    Ticks detected: 24 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: SILENT (good)
+    Confidence: 84%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 201.713 sec into file
+-------------------------------------------
+Candidate 19: Minute marker at t=216.823 sec
+  Mode: ADAPTIVE
+  Start: 216.252 sec, End: 216.823 sec
+  Duration: 571 ms (expected 800ms)
+  Peak sigmas: 3.20 σ above mean
+
+  Results:
+    Ticks detected: 21 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 96%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 216.823 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 20: Minute marker at t=230.724 sec
+  Mode: ADAPTIVE
+  Start: 230.198 sec, End: 230.724 sec
+  Duration: 526 ms (expected 800ms)
+  Peak sigmas: 2.58 σ above mean
+
+  Results:
+    Ticks detected: 24 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: SILENT (good)
+    Confidence: 76%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 230.724 sec into file
+-------------------------------------------
+Candidate 21: Minute marker at t=233.459 sec
+  Mode: ADAPTIVE
+  Start: 232.869 sec, End: 233.459 sec
+  Duration: 590 ms (expected 800ms)
+  Peak sigmas: 5.08 σ above mean
+
+  Results:
+    Ticks detected: 22 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: SILENT (good)
+    Confidence: 77%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 233.459 sec into file
+-------------------------------------------
+Candidate 22: Minute marker at t=241.613 sec
+  Mode: ADAPTIVE
+  Start: 241.152 sec, End: 241.613 sec
+  Duration: 461 ms (expected 800ms)
+  Peak sigmas: 3.43 σ above mean
+
+  Results:
+    Ticks detected: 21 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 92%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 241.613 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 23: Minute marker at t=242.377 sec
+  Mode: ADAPTIVE
+  Start: 241.913 sec, End: 242.377 sec
+  Duration: 464 ms (expected 800ms)
+  Peak sigmas: 4.20 σ above mean
+
+  Results:
+    Ticks detected: 28 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: SILENT (good)
+    Confidence: 77%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 242.377 sec into file
+-------------------------------------------
+Candidate 24: Minute marker at t=251.575 sec
+  Mode: ADAPTIVE
+  Start: 251.036 sec, End: 251.575 sec
+  Duration: 539 ms (expected 800ms)
+  Peak sigmas: 3.05 σ above mean
+
+  Results:
+    Ticks detected: 20 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: HAS TICK (bad)
+    Confidence: 74%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 251.575 sec into file
+-------------------------------------------
+Candidate 25: Minute marker at t=256.440 sec
+  Mode: ADAPTIVE
+  Start: 255.950 sec, End: 256.440 sec
+  Duration: 490 ms (expected 800ms)
+  Peak sigmas: 2.39 σ above mean
+
+  Results:
+    Ticks detected: 24 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: HAS TICK (bad)
+    Confidence: 75%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 256.440 sec into file
+-------------------------------------------
+Candidate 26: Minute marker at t=258.620 sec
+  Mode: ADAPTIVE
+  Start: 258.197 sec, End: 258.620 sec
+  Duration: 423 ms (expected 800ms)
+  Peak sigmas: 5.40 σ above mean
+
+  Results:
+    Ticks detected: 20 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 90%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 258.620 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 27: Minute marker at t=262.323 sec
+  Mode: ADAPTIVE
+  Start: 261.580 sec, End: 262.323 sec
+  Duration: 743 ms (expected 800ms)
+  Peak sigmas: 4.80 σ above mean
+
+  Results:
+    Ticks detected: 24 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: HAS TICK (bad)
+    Confidence: 83%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 262.323 sec into file
+-------------------------------------------
+Candidate 28: Minute marker at t=276.146 sec
+  Mode: ADAPTIVE
+  Start: 275.662 sec, End: 276.146 sec
+  Duration: 484 ms (expected 800ms)
+  Peak sigmas: 2.12 σ above mean
+
+  Results:
+    Ticks detected: 24 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 95%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 276.146 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 29: Minute marker at t=295.740 sec
+  Mode: ADAPTIVE
+  Start: 295.282 sec, End: 295.740 sec
+  Duration: 458 ms (expected 800ms)
+  Peak sigmas: 2.83 σ above mean
+
+  Results:
+    Ticks detected: 23 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 93%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 295.740 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 30: Minute marker at t=298.416 sec
+  Mode: ADAPTIVE
+  Start: 297.682 sec, End: 298.416 sec
+  Duration: 734 ms (expected 800ms)
+  Peak sigmas: 3.80 σ above mean
+
+  Results:
+    Ticks detected: 23 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: HAS TICK (bad)
+    Confidence: 82%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 298.416 sec into file
+-------------------------------------------
+Candidate 31: Minute marker at t=301.902 sec
+  Mode: ADAPTIVE
+  Start: 301.255 sec, End: 301.902 sec
+  Duration: 647 ms (expected 800ms)
+  Peak sigmas: 2.72 σ above mean
+
+  Results:
+    Ticks detected: 21 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: HAS TICK (bad)
+    Confidence: 78%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 301.902 sec into file
+-------------------------------------------
+Candidate 32: Minute marker at t=302.416 sec
+  Mode: ADAPTIVE
+  Start: 301.954 sec, End: 302.416 sec
+  Duration: 462 ms (expected 800ms)
+  Peak sigmas: 2.15 σ above mean
+
+  Results:
+    Ticks detected: 24 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 94%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 302.416 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 33: Minute marker at t=303.138 sec
+  Mode: ADAPTIVE
+  Start: 302.624 sec, End: 303.138 sec
+  Duration: 514 ms (expected 800ms)
+  Peak sigmas: 2.17 σ above mean
+
+  Results:
+    Ticks detected: 24 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 96%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 303.138 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 34: Minute marker at t=306.593 sec
+  Mode: ADAPTIVE
+  Start: 305.966 sec, End: 306.593 sec
+  Duration: 627 ms (expected 800ms)
+  Peak sigmas: 2.39 σ above mean
+
+  Results:
+    Ticks detected: 17 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: HAS TICK (bad)
+    Confidence: 55%
+
+-------------------------------------------
+Candidate 35: Minute marker at t=310.202 sec
+  Mode: ADAPTIVE
+  Start: 309.454 sec, End: 310.202 sec
+  Duration: 748 ms (expected 800ms)
+  Peak sigmas: 1.96 σ above mean
+
+  Results:
+    Ticks detected: 26 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: SILENT (good)
+    Confidence: 84%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 310.202 sec into file
+-------------------------------------------
+Candidate 36: Minute marker at t=314.462 sec
+  Mode: ADAPTIVE
+  Start: 313.914 sec, End: 314.462 sec
+  Duration: 548 ms (expected 800ms)
+  Peak sigmas: 4.24 σ above mean
+
+  Results:
+    Ticks detected: 17 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: HAS TICK (bad)
+    Confidence: 73%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 314.462 sec into file
+-------------------------------------------
+Candidate 37: Minute marker at t=319.571 sec
+  Mode: ADAPTIVE
+  Start: 318.522 sec, End: 319.571 sec
+  Duration: 1049 ms (expected 800ms)
+  Peak sigmas: 4.44 σ above mean
+
+  Results:
+    Ticks detected: 21 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 95%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 319.571 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 38: Minute marker at t=341.111 sec
+  Mode: ADAPTIVE
+  Start: 340.105 sec, End: 341.111 sec
+  Duration: 1006 ms (expected 800ms)
+  Peak sigmas: 9.19 σ above mean
+
+  Results:
+    Ticks detected: 31 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 100%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 341.111 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 39: Minute marker at t=349.306 sec
+  Mode: ADAPTIVE
+  Start: 348.354 sec, End: 349.306 sec
+  Duration: 952 ms (expected 800ms)
+  Peak sigmas: 2.90 σ above mean
+
+  Results:
+    Ticks detected: 26 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: HAS TICK (bad)
+    Confidence: 81%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 349.306 sec into file
+-------------------------------------------
+Candidate 40: Minute marker at t=352.542 sec
+  Mode: ADAPTIVE
+  Start: 352.103 sec, End: 352.542 sec
+  Duration: 439 ms (expected 800ms)
+  Peak sigmas: 2.78 σ above mean
+
+  Results:
+    Ticks detected: 16 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: SILENT (good)
+    Confidence: 69%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 352.542 sec into file
+-------------------------------------------
+Candidate 41: Minute marker at t=356.511 sec
+  Mode: ADAPTIVE
+  Start: 355.525 sec, End: 356.511 sec
+  Duration: 986 ms (expected 800ms)
+  Peak sigmas: 3.17 σ above mean
+
+  Results:
+    Ticks detected: 14 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: SILENT (good)
+    Confidence: 73%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 356.511 sec into file
+-------------------------------------------
+Candidate 42: Minute marker at t=370.607 sec
+  Mode: ADAPTIVE
+  Start: 369.619 sec, End: 370.607 sec
+  Duration: 988 ms (expected 800ms)
+  Peak sigmas: 2.45 σ above mean
+
+  Results:
+    Ticks detected: 14 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: HAS TICK (bad)
+    Confidence: 53%
+
+-------------------------------------------
+Candidate 43: Minute marker at t=373.670 sec
+  Mode: ADAPTIVE
+  Start: 372.837 sec, End: 373.670 sec
+  Duration: 833 ms (expected 800ms)
+  Peak sigmas: 2.66 σ above mean
+
+  Results:
+    Ticks detected: 16 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: SILENT (good)
+    Confidence: 79%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 373.670 sec into file
+-------------------------------------------
+Candidate 44: Minute marker at t=383.903 sec
+  Mode: ADAPTIVE
+  Start: 382.851 sec, End: 383.903 sec
+  Duration: 1052 ms (expected 800ms)
+  Peak sigmas: 3.55 σ above mean
+
+  Results:
+    Ticks detected: 17 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: HAS TICK (bad)
+    Confidence: 53%
+
+-------------------------------------------
+Candidate 45: Minute marker at t=398.421 sec
+  Mode: ADAPTIVE
+  Start: 397.966 sec, End: 398.421 sec
+  Duration: 455 ms (expected 800ms)
+  Peak sigmas: 2.86 σ above mean
+
+  Results:
+    Ticks detected: 23 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 93%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 398.421 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 46: Minute marker at t=401.882 sec
+  Mode: ADAPTIVE
+  Start: 400.974 sec, End: 401.882 sec
+  Duration: 908 ms (expected 800ms)
+  Peak sigmas: 2.54 σ above mean
+
+  Results:
+    Ticks detected: 23 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: SILENT (good)
+    Confidence: 81%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 401.882 sec into file
+-------------------------------------------
+Candidate 47: Minute marker at t=429.470 sec
+  Mode: ADAPTIVE
+  Start: 428.745 sec, End: 429.470 sec
+  Duration: 725 ms (expected 800ms)
+  Peak sigmas: 4.01 σ above mean
+
+  Results:
+    Ticks detected: 13 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 96%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 429.470 sec into file
+  >>> LOCK CONFIRMED <<<
+-------------------------------------------
+Candidate 48: Minute marker at t=443.231 sec
+  Mode: ADAPTIVE
+  Start: 442.213 sec, End: 443.231 sec
+  Duration: 1018 ms (expected 800ms)
+  Peak sigmas: 5.48 σ above mean
+
+  Results:
+    Ticks detected: 23 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: SILENT (good)
+    Confidence: 77%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 443.231 sec into file
+-------------------------------------------
+Candidate 49: Minute marker at t=462.476 sec
+  Mode: ADAPTIVE
+  Start: 461.792 sec, End: 462.476 sec
+  Duration: 684 ms (expected 800ms)
+  Peak sigmas: 2.89 σ above mean
+
+  Results:
+    Ticks detected: 14 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: HAS TICK (bad)
+    Second 59: SILENT (good)
+    Confidence: 75%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 462.476 sec into file
+-------------------------------------------
+Candidate 50: Minute marker at t=501.728 sec
+  Mode: ADAPTIVE
+  Start: 501.050 sec, End: 501.728 sec
+  Duration: 678 ms (expected 800ms)
+  Peak sigmas: 2.49 σ above mean
+
+  Results:
+    Ticks detected: 17 (of ~57 expected)
+    Avg tick/gap ratio: 0.00
+    Second 29: SILENT (good)
+    Second 59: SILENT (good)
+    Confidence: 97%
+
+  >>> PROBABLE LOCK <<<
+  Minute boundary: 501.728 sec into file
+  >>> LOCK CONFIRMED <<<
+
+Pass 6: Building marker chains...
+  Found 12 chain(s) with 60s spacing
+  Chain 1: 2 markers, score=34.0, sec59_silent=0/2
+  Chain 2: 4 markers, score=62.7, sec59_silent=3/4
+  Chain 3: 2 markers, score=57.2, sec59_silent=1/2
+  Chain 4: 3 markers, score=61.2, sec59_silent=3/3
+  Chain 5: 2 markers, score=61.5, sec59_silent=2/2
+  Chain 6: 2 markers, score=52.9, sec59_silent=1/2
+  Chain 7: 2 markers, score=58.2, sec59_silent=2/2
+  Chain 8: 2 markers, score=58.3, sec59_silent=2/2
+  Chain 9: 3 markers, score=58.6, sec59_silent=2/3
+  Chain 10: 2 markers, score=44.9, sec59_silent=1/2
+  Chain 11: 3 markers, score=63.4, sec59_silent=3/3
+  Chain 12: 3 markers, score=50.9, sec59_silent=2/3
+
+===========================================
+BEST CHAIN SELECTED (Chain 2 of 12)
+===========================================
+  Chain length: 4 markers
+  Score: 62.7 / 100
+  Sec 59 silent: 3/4 (75%)
+  Sec 29 silent: 2/4 (50%)
+  Avg duration error: 167 ms (from 800ms)
+  Avg confidence: 83%
+
+  Chain members (with refined edge detection):
+    [1] start=81237.6ms, end=81722.7ms, dur=485ms (was 545ms), sec29=silent, sec59=silent
+    [2] start=141841.2ms, end=142399.5ms, dur=558ms (was 456ms), sec29=TICK, sec59=silent
+    [3] start=200924.1ms, end=201678.0ms, dur=754ms (was 789ms), sec29=TICK, sec59=silent
+    [4] start=261622.4ms, end=262358.6ms, dur=736ms (was 743ms), sec29=silent, sec59=TICK
+
+  TIMING CALCULATION:
+  Using marker START for timing (WWV minute starts at pulse onset)
+    Marker 1: start=81237.6ms, offset=21237.6ms, weight=1.11
+    Marker 2: start=141841.2ms, offset=21841.2ms, weight=0.64
+    Marker 3: start=200924.1ms, offset=20924.1ms, weight=1.47
+    Marker 4: start=261622.4ms, offset=21622.4ms, weight=1.11
+    Weighted average offset: 21318.6 ms
+
+  ============================================
+  TIMING RESULT
+  ============================================
+  First minute boundary: 21.320 sec into recording
+  Recording started: 38.681 sec after UTC minute
+  Offset from file start to minute: 21318.6 ms
+  ============================================
+  Quality: GOOD - Reliable timing
+
+
+  Using marker 3 (dur=789ms, closest to 800ms) for BCD decode
+
+  ============================================
+  BCD TIME CODE DECODE
+  ============================================
+  Alignment offset: -50 ms (found 3/7 markers)
+  Minute starts at: 200.874 sec into file
+  Pulse durations (ms):
+    ?1??1010?M ????0?1?0? ????????1- 
+    ???1?M?0?? 1??0?????? M?1????0?- 
+  Numeric durations:
+     25 405   0   0 475 276 383 294   0 903 
+      0  48   0   0 338   0 614  24 233   0 
+      0   0   0   0   0  66   0   0 612   0 
+     69  11   0 475   0 920  24 186   0   0 
+    605  21   0 290   0   0   0   0   0   0 
+    786   0 461   0   0 632  45 173  31   0 
+    
+  Legend: 0=200ms, 1=500ms, M=800ms marker, -=silent, ?=invalid
+
+  Position markers: [0:FAIL] [9:OK] [19:FAIL] [29:silent] [39:FAIL] [49:FAIL] [59:silent] 
+  Markers valid: 3/7
+
+  WARNING: Insufficient valid markers for reliable decode
+
+  DECODED TIME (UTC):
+    Time: 20:29:00 UTC
+    Date: Day 080 of 2001
+    DUT1: +0.0 seconds
+    Leap year: No
+    Leap second warning: YES
+    DST status: 0
+
+  Raw BCD bits:
+    Minutes: 10010100 -> 29
+    Hours:   000000100 -> 20
+    Day:     000000001-0001 -> 80
+    Year:    100000000 -> 1
+===========================================

@@ -1,11 +1,6 @@
-/**
- * @file wwv_analyze.c
- * @brief WWV/WWVH detailed timing analysis
- * 
- * Outputs detailed tick timing for analysis and refinement.
- * Identifies minute boundaries by looking for missing 29th/59th ticks.
- * 
- * Usage: wwv_analyze <file.iqr>
+/*
+ * wwv_analyze.c - Automated WWV signal analysis
+ * Analyzes recording and reports findings, not raw data
  */
 
 #include "iq_recorder.h"
@@ -18,10 +13,9 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-/*============================================================================
- * Biquad Bandpass Filter
- *============================================================================*/
+#define ANALYSIS_WINDOW_MS 10
 
+// Biquad filter for bandpass
 typedef struct {
     float b0, b1, b2;
     float a1, a2;
@@ -30,29 +24,24 @@ typedef struct {
 } biquad_t;
 
 static void biquad_design_bp(biquad_t *bq, float fs, float fc, float Q) {
-    float w0 = 2.0f * M_PI * fc / fs;
+    float w0 = 2.0f * (float)M_PI * fc / fs;
     float alpha = sinf(w0) / (2.0f * Q);
+    float cos_w0 = cosf(w0);
     
-    float b0 = alpha;
-    float b1 = 0.0f;
-    float b2 = -alpha;
     float a0 = 1.0f + alpha;
-    float a1 = -2.0f * cosf(w0);
-    float a2 = 1.0f - alpha;
+    bq->b0 = alpha / a0;
+    bq->b1 = 0.0f;
+    bq->b2 = -alpha / a0;
+    bq->a1 = -2.0f * cos_w0 / a0;
+    bq->a2 = (1.0f - alpha) / a0;
     
-    bq->b0 = b0 / a0;
-    bq->b1 = b1 / a0;
-    bq->b2 = b2 / a0;
-    bq->a1 = a1 / a0;
-    bq->a2 = a2 / a0;
-    
-    bq->x1 = bq->x2 = 0.0f;
-    bq->y1 = bq->y2 = 0.0f;
+    bq->x1 = bq->x2 = 0;
+    bq->y1 = bq->y2 = 0;
 }
 
 static float biquad_process(biquad_t *bq, float x) {
     float y = bq->b0 * x + bq->b1 * bq->x1 + bq->b2 * bq->x2
-                        - bq->a1 * bq->y1 - bq->a2 * bq->y2;
+            - bq->a1 * bq->y1 - bq->a2 * bq->y2;
     bq->x2 = bq->x1;
     bq->x1 = x;
     bq->y2 = bq->y1;
@@ -60,419 +49,237 @@ static float biquad_process(biquad_t *bq, float x) {
     return y;
 }
 
-/*============================================================================
- * Envelope follower
- *============================================================================*/
-
-typedef struct {
-    float level;
-} envelope_t;
-
-static void envelope_init(envelope_t *env) {
-    env->level = 0.0f;
-}
-
-static float envelope_process(envelope_t *env, float x) {
-    float mag = fabsf(x);
-    if (mag > env->level) {
-        env->level += 0.3f * (mag - env->level);
-    } else {
-        env->level += 0.01f * (mag - env->level);
-    }
-    return env->level;
-}
-
-/*============================================================================
- * Tick storage
- *============================================================================*/
-
-#define MAX_TICKS 2000
-
-typedef struct {
-    uint64_t sample;
-    double time_sec;
-    float level;
-    int station;  /* 0=WWV, 1=WWVH */
-} tick_t;
-
-static tick_t g_ticks[MAX_TICKS];
-static int g_tick_count = 0;
-
-/*============================================================================
- * Channel
- *============================================================================*/
-
-typedef struct {
-    const char *name;
-    int id;
-    float center_freq;
-    biquad_t bp;
-    envelope_t env;
-    float threshold;
-    
-    int in_tick;
-    int samples_in_tick;
-    float tick_peak;
-    uint64_t tick_start;
-    uint64_t last_tick;
-    int tick_count;
-    
-    float max_level;
-    float sum_level;
-    uint64_t level_count;
-} channel_t;
-
-static void channel_init(channel_t *ch, const char *name, int id, float fc, float fs) {
-    ch->name = name;
-    ch->id = id;
-    ch->center_freq = fc;
-    biquad_design_bp(&ch->bp, fs, fc, 10.0f);
-    envelope_init(&ch->env);
-    ch->threshold = 0.0f;
-    
-    ch->in_tick = 0;
-    ch->samples_in_tick = 0;
-    ch->tick_peak = 0.0f;
-    ch->tick_start = 0;
-    ch->last_tick = 0;
-    ch->tick_count = 0;
-    
-    ch->max_level = 0.0f;
-    ch->sum_level = 0.0f;
-    ch->level_count = 0;
-}
-
-static void channel_reset(channel_t *ch, float fs) {
-    biquad_design_bp(&ch->bp, fs, ch->center_freq, 10.0f);
-    envelope_init(&ch->env);
-    ch->in_tick = 0;
-    ch->samples_in_tick = 0;
-    ch->tick_peak = 0.0f;
-    ch->tick_start = 0;
-    ch->last_tick = 0;
-    ch->tick_count = 0;
-}
-
-/*============================================================================
- * Main
- *============================================================================*/
-
-#define CHUNK_SIZE 4096
-
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        printf("WWV/WWVH Timing Analyzer\n");
+    if (argc < 2) {
         printf("Usage: %s <file.iqr>\n", argv[0]);
+        printf("Analyzes WWV recording and reports minute marker candidates\n");
         return 1;
     }
     
-    const char *filename = argv[1];
     iqr_reader_t *reader = NULL;
-    iqr_error_t err;
-    
-    err = iqr_open(&reader, filename);
+    iqr_error_t err = iqr_open(&reader, argv[1]);
     if (err != IQR_OK) {
-        fprintf(stderr, "Failed to open: %s\n", iqr_strerror(err));
+        fprintf(stderr, "Failed to open %s: %s\n", argv[1], iqr_strerror(err));
         return 1;
     }
     
     const iqr_header_t *hdr = iqr_get_header(reader);
-    float fs = (float)hdr->sample_rate_hz;
+    double sample_rate = hdr->sample_rate_hz;
+    uint64_t total_samples = hdr->sample_count;
+    double duration = (double)total_samples / sample_rate;
     
-    printf("\nFile: %s\n", filename);
-    printf("Sample Rate: %.0f Hz\n", fs);
-    printf("Duration: %.2f seconds\n\n", 
-           (double)hdr->sample_count / fs);
+    int samples_per_window = (int)(sample_rate * ANALYSIS_WINDOW_MS / 1000);
+    int num_windows = (int)(duration * 1000 / ANALYSIS_WINDOW_MS);
     
-    channel_t wwv, wwvh;
-    channel_init(&wwv, "WWV", 0, 1000.0f, fs);
-    channel_init(&wwvh, "WWVH", 1, 1200.0f, fs);
+    printf("=== WWV Signal Analysis ===\n");
+    printf("File: %s\n", argv[1]);
+    printf("Sample Rate: %.0f Hz\n", sample_rate);
+    printf("Duration: %.1f seconds\n", duration);
+    printf("Expected minute markers: %d\n", (int)(duration / 60) + 1);
+    printf("Analysis windows: %d (at %d ms each)\n\n", num_windows, ANALYSIS_WINDOW_MS);
     
-    int16_t xi[CHUNK_SIZE], xq[CHUNK_SIZE];
+    // Allocate envelope array
+    double *envelope = calloc(num_windows, sizeof(double));
+    if (!envelope) {
+        fprintf(stderr, "Failed to allocate envelope array\n");
+        iqr_close(reader);
+        return 1;
+    }
+    
+    // Setup 1000 Hz bandpass filter
+    biquad_t bp1000;
+    biquad_design_bp(&bp1000, (float)sample_rate, 1000.0f, 20.0f);
+    
+    // Process samples
+    int16_t xi[4096], xq[4096];
     uint32_t num_read;
-    uint64_t sample_num = 0;
-    float dc_prev_in = 0.0f, dc_prev_out = 0.0f;
+    int window_idx = 0;
+    double window_energy = 0;
+    int samples_in_window = 0;
     
-    /* Pass 1: Get levels */
-    printf("Pass 1: Analyzing levels...\n");
+    printf("Processing samples...\n");
     
-    while (1) {
-        err = iqr_read(reader, xi, xq, CHUNK_SIZE, &num_read);
-        if (err != IQR_OK || num_read == 0) break;
-        
+    while (iqr_read(reader, xi, xq, 4096, &num_read) == IQR_OK && num_read > 0) {
         for (uint32_t i = 0; i < num_read; i++) {
-            float fi = (float)xi[i];
-            float fq = (float)xq[i];
-            float envelope = sqrtf(fi*fi + fq*fq) / 32768.0f;
+            // Convert to float and get magnitude
+            float mag = sqrtf((float)xi[i] * xi[i] + (float)xq[i] * xq[i]) / 32768.0f;
             
-            float audio = envelope - dc_prev_in + 0.995f * dc_prev_out;
-            dc_prev_in = envelope;
-            dc_prev_out = audio;
+            // Bandpass filter
+            float filtered = biquad_process(&bp1000, mag);
+            window_energy += fabsf(filtered);
+            samples_in_window++;
             
-            float filt_wwv = biquad_process(&wwv.bp, audio);
-            float level_wwv = envelope_process(&wwv.env, filt_wwv);
-            wwv.sum_level += level_wwv;
-            wwv.level_count++;
-            if (level_wwv > wwv.max_level) wwv.max_level = level_wwv;
-            
-            float filt_wwvh = biquad_process(&wwvh.bp, audio);
-            float level_wwvh = envelope_process(&wwvh.env, filt_wwvh);
-            wwvh.sum_level += level_wwvh;
-            wwvh.level_count++;
-            if (level_wwvh > wwvh.max_level) wwvh.max_level = level_wwvh;
+            if (samples_in_window >= samples_per_window) {
+                if (window_idx < num_windows) {
+                    envelope[window_idx++] = window_energy / samples_in_window;
+                }
+                window_energy = 0;
+                samples_in_window = 0;
+            }
         }
-        sample_num += num_read;
     }
     
-    float avg_wwv = wwv.sum_level / (float)wwv.level_count;
-    float avg_wwvh = wwvh.sum_level / (float)wwvh.level_count;
+    printf("Processed %d windows\n\n", window_idx);
+    num_windows = window_idx;  // Use actual count
     
-    /* Use 2x average as threshold for better detection */
-    wwv.threshold = avg_wwv * 2.0f;
-    wwvh.threshold = avg_wwvh * 2.0f;
+    // Calculate statistics
+    double sum = 0, min_val = 1e9, max_val = 0;
+    for (int i = 0; i < num_windows; i++) {
+        sum += envelope[i];
+        if (envelope[i] < min_val) min_val = envelope[i];
+        if (envelope[i] > max_val) max_val = envelope[i];
+    }
+    double avg = sum / num_windows;
     
-    printf("WWV:  max=%.6f avg=%.6f ratio=%.2f thresh=%.6f\n", 
-           wwv.max_level, avg_wwv, wwv.max_level/avg_wwv, wwv.threshold);
-    printf("WWVH: max=%.6f avg=%.6f ratio=%.2f thresh=%.6f\n\n",
-           wwvh.max_level, avg_wwvh, wwvh.max_level/avg_wwvh, wwvh.threshold);
+    // Calculate stddev
+    double variance = 0;
+    for (int i = 0; i < num_windows; i++) {
+        double diff = envelope[i] - avg;
+        variance += diff * diff;
+    }
+    double stddev = sqrt(variance / num_windows);
     
-    /* Pass 2: Detect and store ticks */
-    iqr_close(reader);
-    err = iqr_open(&reader, filename);
-    if (err != IQR_OK) return 1;
+    printf("1000 Hz Envelope Statistics:\n");
+    printf("  Min: %.6f\n", min_val);
+    printf("  Max: %.6f\n", max_val);
+    printf("  Avg: %.6f\n", avg);
+    printf("  StdDev: %.6f\n", stddev);
+    printf("  Dynamic Range: %.1f dB\n\n", 20*log10(max_val/min_val));
     
-    channel_reset(&wwv, fs);
-    channel_reset(&wwvh, fs);
-    sample_num = 0;
-    dc_prev_in = dc_prev_out = 0.0f;
-    g_tick_count = 0;
+    // Look for sustained rises (potential minute markers)
+    // Try multiple thresholds
+    double thresholds[] = {0.5, 1.0, 1.5, 2.0};
+    int num_thresholds = sizeof(thresholds) / sizeof(thresholds[0]);
     
-    uint64_t min_gap = (uint64_t)(fs * 0.3);
-    int min_samples = (int)(fs * 0.002);
-    int max_samples = (int)(fs * 0.050);
-    
-    printf("Pass 2: Detecting ticks...\n\n");
-    
-    while (1) {
-        err = iqr_read(reader, xi, xq, CHUNK_SIZE, &num_read);
-        if (err != IQR_OK || num_read == 0) break;
+    for (int t = 0; t < num_thresholds; t++) {
+        double rise_threshold = avg + thresholds[t] * stddev;
         
-        for (uint32_t i = 0; i < num_read; i++) {
-            uint64_t current = sample_num + i;
-            
-            float fi = (float)xi[i];
-            float fq = (float)xq[i];
-            float envelope = sqrtf(fi*fi + fq*fq) / 32768.0f;
-            
-            float audio = envelope - dc_prev_in + 0.995f * dc_prev_out;
-            dc_prev_in = envelope;
-            dc_prev_out = audio;
-            
-            /* WWV */
-            float filt_wwv = biquad_process(&wwv.bp, audio);
-            float level_wwv = envelope_process(&wwv.env, filt_wwv);
-            
-            if (!wwv.in_tick && level_wwv > wwv.threshold) {
-                if (current - wwv.last_tick > min_gap || wwv.last_tick == 0) {
-                    wwv.in_tick = 1;
-                    wwv.samples_in_tick = 0;
-                    wwv.tick_peak = level_wwv;
-                    wwv.tick_start = current;
-                }
-            }
-            if (wwv.in_tick) {
-                wwv.samples_in_tick++;
-                if (level_wwv > wwv.tick_peak) wwv.tick_peak = level_wwv;
-                
-                if (level_wwv < wwv.threshold) {
-                    wwv.in_tick = 0;
-                    if (wwv.samples_in_tick >= min_samples && 
-                        wwv.samples_in_tick <= max_samples &&
-                        g_tick_count < MAX_TICKS) {
-                        
-                        g_ticks[g_tick_count].sample = wwv.tick_start;
-                        g_ticks[g_tick_count].time_sec = (double)wwv.tick_start / fs;
-                        g_ticks[g_tick_count].level = wwv.tick_peak;
-                        g_ticks[g_tick_count].station = 0;
-                        g_tick_count++;
-                        
-                        wwv.tick_count++;
-                        wwv.last_tick = wwv.tick_start;
-                    }
-                }
-            }
-            
-            /* WWVH */
-            float filt_wwvh = biquad_process(&wwvh.bp, audio);
-            float level_wwvh = envelope_process(&wwvh.env, filt_wwvh);
-            
-            if (!wwvh.in_tick && level_wwvh > wwvh.threshold) {
-                if (current - wwvh.last_tick > min_gap || wwvh.last_tick == 0) {
-                    wwvh.in_tick = 1;
-                    wwvh.samples_in_tick = 0;
-                    wwvh.tick_peak = level_wwvh;
-                    wwvh.tick_start = current;
-                }
-            }
-            if (wwvh.in_tick) {
-                wwvh.samples_in_tick++;
-                if (level_wwvh > wwvh.tick_peak) wwvh.tick_peak = level_wwvh;
-                
-                if (level_wwvh < wwvh.threshold) {
-                    wwvh.in_tick = 0;
-                    if (wwvh.samples_in_tick >= min_samples && 
-                        wwvh.samples_in_tick <= max_samples &&
-                        g_tick_count < MAX_TICKS) {
-                        
-                        g_ticks[g_tick_count].sample = wwvh.tick_start;
-                        g_ticks[g_tick_count].time_sec = (double)wwvh.tick_start / fs;
-                        g_ticks[g_tick_count].level = wwvh.tick_peak;
-                        g_ticks[g_tick_count].station = 1;
-                        g_tick_count++;
-                        
-                        wwvh.tick_count++;
-                        wwvh.last_tick = wwvh.tick_start;
-                    }
-                }
-            }
-        }
-        sample_num += num_read;
-    }
-    
-    /* Sort ticks by time */
-    for (int i = 0; i < g_tick_count - 1; i++) {
-        for (int j = i + 1; j < g_tick_count; j++) {
-            if (g_ticks[j].sample < g_ticks[i].sample) {
-                tick_t tmp = g_ticks[i];
-                g_ticks[i] = g_ticks[j];
-                g_ticks[j] = tmp;
-            }
-        }
-    }
-    
-    /* Print sorted tick list with gaps */
-    printf("=== TICK TIMING (sorted by time) ===\n\n");
-    printf("%-6s  %-6s  %-10s  %-10s  %-10s  %-6s\n",
-           "#", "STA", "TIME(s)", "LEVEL", "GAP(ms)", "NOTE");
-    printf("%-6s  %-6s  %-10s  %-10s  %-10s  %-6s\n",
-           "-----", "-----", "--------", "--------", "--------", "------");
-    
-    double last_wwv_time = -10.0;
-    double last_wwvh_time = -10.0;
-    int wwv_seq = 0, wwvh_seq = 0;
-    
-    for (int i = 0; i < g_tick_count; i++) {
-        const char *sta = g_ticks[i].station == 0 ? "WWV" : "WWVH";
-        double gap_ms = 0.0;
-        const char *note = "";
+        printf("=== RISE Detection (threshold: avg + %.1f*stddev = %.6f) ===\n", 
+               thresholds[t], rise_threshold);
         
-        if (g_ticks[i].station == 0) {
-            gap_ms = (g_ticks[i].time_sec - last_wwv_time) * 1000.0;
-            last_wwv_time = g_ticks[i].time_sec;
-            wwv_seq++;
-            
-            /* Check for minute marker (2 second gap = missing 29th or 59th) */
-            if (gap_ms > 1800.0 && gap_ms < 2200.0) {
-                note = "<-MIN?";
-            } else if (gap_ms > 2800.0 && gap_ms < 3200.0) {
-                note = "<-2SEC";
+        // Find candidates
+        int num_candidates = 0;
+        int in_rise = 0;
+        int rise_start = 0;
+        double rise_sum = 0;
+        double rise_peak = 0;
+        int rise_count = 0;
+        
+        double candidate_times[50];
+        double candidate_durations[50];
+        
+        for (int i = 0; i < num_windows; i++) {
+            if (envelope[i] > rise_threshold) {
+                if (!in_rise) {
+                    in_rise = 1;
+                    rise_start = i;
+                    rise_sum = 0;
+                    rise_peak = 0;
+                    rise_count = 0;
+                }
+                rise_sum += envelope[i];
+                rise_count++;
+                if (envelope[i] > rise_peak) rise_peak = envelope[i];
+            } else {
+                if (in_rise) {
+                    int rise_duration_ms = rise_count * ANALYSIS_WINDOW_MS;
+                    if (rise_duration_ms >= 300 && num_candidates < 50) {
+                        candidate_times[num_candidates] = rise_start * ANALYSIS_WINDOW_MS / 1000.0;
+                        candidate_durations[num_candidates] = rise_duration_ms;
+                        num_candidates++;
+                    }
+                    in_rise = 0;
+                }
             }
+        }
+        
+        if (num_candidates == 0) {
+            printf("  No candidates found.\n\n");
         } else {
-            gap_ms = (g_ticks[i].time_sec - last_wwvh_time) * 1000.0;
-            last_wwvh_time = g_ticks[i].time_sec;
-            wwvh_seq++;
+            printf("  Found %d candidates:\n", num_candidates);
+            for (int i = 0; i < num_candidates && i < 10; i++) {
+                printf("    #%d: t=%.2f sec, duration=%d ms\n", 
+                       i+1, candidate_times[i], (int)candidate_durations[i]);
+            }
+            if (num_candidates > 10) {
+                printf("    ... and %d more\n", num_candidates - 10);
+            }
             
-            if (gap_ms > 1800.0 && gap_ms < 2200.0) {
-                note = "<-MIN?";
-            } else if (gap_ms > 2800.0 && gap_ms < 3200.0) {
-                note = "<-2SEC";
+            // Check periodicity
+            if (num_candidates >= 2) {
+                printf("  Intervals:\n");
+                for (int i = 1; i < num_candidates && i < 6; i++) {
+                    double interval = candidate_times[i] - candidate_times[i-1];
+                    printf("    #%d to #%d: %.2f sec", i, i+1, interval);
+                    if (fabs(interval - 60.0) < 3.0) printf(" <-- ~60 sec!");
+                    printf("\n");
+                }
             }
+            printf("\n");
+        }
+    }
+    
+    // Look for sustained DROPS
+    printf("=== DROP Detection (threshold: avg - 0.5*stddev = %.6f) ===\n", 
+           avg - 0.5 * stddev);
+    
+    double drop_threshold = avg - 0.5 * stddev;
+    int num_drops = 0;
+    int in_drop = 0;
+    int drop_start = 0;
+    int drop_count = 0;
+    
+    double drop_times[50];
+    double drop_durations[50];
+    
+    for (int i = 0; i < num_windows; i++) {
+        if (envelope[i] < drop_threshold) {
+            if (!in_drop) {
+                in_drop = 1;
+                drop_start = i;
+                drop_count = 0;
+            }
+            drop_count++;
+        } else {
+            if (in_drop) {
+                int drop_duration_ms = drop_count * ANALYSIS_WINDOW_MS;
+                if (drop_duration_ms >= 500 && num_drops < 50) {
+                    drop_times[num_drops] = drop_start * ANALYSIS_WINDOW_MS / 1000.0;
+                    drop_durations[num_drops] = drop_duration_ms;
+                    num_drops++;
+                }
+                in_drop = 0;
+            }
+        }
+    }
+    
+    if (num_drops == 0) {
+        printf("  No significant drops found.\n");
+    } else {
+        printf("  Found %d drops:\n", num_drops);
+        for (int i = 0; i < num_drops && i < 10; i++) {
+            printf("    #%d: t=%.2f sec, duration=%d ms\n", 
+                   i+1, drop_times[i], (int)drop_durations[i]);
+        }
+        if (num_drops > 10) {
+            printf("    ... and %d more\n", num_drops - 10);
         }
         
-        /* First tick of each station shows large gap - ignore */
-        if ((g_ticks[i].station == 0 && wwv_seq == 1) ||
-            (g_ticks[i].station == 1 && wwvh_seq == 1)) {
-            gap_ms = 0.0;
-        }
-        
-        printf("%-6d  %-6s  %-10.3f  %-10.6f  %-10.1f  %s\n",
-               i + 1, sta, g_ticks[i].time_sec, g_ticks[i].level, gap_ms, note);
-    }
-    
-    /* Statistics */
-    printf("\n=== GAP STATISTICS ===\n\n");
-    
-    /* Analyze WWV gaps */
-    int wwv_gaps[10] = {0};  /* buckets: 0-500, 500-1000, 1000-1500, etc */
-    double wwv_gap_sum = 0.0;
-    int wwv_gap_count = 0;
-    double prev_wwv = -10.0;
-    
-    for (int i = 0; i < g_tick_count; i++) {
-        if (g_ticks[i].station == 0) {
-            if (prev_wwv >= 0) {
-                double gap = (g_ticks[i].time_sec - prev_wwv) * 1000.0;
-                wwv_gap_sum += gap;
-                wwv_gap_count++;
-                int bucket = (int)(gap / 500.0);
-                if (bucket >= 0 && bucket < 10) wwv_gaps[bucket]++;
+        // Check periodicity
+        if (num_drops >= 2) {
+            printf("  Intervals:\n");
+            for (int i = 1; i < num_drops && i < 6; i++) {
+                double interval = drop_times[i] - drop_times[i-1];
+                printf("    #%d to #%d: %.2f sec", i, i+1, interval);
+                if (fabs(interval - 60.0) < 3.0) printf(" <-- ~60 sec!");
+                printf("\n");
             }
-            prev_wwv = g_ticks[i].time_sec;
         }
     }
     
-    printf("WWV gap distribution:\n");
-    printf("  0-500ms:    %d\n", wwv_gaps[0]);
-    printf("  500-1000ms: %d\n", wwv_gaps[1]);
-    printf("  1000-1500ms: %d  (normal)\n", wwv_gaps[2]);
-    printf("  1500-2000ms: %d\n", wwv_gaps[3]);
-    printf("  2000-2500ms: %d  (minute marker?)\n", wwv_gaps[4]);
-    printf("  2500-3000ms: %d\n", wwv_gaps[5]);
-    printf("  3000+ms:    %d\n", wwv_gaps[6] + wwv_gaps[7] + wwv_gaps[8] + wwv_gaps[9]);
-    if (wwv_gap_count > 0) {
-        printf("  Average gap: %.1f ms\n", wwv_gap_sum / wwv_gap_count);
-    }
-    
-    /* Analyze WWVH gaps */
-    int wwvh_gaps[10] = {0};
-    double wwvh_gap_sum = 0.0;
-    int wwvh_gap_count = 0;
-    double prev_wwvh = -10.0;
-    
-    for (int i = 0; i < g_tick_count; i++) {
-        if (g_ticks[i].station == 1) {
-            if (prev_wwvh >= 0) {
-                double gap = (g_ticks[i].time_sec - prev_wwvh) * 1000.0;
-                wwvh_gap_sum += gap;
-                wwvh_gap_count++;
-                int bucket = (int)(gap / 500.0);
-                if (bucket >= 0 && bucket < 10) wwvh_gaps[bucket]++;
-            }
-            prev_wwvh = g_ticks[i].time_sec;
-        }
-    }
-    
-    printf("\nWWVH gap distribution:\n");
-    printf("  0-500ms:    %d\n", wwvh_gaps[0]);
-    printf("  500-1000ms: %d\n", wwvh_gaps[1]);
-    printf("  1000-1500ms: %d  (normal)\n", wwvh_gaps[2]);
-    printf("  1500-2000ms: %d\n", wwvh_gaps[3]);
-    printf("  2000-2500ms: %d  (minute marker?)\n", wwvh_gaps[4]);
-    printf("  2500-3000ms: %d\n", wwvh_gaps[5]);
-    printf("  3000+ms:    %d\n", wwvh_gaps[6] + wwvh_gaps[7] + wwvh_gaps[8] + wwvh_gaps[9]);
-    if (wwvh_gap_count > 0) {
-        printf("  Average gap: %.1f ms\n", wwvh_gap_sum / wwvh_gap_count);
-    }
-    
-    /* Summary */
-    printf("\n=== SUMMARY ===\n");
-    printf("WWV ticks:  %d\n", wwv.tick_count);
-    printf("WWVH ticks: %d\n", wwvh.tick_count);
-    printf("Total:      %d\n", g_tick_count);
-    printf("Duration:   %.2f sec\n", (double)hdr->sample_count / fs);
-    printf("Expected:   ~%.0f per station (with 2 missing per minute)\n",
-           (double)hdr->sample_count / fs - 2.0 * ((double)hdr->sample_count / fs / 60.0));
-    
+    free(envelope);
     iqr_close(reader);
+    
+    printf("\nAnalysis complete.\n");
     return 0;
 }

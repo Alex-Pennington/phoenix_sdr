@@ -40,7 +40,8 @@ $CFLAGS_RELEASE = @("-O2", "-DNDEBUG")
 $LDFLAGS = @(
     "-L`"$SDRplayLib`"",
     "-lsdrplay_api",
-    "-lwinmm"  # Windows multimedia (audio monitoring)
+    "-lwinmm",   # Windows multimedia (audio monitoring)
+    "-lws2_32"   # Winsock (NTP time)
 )
 
 # Select build type
@@ -180,6 +181,41 @@ function Build-Test {
     Write-Status "Test build complete."
 }
 
+function Build-Tools {
+    Write-Status "Building tools..."
+    
+    if (-not (Test-Compiler)) { exit 1 }
+    
+    Initialize-BuildDirs
+    
+    $ToolsDir = "tools"
+    $toolSources = Get-ChildItem -Path $ToolsDir -Filter "*.c" -ErrorAction SilentlyContinue
+    
+    # Build iq_recorder.o (shared dependency)
+    $iqrObj = Build-Object "$SrcDir\iq_recorder.c"
+    
+    foreach ($src in $toolSources) {
+        $toolName = [System.IO.Path]::GetFileNameWithoutExtension($src.Name)
+        Write-Status "Building tool: $toolName"
+        
+        # Compile tool source
+        $toolObj = Build-Object $src.FullName
+        
+        # Link with iq_recorder (tools need file reading)
+        $allArgs = @("-o", "`"$BinDir\$toolName.exe`"", $toolObj, $iqrObj, "-lm", "-lws2_32")
+        $argString = $allArgs -join " "
+        
+        $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
+        
+        if ($process.ExitCode -ne 0) {
+            throw "Linking failed for $toolName"
+        }
+        Write-Status "Built: $BinDir\$toolName.exe"
+    }
+    
+    Write-Status "Tools build complete."
+}
+
 # Main execution
 try {
     Push-Location $PSScriptRoot
@@ -195,9 +231,10 @@ try {
     switch ($Target) {
         "all"   { Build-All }
         "test"  { Build-Test }
+        "tools" { Build-Tools }
         "clean" { Invoke-Clean }
         default { 
-            Write-Host "Usage: .\build.ps1 [-Clean] [-Release] [-Target <all|test|clean>]"
+            Write-Host "Usage: .\build.ps1 [-Clean] [-Release] [-Target <all|test|tools|clean>]"
         }
     }
 }

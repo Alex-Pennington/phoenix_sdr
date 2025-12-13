@@ -39,7 +39,8 @@ $CFLAGS_RELEASE = @("-O2", "-DNDEBUG")
 
 $LDFLAGS = @(
     "-L`"$SDRplayLib`"",
-    "-lsdrplay_api"
+    "-lsdrplay_api",
+    "-lwinmm"  # Windows multimedia (audio monitoring)
 )
 
 # Select build type

@@ -1,0 +1,12 @@
+# Build artifacts
+build/
+bin/
+*.o
+*.exe
+
+# Test recordings (too large for git)
+*.iqr
+
+# IDE
+.vscode/
+*.swp

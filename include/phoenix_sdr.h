@@ -276,6 +276,16 @@ double psdr_get_sample_rate(const psdr_context_t *ctx);
  */
 bool psdr_is_streaming(const psdr_context_t *ctx);
 
+/**
+ * @brief Print device parameters (defaults from API)
+ * 
+ * Prints the raw device parameters returned by the SDRplay API
+ * after device selection, before any configuration is applied.
+ * 
+ * @param ctx  SDR context
+ */
+void psdr_print_device_params(const psdr_context_t *ctx);
+
 #ifdef __cplusplus
 }
 #endif

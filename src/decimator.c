@@ -15,6 +15,11 @@
 #include <string.h>
 #include <math.h>
 
+/* Define M_PI if not available (MinGW strict mode) */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 /*============================================================================
  * Constants
  *============================================================================*/

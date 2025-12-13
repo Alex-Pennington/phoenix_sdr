@@ -189,17 +189,22 @@ psdr_error_t psdr_configure(psdr_context_t *ctx, const psdr_config_t *config) {
         }
         
         /* RSP2-specific */
+        const char *ant_name = "?";
         switch (config->antenna) {
             case PSDR_ANT_A:
                 ch->rsp2TunerParams.antennaSel = sdrplay_api_Rsp2_ANTENNA_A;
                 ch->rsp2TunerParams.amPortSel = sdrplay_api_Rsp2_AMPORT_2;
+                ant_name = "A";
                 break;
             case PSDR_ANT_B:
                 ch->rsp2TunerParams.antennaSel = sdrplay_api_Rsp2_ANTENNA_B;
                 ch->rsp2TunerParams.amPortSel = sdrplay_api_Rsp2_AMPORT_2;
+                ant_name = "B";
                 break;
             case PSDR_ANT_HIZ:
-                ch->rsp2TunerParams.amPortSel = sdrplay_api_Rsp2_AMPORT_1;
+                ch->rsp2TunerParams.antennaSel = sdrplay_api_Rsp2_ANTENNA_A; /* Required even for Hi-Z */
+                ch->rsp2TunerParams.amPortSel = sdrplay_api_Rsp2_AMPORT_1;   /* AMPORT_1 = Hi-Z */
+                ant_name = "Hi-Z";
                 break;
         }
         
@@ -207,9 +212,11 @@ psdr_error_t psdr_configure(psdr_context_t *ctx, const psdr_config_t *config) {
         ch->rsp2TunerParams.rfNotchEnable = config->rf_notch ? 1 : 0;
     }
     
-    printf("psdr_configure: freq=%.0f Hz, SR=%.0f Hz, BW=%d kHz, gain=%d dB\n",
+    printf("psdr_configure: freq=%.0f Hz, SR=%.0f Hz, BW=%d kHz, gain=%d dB, ant=%s\n",
            config->freq_hz, config->sample_rate_hz, 
-           config->bandwidth, config->gain_reduction);
+           config->bandwidth, config->gain_reduction,
+           (config->antenna == PSDR_ANT_A) ? "A" : 
+           (config->antenna == PSDR_ANT_B) ? "B" : "Hi-Z");
     
     return PSDR_OK;
 }

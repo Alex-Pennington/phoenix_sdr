@@ -19,9 +19,6 @@ recordings/
 # Logs and temp files
 logs/
 
-# Auto-generated version header
-include/version.h
-
 # Misc junk files
 *.csv
 *.bat

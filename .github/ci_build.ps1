@@ -30,7 +30,20 @@ function Write-Status($msg) {
     Write-Host $msg
 }
 
-function Generate-VersionHeader {
+function Update-VersionHeader {
+    # Read current version.h
+    $content = Get-Content $VersionFile -Raw
+    
+    # Extract current values
+    $major = 0; $minor = 2; $patch = 5; $build = 0
+    if ($content -match 'PHOENIX_VERSION_MAJOR\s+(\d+)') { $major = [int]$matches[1] }
+    if ($content -match 'PHOENIX_VERSION_MINOR\s+(\d+)') { $minor = [int]$matches[1] }
+    if ($content -match 'PHOENIX_VERSION_PATCH\s+(\d+)') { $patch = [int]$matches[1] }
+    if ($content -match 'PHOENIX_VERSION_BUILD\s+(\d+)') { $build = [int]$matches[1] }
+    
+    # Increment build number
+    $build++
+    
     # Get git info
     $commit = "unknown"
     try {
@@ -44,27 +57,33 @@ function Generate-VersionHeader {
     } catch { }
     
     $dirtyFlag = if ($dirty) { "-dirty" } else { "" }
-    $versionString = "0.2.4"
-    $fullVersion = "$versionString+ci.$commit$dirtyFlag"
+    $versionString = "$major.$minor.$patch"
+    $fullVersion = "$versionString+$build.$commit$dirtyFlag"
     
-    $content = @"
+    $newContent = @"
 /**
  * @file version.h
- * @brief Phoenix SDR version information (CI generated)
+ * @brief Phoenix SDR version information
+ * 
+ * Version format: MAJOR.MINOR.PATCH+BUILD.COMMIT[-dirty]
+ * Example: 0.2.5+9.abc1234 or 0.2.5+9.abc1234-dirty
+ * 
+ * Build number increments every build. Commit hash from git.
  */
 
 #ifndef PHOENIX_VERSION_H
 #define PHOENIX_VERSION_H
 
-#define PHOENIX_VERSION_MAJOR   0
-#define PHOENIX_VERSION_MINOR   2
-#define PHOENIX_VERSION_PATCH   4
-#define PHOENIX_VERSION_BUILD   0
+#define PHOENIX_VERSION_MAJOR   $major
+#define PHOENIX_VERSION_MINOR   $minor
+#define PHOENIX_VERSION_PATCH   $patch
+#define PHOENIX_VERSION_BUILD   $build
 #define PHOENIX_VERSION_STRING  "$versionString"
 #define PHOENIX_VERSION_FULL    "$fullVersion"
 #define PHOENIX_GIT_COMMIT      "$commit"
 #define PHOENIX_GIT_DIRTY       $($dirty.ToString().ToLower())
 
+/* Build timestamp - set by compiler */
 #define PHOENIX_BUILD_DATE      __DATE__
 #define PHOENIX_BUILD_TIME      __TIME__
 
@@ -79,8 +98,8 @@ static inline void print_version(const char *tool_name) {
 #endif /* PHOENIX_VERSION_H */
 "@
     
-    Set-Content -Path $VersionFile -Value $content -NoNewline
-    Write-Status "Generated version.h: $fullVersion"
+    Set-Content -Path $VersionFile -Value $newContent -NoNewline
+    Write-Status "Version: $fullVersion"
 }
 
 function Build-Object($source, $extraFlags) {
@@ -102,7 +121,7 @@ try {
     Write-Status "GCC version: $(gcc --version | Select-Object -First 1)"
 
     # Generate version.h (not in repo, auto-generated)
-    Generate-VersionHeader
+    Update-VersionHeader
 
     # Set compiler flags
     $CFLAGS = @(

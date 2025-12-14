@@ -281,6 +281,34 @@ try {
     if ($process.ExitCode -ne 0) { throw "Linking failed for wormhole" }
     Write-Status "Built: $BinDir\wormhole.exe"
 
+    # Build test_tcp_commands (TCP command parser unit tests)
+    Write-Status "Building test_tcp_commands..."
+
+    $tcpCmdObj = Build-Object "src\tcp_commands.c" @()
+    $testTcpObj = Build-Object "test\test_tcp_commands.c" @()
+
+    Write-Status "Linking test_tcp_commands.exe..."
+    $testLdflags = @("-lm")
+    $allArgs = @("-o", "`"$BinDir\test_tcp_commands.exe`"", "`"$testTcpObj`"", "`"$tcpCmdObj`"") + $testLdflags
+    $argString = $allArgs -join " "
+    $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Linking failed for test_tcp_commands" }
+    Write-Status "Built: $BinDir\test_tcp_commands.exe"
+
+    # Build sdr_server (TCP control server)
+    Write-Status "Building sdr_server..."
+
+    $sdrServerObj = Build-Object "tools\sdr_server.c" @()
+    # Reuse tcpCmdObj from above
+
+    Write-Status "Linking sdr_server.exe..."
+    $serverLdflags = @("-lws2_32", "-lm")
+    $allArgs = @("-o", "`"$BinDir\sdr_server.exe`"", "`"$sdrServerObj`"", "`"$tcpCmdObj`"") + $serverLdflags
+    $argString = $allArgs -join " "
+    $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Linking failed for sdr_server" }
+    Write-Status "Built: $BinDir\sdr_server.exe"
+
     Write-Status "Done."
 }
 catch {

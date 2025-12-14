@@ -94,10 +94,10 @@ $newContent = @"
 /**
  * @file version.h
  * @brief Phoenix SDR version information
- * 
+ *
  * Version format: MAJOR.MINOR.PATCH+BUILD.COMMIT[-dirty]
  * Example: 0.2.5+9.abc1234 or 0.2.5+9.abc1234-dirty
- * 
+ *
  * Build number increments every build. Commit hash from git.
  */
 
@@ -120,8 +120,8 @@ $newContent = @"
 #include <stdio.h>
 
 static inline void print_version(const char *tool_name) {
-    printf("%s v%s (built %s %s)\n", 
-           tool_name, PHOENIX_VERSION_FULL, 
+    printf("%s v%s (built %s %s)\n",
+           tool_name, PHOENIX_VERSION_FULL,
            PHOENIX_BUILD_DATE, PHOENIX_BUILD_TIME);
 }
 

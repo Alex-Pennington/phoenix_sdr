@@ -74,6 +74,8 @@ static int g_selected_param = 0;      /* 0 = gain, 1-6 = tick thresholds */
 #define TICK_HYSTERESIS_RATIO   0.7f
 #define TICK_WARMUP_FRAMES      50
 #define TICK_FLASH_FRAMES       3       /* How long to show purple flash */
+#define TICK_HISTORY_SIZE       30      /* Store last N tick timestamps for averaging */
+#define TICK_AVG_WINDOW_MS      15000.0f /* 15 second averaging window */
 
 #define MS_TO_FRAMES(ms) ((int)((ms) / FRAME_DURATION_MS + 0.5f))
 
@@ -96,6 +98,10 @@ typedef struct {
     bool detection_enabled;
     int flash_frames_remaining;  /* For purple flash */
     FILE *csv_file;
+    /* Interval history for averaging */
+    float tick_timestamps_ms[TICK_HISTORY_SIZE];  /* Circular buffer of tick times */
+    int tick_history_idx;                          /* Next write position */
+    int tick_history_count;                        /* Number of valid entries */
 } tick_detector_t;
 
 static tick_detector_t g_tick_detector;
@@ -108,15 +114,42 @@ static void tick_detector_init(tick_detector_t *td) {
     td->threshold_low = td->threshold_high * TICK_HYSTERESIS_RATIO;
     td->detection_enabled = true;
     td->flash_frames_remaining = 0;
+    td->tick_history_idx = 0;
+    td->tick_history_count = 0;
     td->csv_file = fopen("wwv_ticks.csv", "w");
     if (td->csv_file) {
-        fprintf(td->csv_file, "timestamp_ms,tick_num,energy_peak,duration_ms,interval_ms,noise_floor\n");
+        fprintf(td->csv_file, "timestamp_ms,tick_num,energy_peak,duration_ms,interval_ms,avg_interval_ms,noise_floor\n");
         fflush(td->csv_file);
     }
 }
 
 static void tick_detector_close(tick_detector_t *td) {
     if (td->csv_file) { fclose(td->csv_file); td->csv_file = NULL; }
+}
+
+/* Calculate average interval from ticks within the last 15 seconds */
+static float tick_detector_avg_interval(tick_detector_t *td, float current_time_ms) {
+    if (td->tick_history_count < 2) return 0.0f;
+    
+    float cutoff = current_time_ms - TICK_AVG_WINDOW_MS;
+    float sum = 0.0f;
+    int count = 0;
+    float prev_time = -1.0f;
+    
+    /* Scan through history to find ticks within window */
+    for (int i = 0; i < td->tick_history_count; i++) {
+        int idx = (td->tick_history_idx - td->tick_history_count + i + TICK_HISTORY_SIZE) % TICK_HISTORY_SIZE;
+        float t = td->tick_timestamps_ms[idx];
+        if (t >= cutoff) {
+            if (prev_time >= 0.0f) {
+                sum += (t - prev_time);
+                count++;
+            }
+            prev_time = t;
+        }
+    }
+    
+    return (count > 0) ? (sum / count) : 0.0f;
 }
 
 static bool tick_detector_update(tick_detector_t *td, float energy, uint64_t frame_num) {
@@ -165,12 +198,21 @@ static bool tick_detector_update(tick_detector_t *td, float energy, uint64_t fra
                     float timestamp_ms = frame_num * FRAME_DURATION_MS;
                     float interval_ms = (td->last_tick_frame > 0) ?
                         (td->tick_start_frame - td->last_tick_frame) * FRAME_DURATION_MS : 0.0f;
+                    
+                    /* Store timestamp in history buffer */
+                    td->tick_timestamps_ms[td->tick_history_idx] = timestamp_ms;
+                    td->tick_history_idx = (td->tick_history_idx + 1) % TICK_HISTORY_SIZE;
+                    if (td->tick_history_count < TICK_HISTORY_SIZE) td->tick_history_count++;
+                    
+                    /* Calculate average interval over last 15 seconds */
+                    float avg_interval_ms = tick_detector_avg_interval(td, timestamp_ms);
+                    
                     char ind = (interval_ms > 950.0f && interval_ms < 1050.0f) ? ' ' : '!';
-                    printf("[%7.1fs] TICK #%-4d  peak=%.4f  dur=%4.1fms  int=%6.0fms %c\n",
-                           timestamp_ms/1000.0f, td->ticks_detected, td->tick_peak_energy, duration_ms, interval_ms, ind);
+                    printf("[%7.1fs] TICK #%-4d  int=%6.0fms  avg=%6.0fms %c\n",
+                           timestamp_ms/1000.0f, td->ticks_detected, interval_ms, avg_interval_ms, ind);
                     if (td->csv_file) {
-                        fprintf(td->csv_file, "%.1f,%d,%.6f,%.1f,%.0f,%.6f\n",
-                                timestamp_ms, td->ticks_detected, td->tick_peak_energy, duration_ms, interval_ms, td->noise_floor);
+                        fprintf(td->csv_file, "%.1f,%d,%.6f,%.1f,%.0f,%.0f,%.6f\n",
+                                timestamp_ms, td->ticks_detected, td->tick_peak_energy, duration_ms, interval_ms, avg_interval_ms, td->noise_floor);
                         fflush(td->csv_file);
                     }
                     td->last_tick_frame = td->tick_start_frame;
@@ -192,11 +234,15 @@ static bool tick_detector_update(tick_detector_t *td, float energy, uint64_t fra
 
 static void tick_detector_print_stats(tick_detector_t *td, uint64_t frame) {
     float elapsed = frame * FRAME_DURATION_MS / 1000.0f;
+    float current_time_ms = frame * FRAME_DURATION_MS;
     float detecting = td->warmup_complete ? (elapsed - TICK_WARMUP_FRAMES * FRAME_DURATION_MS / 1000.0f) : 0.0f;
     int expected = (int)detecting;
     float rate = (expected > 0) ? (100.0f * td->ticks_detected / expected) : 0.0f;
-    printf("\n=== TICK STATS === Elapsed:%.1fs Detected:%d Expected:%d Rate:%.1f%% Rejected:%d Noise:%.6f ===\n\n",
-           elapsed, td->ticks_detected, expected, rate, td->ticks_rejected, td->noise_floor);
+    float avg_interval = tick_detector_avg_interval(td, current_time_ms);
+    printf("\n=== TICK STATS ===\n");
+    printf("Elapsed: %.1fs  Detected: %d  Expected: %d  Rate: %.1f%%\n", elapsed, td->ticks_detected, expected, rate);
+    printf("Avg interval (15s): %.0fms  Rejected: %d  Noise: %.6f\n", avg_interval, td->ticks_rejected, td->noise_floor);
+    printf("==================\n\n");
 }
 
 static void magnitude_to_rgb(float mag, float peak_db, float floor_db, uint8_t *r, uint8_t *g, uint8_t *b) {

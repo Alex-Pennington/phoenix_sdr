@@ -26,8 +26,10 @@
  * Configuration
  *============================================================================*/
 
-#define WINDOW_WIDTH    1024    /* Display width (2x for visibility) */
-#define WINDOW_HEIGHT   800     /* Scrolling history (2x for visibility) */
+#define WATERFALL_WIDTH 1024    /* Left panel: waterfall display */
+#define BUCKET_WIDTH    200     /* Right panel: bucket bars */
+#define WINDOW_WIDTH    (WATERFALL_WIDTH + BUCKET_WIDTH)  /* Total width */
+#define WINDOW_HEIGHT   800     /* Scrolling history */
 #define FFT_SIZE        1024    /* FFT size (512 usable bins) */
 #define SAMPLE_RATE     48000   /* Expected input sample rate */
 
@@ -56,6 +58,7 @@ static float g_gain_offset = 0.0f;    /* Manual gain adjustment (+/- keys) */
 
 /* Tick detection state */
 static float g_tick_thresholds[NUM_TICK_FREQS] = { 0.001f, 0.001f, 0.001f, 0.001f, 0.001f, 0.001f, 0.001f };
+static float g_bucket_energy[NUM_TICK_FREQS];  /* Current energy in each bucket */
 static int g_selected_param = 0;      /* 0 = gain, 1-6 = tick thresholds */
 
 static void magnitude_to_rgb(float mag, float peak_db, float floor_db, uint8_t *r, uint8_t *g, uint8_t *b) {
@@ -168,7 +171,7 @@ int main(int argc, char *argv[]) {
     kiss_fft_cpx *fft_in = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
     kiss_fft_cpx *fft_out = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
     uint8_t *pixels = (uint8_t *)malloc(WINDOW_WIDTH * WINDOW_HEIGHT * 3);
-    float *magnitudes = (float *)malloc(WINDOW_WIDTH * sizeof(float));
+    float *magnitudes = (float *)malloc(WATERFALL_WIDTH * sizeof(float));
 
     if (!pcm_buffer || !fft_in || !fft_out || !pixels || !magnitudes) {
         fprintf(stderr, "Memory allocation failed\n");
@@ -274,14 +277,14 @@ int main(int argc, char *argv[]) {
         kiss_fft(fft_cfg, fft_in, fft_out);
 
         /* Calculate magnitudes with FFT shift (DC in center) */
-        for (int i = 0; i < WINDOW_WIDTH; i++) {
+        for (int i = 0; i < WATERFALL_WIDTH; i++) {
             int bin;
-            if (i < WINDOW_WIDTH / 2) {
+            if (i < WATERFALL_WIDTH / 2) {
                 /* Left half: negative frequencies */
                 bin = FFT_SIZE / 2 + i;
             } else {
                 /* Right half: positive frequencies */
-                bin = i - WINDOW_WIDTH / 2;
+                bin = i - WATERFALL_WIDTH / 2;
             }
             /* Wrap around */
             if (bin < 0) bin += FFT_SIZE;
@@ -300,7 +303,7 @@ int main(int argc, char *argv[]) {
         /* Auto-gain: track peak and floor */
         float frame_max = -200.0f;
         float frame_min = 200.0f;
-        for (int i = 0; i < WINDOW_WIDTH; i++) {
+        for (int i = 0; i < WATERFALL_WIDTH; i++) {
             float db = 20.0f * log10f(magnitudes[i] + 1e-10f);
             if (db > frame_max) frame_max = db;
             if (db < frame_min) frame_min = db;
@@ -322,8 +325,8 @@ int main(int argc, char *argv[]) {
                 pixels,                      /* src: row 0 */
                 WINDOW_WIDTH * (WINDOW_HEIGHT - 1) * 3);
 
-        /* Draw new row at top (row 0) */
-        for (int x = 0; x < WINDOW_WIDTH; x++) {
+        /* Draw new row at top (row 0) - WATERFALL ONLY */
+        for (int x = 0; x < WATERFALL_WIDTH; x++) {
             uint8_t r, g, b;
             magnitude_to_rgb(magnitudes[x], g_peak_db, g_floor_db, &r, &g, &b);
             pixels[x * 3 + 0] = r;
@@ -361,22 +364,23 @@ int main(int argc, char *argv[]) {
             }
 
             float combined_energy = pos_energy + neg_energy;
+            g_bucket_energy[f] = combined_energy;  /* Store for right panel display */
 
             /* If above threshold, draw marker dot at the frequency position */
             if (combined_energy > g_tick_thresholds[f]) {
                 /* Calculate x position in FFT-shifted display */
-                /* Positive freq: x = WINDOW_WIDTH/2 + center_bin */
-                int x_pos = WINDOW_WIDTH / 2 + center_bin;
-                int x_neg = WINDOW_WIDTH / 2 - center_bin;
+                /* Positive freq: x = WATERFALL_WIDTH/2 + center_bin */
+                int x_pos = WATERFALL_WIDTH / 2 + center_bin;
+                int x_neg = WATERFALL_WIDTH / 2 - center_bin;
 
                 /* Draw red dot at positive frequency */
-                if (x_pos >= 0 && x_pos < WINDOW_WIDTH) {
+                if (x_pos >= 0 && x_pos < WATERFALL_WIDTH) {
                     pixels[x_pos * 3 + 0] = 255;  /* R */
                     pixels[x_pos * 3 + 1] = 0;    /* G */
                     pixels[x_pos * 3 + 2] = 0;    /* B */
                 }
                 /* Draw red dot at negative frequency */
-                if (x_neg >= 0 && x_neg < WINDOW_WIDTH) {
+                if (x_neg >= 0 && x_neg < WATERFALL_WIDTH) {
                     pixels[x_neg * 3 + 0] = 255;  /* R */
                     pixels[x_neg * 3 + 1] = 0;    /* G */
                     pixels[x_neg * 3 + 2] = 0;    /* B */
@@ -388,10 +392,54 @@ int main(int argc, char *argv[]) {
         /* Small colored tick at the selected parameter position */
         {
             int indicator_x = 10 + g_selected_param * 20;
-            if (indicator_x < WINDOW_WIDTH) {
+            if (indicator_x < WATERFALL_WIDTH) {
                 pixels[indicator_x * 3 + 0] = 255;  /* Cyan indicator */
                 pixels[indicator_x * 3 + 1] = 255;
                 pixels[indicator_x * 3 + 2] = 0;
+            }
+        }
+
+        /* === RIGHT PANEL: Bucket energy bars === */
+        {
+            int bar_width = BUCKET_WIDTH / NUM_TICK_FREQS;  /* ~28 pixels per bar */
+            int bar_gap = 2;  /* Gap between bars */
+            
+            /* Clear right panel (black background) */
+            for (int y = 0; y < WINDOW_HEIGHT; y++) {
+                for (int x = WATERFALL_WIDTH; x < WINDOW_WIDTH; x++) {
+                    int idx = (y * WINDOW_WIDTH + x) * 3;
+                    pixels[idx + 0] = 0;
+                    pixels[idx + 1] = 0;
+                    pixels[idx + 2] = 0;
+                }
+            }
+            
+            /* Draw each bucket bar */
+            for (int f = 0; f < NUM_TICK_FREQS; f++) {
+                int bar_x = WATERFALL_WIDTH + f * bar_width + bar_gap;
+                int bar_w = bar_width - bar_gap * 2;
+                
+                /* Convert energy to height using log scale */
+                float db = 20.0f * log10f(g_bucket_energy[f] + 1e-10f);
+                float norm = (db - g_floor_db) / (g_peak_db - g_floor_db + 0.1f);
+                if (norm < 0.0f) norm = 0.0f;
+                if (norm > 1.0f) norm = 1.0f;
+                
+                int bar_height = (int)(norm * WINDOW_HEIGHT);
+                
+                /* Get color based on magnitude */
+                uint8_t r, g, b;
+                magnitude_to_rgb(g_bucket_energy[f], g_peak_db, g_floor_db, &r, &g, &b);
+                
+                /* Draw bar from bottom up */
+                for (int y = WINDOW_HEIGHT - bar_height; y < WINDOW_HEIGHT; y++) {
+                    for (int x = bar_x; x < bar_x + bar_w && x < WINDOW_WIDTH; x++) {
+                        int idx = (y * WINDOW_WIDTH + x) * 3;
+                        pixels[idx + 0] = r;
+                        pixels[idx + 1] = g;
+                        pixels[idx + 2] = b;
+                    }
+                }
             }
         }
 

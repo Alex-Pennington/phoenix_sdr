@@ -33,6 +33,7 @@ jobs:
         
         # Copy to expected location
         New-Item -ItemType Directory -Force -Path "lib"
+        New-Item -ItemType Directory -Force -Path "bin"
         Copy-Item "SDL2-$sdlVersion\x86_64-w64-mingw32\lib\*" -Destination "lib\" -Recurse
         Copy-Item "SDL2-$sdlVersion\x86_64-w64-mingw32\bin\SDL2.dll" -Destination "bin\" -Force
         

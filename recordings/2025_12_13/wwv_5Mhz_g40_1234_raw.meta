@@ -1,0 +1,23 @@
+# Phoenix SDR Recording Metadata
+# Recording complete
+
+[recording]
+sample_rate_hz = 2000000
+center_freq_hz = 5000000
+bandwidth_khz = 200
+gain_reduction = 40
+lna_state = 0
+
+[timing]
+ntp_server = time.nist.gov
+start_time_us = 1765604071094355
+start_time_utc = 2025-12-13T05:34:31.094Z
+start_second = 31
+offset_to_next_minute = 28.906000
+
+[status]
+recording_complete = true
+sample_count = 360171504
+duration_sec = 180.085752
+end_time_us = 1765604251180107
+end_time_utc = 

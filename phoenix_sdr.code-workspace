@@ -1,0 +1,153 @@
+{
+    "folders": [
+        {
+            "path": "."
+        }
+    ],
+    "settings": {
+        "files.associations": {
+            "*.h": "c",
+            "*.c": "c"
+        },
+        "C_Cpp.default.compilerPath": "${env:LOCALAPPDATA}/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe/mingw64/bin/gcc.exe",
+        "C_Cpp.default.cStandard": "c17",
+        "C_Cpp.default.includePath": [
+            "${workspaceFolder}/include",
+            "${workspaceFolder}/src",
+            "C:/Program Files/SDRplay/API/inc"
+        ],
+        "C_Cpp.default.defines": [
+            "_DEBUG",
+            "_WIN32"
+        ],
+        "terminal.integrated.defaultProfile.windows": "PowerShell",
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "files.trimTrailingWhitespace": true
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "Build All",
+                "type": "shell",
+                "command": ".\\build.ps1",
+                "group": {
+                    "kind": "build",
+                    "isDefault": true
+                },
+                "problemMatcher": "$gcc"
+            },
+            {
+                "label": "Build Tools",
+                "type": "shell",
+                "command": ".\\build.ps1 -Target tools",
+                "group": "build",
+                "problemMatcher": "$gcc"
+            },
+            {
+                "label": "Build Tests",
+                "type": "shell",
+                "command": ".\\build.ps1 -Target test",
+                "group": "build",
+                "problemMatcher": "$gcc"
+            },
+            {
+                "label": "Clean Build",
+                "type": "shell",
+                "command": ".\\build.ps1 -Clean",
+                "group": "build",
+                "problemMatcher": []
+            },
+            {
+                "label": "Run DSP Tests",
+                "type": "shell",
+                "command": ".\\bin\\test_test_dsp.exe",
+                "group": "test",
+                "problemMatcher": []
+            },
+            {
+                "label": "Run WWV Scan",
+                "type": "shell",
+                "command": ".\\bin\\wwv_scan.exe -scantime 10",
+                "group": "test",
+                "problemMatcher": []
+            }
+        ]
+    },
+    "launch": {
+        "version": "0.2.0",
+        "configurations": [
+            {
+                "name": "Debug wwv_scan",
+                "type": "cppdbg",
+                "request": "launch",
+                "program": "${workspaceFolder}/bin/wwv_scan.exe",
+                "args": ["-scantime", "5"],
+                "stopAtEntry": false,
+                "cwd": "${workspaceFolder}",
+                "environment": [],
+                "externalConsole": true,
+                "MIMode": "gdb",
+                "miDebuggerPath": "${env:LOCALAPPDATA}/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe/mingw64/bin/gdb.exe",
+                "setupCommands": [
+                    {
+                        "description": "Enable pretty-printing",
+                        "text": "-enable-pretty-printing",
+                        "ignoreFailures": true
+                    }
+                ],
+                "preLaunchTask": "Build Tools"
+            },
+            {
+                "name": "Debug test_dsp",
+                "type": "cppdbg",
+                "request": "launch",
+                "program": "${workspaceFolder}/bin/test_test_dsp.exe",
+                "args": [],
+                "stopAtEntry": false,
+                "cwd": "${workspaceFolder}",
+                "environment": [],
+                "externalConsole": false,
+                "MIMode": "gdb",
+                "miDebuggerPath": "${env:LOCALAPPDATA}/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe/mingw64/bin/gdb.exe",
+                "setupCommands": [
+                    {
+                        "description": "Enable pretty-printing",
+                        "text": "-enable-pretty-printing",
+                        "ignoreFailures": true
+                    }
+                ],
+                "preLaunchTask": "Build Tests"
+            },
+            {
+                "name": "Debug phoenix_sdr",
+                "type": "cppdbg",
+                "request": "launch",
+                "program": "${workspaceFolder}/bin/phoenix_sdr.exe",
+                "args": ["-f", "15.0", "-a", "Z", "-d", "5"],
+                "stopAtEntry": false,
+                "cwd": "${workspaceFolder}",
+                "environment": [],
+                "externalConsole": true,
+                "MIMode": "gdb",
+                "miDebuggerPath": "${env:LOCALAPPDATA}/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe/mingw64/bin/gdb.exe",
+                "setupCommands": [
+                    {
+                        "description": "Enable pretty-printing",
+                        "text": "-enable-pretty-printing",
+                        "ignoreFailures": true
+                    }
+                ],
+                "preLaunchTask": "Build All"
+            }
+        ]
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-vscode.cpptools",
+            "ms-vscode.cmake-tools",
+            "GitHub.copilot"
+        ]
+    }
+}

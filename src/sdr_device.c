@@ -254,3 +254,56 @@ bool psdr_is_streaming(const psdr_context_t *ctx) {
     if (!ctx) return false;
     return ctx->streaming;
 }
+
+void psdr_print_device_params(const psdr_context_t *ctx) {
+    if (!ctx || !ctx->params) {
+        printf("psdr_print_device_params: No device params available\n");
+        return;
+    }
+    
+    sdrplay_api_DeviceParamsT *p = ctx->params;
+    sdrplay_api_RxChannelParamsT *ch = p->rxChannelA;
+    
+    printf("\n=== SDRplay Device Parameters (API Defaults) ===\n");
+    
+    /* Device-level params */
+    if (p->devParams) {
+        printf("Device:\n");
+        printf("  Sample Rate:    %.0f Hz\n", p->devParams->fsFreq.fsHz);
+        printf("  PPM Offset:     %.1f\n", p->devParams->ppm);
+    }
+    
+    /* Tuner params */
+    if (ch) {
+        printf("Tuner:\n");
+        printf("  RF Frequency:   %.0f Hz (%.6f MHz)\n", 
+               ch->tunerParams.rfFreq.rfHz,
+               ch->tunerParams.rfFreq.rfHz / 1e6);
+        printf("  Bandwidth:      %d kHz\n", ch->tunerParams.bwType);
+        printf("  IF Type:        %d kHz\n", ch->tunerParams.ifType);
+        printf("  LO Mode:        %d\n", ch->tunerParams.loMode);
+        
+        printf("Gain:\n");
+        printf("  Gain Reduction: %d dB\n", ch->tunerParams.gain.gRdB);
+        printf("  LNA State:      %d\n", ch->tunerParams.gain.LNAstate);
+        printf("  Min GR Mode:    %d\n", ch->tunerParams.gain.minGr);
+        
+        printf("Control:\n");
+        printf("  AGC Enable:     %d\n", ch->ctrlParams.agc.enable);
+        printf("  AGC Setpoint:   %d dBfs\n", ch->ctrlParams.agc.setPoint_dBfs);
+        printf("  DC Offset:      %d\n", ch->ctrlParams.dcOffset.DCenable);
+        printf("  IQ Balance:     %d\n", ch->ctrlParams.dcOffset.IQenable);
+        printf("  Decimation:     %d (enable=%d)\n", 
+               ch->ctrlParams.decimation.decimationFactor,
+               ch->ctrlParams.decimation.enable);
+        
+        /* RSP2-specific params */
+        printf("RSP2 Tuner:\n");
+        printf("  Antenna:        %d (5=A, 6=B)\n", ch->rsp2TunerParams.antennaSel);
+        printf("  AM Port:        %d (0=Port2, 1=Port1/HiZ)\n", ch->rsp2TunerParams.amPortSel);
+        printf("  Bias-T:         %d\n", ch->rsp2TunerParams.biasTEnable);
+        printf("  RF Notch:       %d\n", ch->rsp2TunerParams.rfNotchEnable);
+    }
+    
+    printf("================================================\n\n");
+}

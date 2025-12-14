@@ -1,12 +1,12 @@
 /**
  * @file decimator.c
  * @brief Multi-stage decimation implementation
- * 
+ *
  * Converts 2 MSPS to 48 kHz using cascaded FIR filters.
- * 
+ *
  * Decimation chain: 2M → 250k → 50k → 48k
  *   Stage 1: ÷8 with lowpass (cutoff ~100 kHz)
- *   Stage 2: ÷5 with lowpass (cutoff ~20 kHz)  
+ *   Stage 2: ÷5 with lowpass (cutoff ~20 kHz)
  *   Stage 3: Rational resample 48/50 (polyphase)
  */
 
@@ -14,6 +14,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+
+/* Define M_PI if not available (MinGW strict mode) */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 /*============================================================================
  * Constants
@@ -81,20 +86,20 @@ struct decim_state {
     double input_rate;
     double output_rate;
     double actual_output_rate;
-    
+
     /* Stage 1 state */
     filter_state_t stage1;
     int stage1_phase;
-    
+
     /* Stage 2 state */
     filter_state_t stage2;
     int stage2_phase;
-    
+
     /* Stage 3 state (polyphase resampler) */
     filter_state_t stage3;
     int stage3_in_phase;   /* 0 to 49 */
     int stage3_out_phase;  /* 0 to 47 */
-    
+
     /* Intermediate buffers */
     decim_complex_t *buf1;  /* After stage 1 */
     decim_complex_t *buf2;  /* After stage 2 */
@@ -126,14 +131,14 @@ const char* decim_strerror(decim_error_t err) {
 
 static void init_polyphase_coeffs(void) {
     if (stage3_initialized) return;
-    
+
     /* Generate windowed sinc lowpass filter
      * Cutoff at 0.48 (slightly below Nyquist for 48/50 ratio)
      */
     float sinc[STAGE3_TOTAL_TAPS];
     float cutoff = 0.48f;
     int center = STAGE3_TOTAL_TAPS / 2;
-    
+
     for (int i = 0; i < STAGE3_TOTAL_TAPS; i++) {
         float x = (float)(i - center);
         if (fabsf(x) < 0.0001f) {
@@ -141,13 +146,13 @@ static void init_polyphase_coeffs(void) {
         } else {
             sinc[i] = sinf(2.0f * (float)M_PI * cutoff * x) / ((float)M_PI * x);
         }
-        
+
         /* Blackman window */
         float w = 0.42f - 0.5f * cosf(2.0f * (float)M_PI * i / (STAGE3_TOTAL_TAPS - 1))
                        + 0.08f * cosf(4.0f * (float)M_PI * i / (STAGE3_TOTAL_TAPS - 1));
         sinc[i] *= w;
     }
-    
+
     /* Normalize */
     float sum = 0.0f;
     for (int i = 0; i < STAGE3_TOTAL_TAPS; i++) {
@@ -156,19 +161,20 @@ static void init_polyphase_coeffs(void) {
     for (int i = 0; i < STAGE3_TOTAL_TAPS; i++) {
         sinc[i] /= sum;
     }
-    
+
     /* Distribute into polyphase branches */
+    /* Note: For decimation (not interpolation), we don't multiply by STAGE3_UP */
     for (int phase = 0; phase < STAGE3_UP; phase++) {
         for (int tap = 0; tap < STAGE3_TAPS_PER_PHASE; tap++) {
             int idx = tap * STAGE3_UP + phase;
             if (idx < STAGE3_TOTAL_TAPS) {
-                stage3_polyphase[phase][tap] = sinc[idx] * STAGE3_UP;
+                stage3_polyphase[phase][tap] = sinc[idx];
             } else {
                 stage3_polyphase[phase][tap] = 0.0f;
             }
         }
     }
-    
+
     stage3_initialized = true;
 }
 
@@ -189,18 +195,18 @@ static inline void filter_push(filter_state_t *fs, float i, float q) {
     fs->pos = (fs->pos + 1) % fs->count;
 }
 
-static inline void filter_apply(const filter_state_t *fs, 
+static inline void filter_apply(const filter_state_t *fs,
                                 const float *coeffs, int taps,
                                 float *out_i, float *out_q) {
     float sum_i = 0.0f, sum_q = 0.0f;
     int pos = fs->pos;
-    
+
     for (int i = 0; i < taps; i++) {
         pos = (pos - 1 + fs->count) % fs->count;
         sum_i += fs->i[pos] * coeffs[i];
         sum_q += fs->q[pos] * coeffs[i];
     }
-    
+
     *out_i = sum_i;
     *out_q = sum_q;
 }
@@ -209,53 +215,53 @@ static inline void filter_apply(const filter_state_t *fs,
  * API Implementation
  *============================================================================*/
 
-decim_error_t decim_create(decim_state_t **state, 
-                           double input_rate, 
+decim_error_t decim_create(decim_state_t **state,
+                           double input_rate,
                            double output_rate) {
     if (!state) return DECIM_ERR_INVALID_ARG;
-    
+
     /* For now, only support 2M → 48k */
     if (input_rate != 2000000.0 || output_rate != 48000.0) {
         /* Could add more flexible rate support later */
         return DECIM_ERR_INVALID_ARG;
     }
-    
+
     init_polyphase_coeffs();
-    
+
     decim_state_t *s = calloc(1, sizeof(decim_state_t));
     if (!s) return DECIM_ERR_ALLOC;
-    
+
     s->input_rate = input_rate;
     s->output_rate = output_rate;
     s->actual_output_rate = 48000.0;  /* Exact for 2M → 250k → 50k → 48k */
-    
+
     /* Initialize filter states */
     filter_state_init(&s->stage1, STAGE1_TAPS);
     filter_state_init(&s->stage2, STAGE2_TAPS);
     filter_state_init(&s->stage3, STAGE3_TAPS_PER_PHASE);
-    
+
     s->stage1_phase = 0;
     s->stage2_phase = 0;
     s->stage3_in_phase = 0;
     s->stage3_out_phase = 0;
-    
+
     /* Allocate intermediate buffers
      * Stage 1 output: input_count / 8
      * Stage 2 output: stage1_output / 5
      */
     s->buf1_size = 65536 / STAGE1_DECIM + 64;
     s->buf2_size = s->buf1_size / STAGE2_DECIM + 64;
-    
+
     s->buf1 = calloc(s->buf1_size, sizeof(decim_complex_t));
     s->buf2 = calloc(s->buf2_size, sizeof(decim_complex_t));
-    
+
     if (!s->buf1 || !s->buf2) {
         free(s->buf1);
         free(s->buf2);
         free(s);
         return DECIM_ERR_ALLOC;
     }
-    
+
     *state = s;
     return DECIM_OK;
 }
@@ -269,11 +275,11 @@ void decim_destroy(decim_state_t *state) {
 
 void decim_reset(decim_state_t *state) {
     if (!state) return;
-    
+
     filter_state_init(&state->stage1, STAGE1_TAPS);
     filter_state_init(&state->stage2, STAGE2_TAPS);
     filter_state_init(&state->stage3, STAGE3_TAPS_PER_PHASE);
-    
+
     state->stage1_phase = 0;
     state->stage2_phase = 0;
     state->stage3_in_phase = 0;
@@ -308,26 +314,26 @@ decim_error_t decim_process_int16(
     if (!state || !xi || !xq || !out || !out_count) {
         return DECIM_ERR_INVALID_ARG;
     }
-    
+
     const float scale = 1.0f / 32768.0f;
     size_t stage1_out = 0;
     size_t stage2_out = 0;
     size_t final_out = 0;
-    
+
     /* Stage 1: Decimate by 8 */
     for (size_t i = 0; i < in_count; i++) {
         float fi = xi[i] * scale;
         float fq = xq[i] * scale;
-        
+
         filter_push(&state->stage1, fi, fq);
         state->stage1_phase++;
-        
+
         if (state->stage1_phase >= STAGE1_DECIM) {
             state->stage1_phase = 0;
-            
+
             float oi, oq;
             filter_apply(&state->stage1, stage1_coeffs, STAGE1_TAPS, &oi, &oq);
-            
+
             if (stage1_out < state->buf1_size) {
                 state->buf1[stage1_out].i = oi;
                 state->buf1[stage1_out].q = oq;
@@ -335,18 +341,18 @@ decim_error_t decim_process_int16(
             }
         }
     }
-    
+
     /* Stage 2: Decimate by 5 */
     for (size_t i = 0; i < stage1_out; i++) {
         filter_push(&state->stage2, state->buf1[i].i, state->buf1[i].q);
         state->stage2_phase++;
-        
+
         if (state->stage2_phase >= STAGE2_DECIM) {
             state->stage2_phase = 0;
-            
+
             float oi, oq;
             filter_apply(&state->stage2, stage2_coeffs, STAGE2_TAPS, &oi, &oq);
-            
+
             if (stage2_out < state->buf2_size) {
                 state->buf2[stage2_out].i = oi;
                 state->buf2[stage2_out].q = oq;
@@ -354,44 +360,44 @@ decim_error_t decim_process_int16(
             }
         }
     }
-    
+
     /* Stage 3: Resample 50k → 48k using polyphase filter */
     for (size_t i = 0; i < stage2_out; i++) {
         filter_push(&state->stage3, state->buf2[i].i, state->buf2[i].q);
-        
+
         /* For each input sample, we might produce 0 or 1 output samples
          * Ratio is 48/50, so we output slightly less than we input
          */
-        while (state->stage3_out_phase * STAGE3_DOWN < 
+        while (state->stage3_out_phase * STAGE3_DOWN <
                (state->stage3_in_phase + 1) * STAGE3_UP) {
-            
+
             if (final_out >= out_max) {
                 *out_count = final_out;
                 return DECIM_ERR_BUFFER_FULL;
             }
-            
+
             int phase = state->stage3_out_phase % STAGE3_UP;
             float oi, oq;
-            filter_apply(&state->stage3, stage3_polyphase[phase], 
+            filter_apply(&state->stage3, stage3_polyphase[phase],
                         STAGE3_TAPS_PER_PHASE, &oi, &oq);
-            
+
             out[final_out].i = oi;
             out[final_out].q = oq;
             final_out++;
-            
+
             state->stage3_out_phase++;
         }
-        
+
         state->stage3_in_phase++;
-        
+
         /* Reset phase counters to prevent overflow */
-        if (state->stage3_in_phase >= STAGE3_DOWN && 
+        if (state->stage3_in_phase >= STAGE3_DOWN &&
             state->stage3_out_phase >= STAGE3_UP) {
             state->stage3_in_phase -= STAGE3_DOWN;
             state->stage3_out_phase -= STAGE3_UP;
         }
     }
-    
+
     *out_count = final_out;
     return DECIM_OK;
 }
@@ -407,27 +413,27 @@ decim_error_t decim_process_float(
     if (!state || !in || !out || !out_count) {
         return DECIM_ERR_INVALID_ARG;
     }
-    
+
     /* Convert to temporary int16 arrays and use main path
      * (Not optimal, but keeps code simple for now)
      */
     int16_t *xi = malloc(in_count * sizeof(int16_t));
     int16_t *xq = malloc(in_count * sizeof(int16_t));
-    
+
     if (!xi || !xq) {
         free(xi);
         free(xq);
         return DECIM_ERR_ALLOC;
     }
-    
+
     for (size_t i = 0; i < in_count; i++) {
         xi[i] = (int16_t)(in[i].i * 32767.0f);
         xq[i] = (int16_t)(in[i].q * 32767.0f);
     }
-    
-    decim_error_t err = decim_process_int16(state, xi, xq, in_count, 
+
+    decim_error_t err = decim_process_int16(state, xi, xq, in_count,
                                             out, out_max, out_count);
-    
+
     free(xi);
     free(xq);
     return err;

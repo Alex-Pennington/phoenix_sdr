@@ -30,6 +30,12 @@
 #define WINDOW_HEIGHT   800     /* Scrolling history (2x for visibility) */
 #define FFT_SIZE        1024    /* FFT size (512 usable bins) */
 #define SAMPLE_RATE     48000   /* Expected input sample rate */
+#define HOP_SIZE        1024    /* TEMP: Full frame like yesterday */
+#define DISPLAY_DECIMATION 1     /* TEMP: Display every frame */
+
+/* Ring buffer for sliding window FFT */
+static int16_t g_ring_buffer[FFT_SIZE];
+static bool g_ring_initialized = false;
 
 /* Frequency bins to monitor for WWV tick detection
  * Each has a center frequency and bandwidth based on signal characteristics:
@@ -69,10 +75,10 @@ static int g_selected_param = 0;      /* 0 = gain, 1-7 = tick thresholds */
 #define TICK_NOISE_ADAPT_RATE   0.001f  /* Slow adaptation of noise floor */
 #define TICK_WARMUP_ADAPT_RATE  0.05f   /* Fast adaptation during warmup */
 #define TICK_HYSTERESIS_RATIO   0.7f    /* threshold_low = threshold_high * this */
-#define TICK_WARMUP_FRAMES      50      /* ~1 second warmup (at 21ms/frame) */
+#define TICK_WARMUP_FRAMES      2000    /* ~1 second warmup (at 0.5ms/frame) */
 
-/* Convert ms to FFT frames (each frame is FFT_SIZE samples at SAMPLE_RATE) */
-#define MS_TO_FRAMES(ms) ((int)((ms) * SAMPLE_RATE / 1000 / FFT_SIZE))
+/* Convert ms to frames (each frame advances HOP_SIZE samples) */
+#define MS_TO_FRAMES(ms) ((int)((ms) * SAMPLE_RATE / 1000 / HOP_SIZE))
 
 /* Convert samples to ms */
 #define SAMPLES_TO_MS(samples) ((float)(samples) * 1000.0f / SAMPLE_RATE)
@@ -85,17 +91,17 @@ typedef enum {
 
 typedef struct {
     tick_state_t state;
-    
+
     /* Adaptive thresholds */
     float noise_floor;          /* Tracked noise floor (slow adapt) */
     float threshold_high;       /* Trigger threshold = noise_floor * 2.0 */
     float threshold_low;        /* Exit threshold = threshold_high * 0.7 */
-    
+
     /* Current tick measurement - sample-based for accuracy */
     uint64_t tick_start_sample; /* Sample when tick started */
     float tick_peak_energy;     /* Peak energy during tick */
     int tick_duration_samples;  /* Samples above threshold (accurate timing) */
-    
+
     /* Statistics */
     int ticks_detected;         /* Total tick count */
     int ticks_rejected;         /* Rejected (wrong duration) */
@@ -104,7 +110,7 @@ typedef struct {
     uint64_t total_samples;     /* Total samples processed */
     int cooldown_frames;        /* Frames remaining in cooldown */
     bool warmup_complete;       /* Warmup period finished */
-    
+
     /* Output */
     bool detection_enabled;     /* Toggle with 'D' key */
     FILE *csv_file;             /* Log file */
@@ -122,7 +128,7 @@ static void tick_detector_init(tick_detector_t *td) {
     td->warmup_complete = false;
     td->total_samples = 0;
     td->csv_file = NULL;
-    
+
     /* Open CSV log file */
     td->csv_file = fopen("wwv_ticks.csv", "w");
     if (td->csv_file) {
@@ -141,25 +147,25 @@ static void tick_detector_close(tick_detector_t *td) {
 /* Update detector with energy from 1000 Hz bucket. Returns true if tick just detected. */
 static bool tick_detector_update(tick_detector_t *td, float energy, uint64_t frame_num) {
     if (!td->detection_enabled) return false;
-    
+
     bool tick_detected = false;
-    td->total_samples += FFT_SIZE;  /* Track total samples for accurate timing */
-    
+    td->total_samples += HOP_SIZE;  /* Track total samples for accurate timing */
+
     /* Warmup period: fast noise floor adaptation, no detection */
     if (!td->warmup_complete) {
         td->noise_floor += TICK_WARMUP_ADAPT_RATE * (energy - td->noise_floor);
         if (td->noise_floor < 0.0001f) td->noise_floor = 0.0001f;
         td->threshold_high = td->noise_floor * 2.0f;
         td->threshold_low = td->threshold_high * TICK_HYSTERESIS_RATIO;
-        
+
         if (frame_num >= td->start_frame + TICK_WARMUP_FRAMES) {
             td->warmup_complete = true;
-            printf("[WARMUP] Complete. Noise floor=%.6f, Threshold=%.6f\n", 
+            printf("[WARMUP] Complete. Noise floor=%.6f, Threshold=%.6f\n",
                    td->noise_floor, td->threshold_high);
         }
         return false;
     }
-    
+
     /* Normal operation: slow noise adaptation during idle */
     if (td->state == TICK_IDLE && energy < td->threshold_high) {
         td->noise_floor += TICK_NOISE_ADAPT_RATE * (energy - td->noise_floor);
@@ -167,7 +173,7 @@ static bool tick_detector_update(tick_detector_t *td, float energy, uint64_t fra
         td->threshold_high = td->noise_floor * 2.0f;
         td->threshold_low = td->threshold_high * TICK_HYSTERESIS_RATIO;
     }
-    
+
     switch (td->state) {
         case TICK_IDLE:
             if (energy > td->threshold_high) {
@@ -175,37 +181,37 @@ static bool tick_detector_update(tick_detector_t *td, float energy, uint64_t fra
                 td->state = TICK_IN_TICK;
                 td->tick_start_sample = td->total_samples;
                 td->tick_peak_energy = energy;
-                td->tick_duration_samples = FFT_SIZE;  /* First frame's worth */
+                td->tick_duration_samples = HOP_SIZE;  /* First frame's worth */
             }
             break;
-            
+
         case TICK_IN_TICK:
-            td->tick_duration_samples += FFT_SIZE;  /* Add samples from this frame */
+            td->tick_duration_samples += HOP_SIZE;  /* Add samples from this frame */
             if (energy > td->tick_peak_energy) {
                 td->tick_peak_energy = energy;
             }
-            
+
             if (energy < td->threshold_low) {
                 /* Falling edge - tick ended, validate duration */
                 float duration_ms = SAMPLES_TO_MS(td->tick_duration_samples);
-                
+
                 if (duration_ms >= TICK_MIN_DURATION_MS && duration_ms <= TICK_MAX_DURATION_MS) {
                     /* Valid tick! */
                     td->ticks_detected++;
                     tick_detected = true;
-                    
+
                     float timestamp_ms = SAMPLES_TO_MS(td->total_samples);
                     float interval_ms = 0.0f;
                     if (td->last_tick_sample > 0) {
                         interval_ms = SAMPLES_TO_MS(td->tick_start_sample - td->last_tick_sample);
                     }
-                    
+
                     /* Console output */
                     char indicator = (interval_ms > 950.0f && interval_ms < 1050.0f) ? ' ' : '!';
                     printf("[%7.1fs] TICK #%-4d  peak=%.4f  dur=%4.1fms  interval=%6.0fms %c\n",
                            timestamp_ms / 1000.0f, td->ticks_detected,
                            td->tick_peak_energy, duration_ms, interval_ms, indicator);
-                    
+
                     /* CSV output */
                     if (td->csv_file) {
                         fprintf(td->csv_file, "%.1f,%d,%.6f,%.1f,%.0f,%.6f\n",
@@ -213,13 +219,13 @@ static bool tick_detector_update(tick_detector_t *td, float energy, uint64_t fra
                                 td->tick_peak_energy, duration_ms, interval_ms, td->noise_floor);
                         fflush(td->csv_file);
                     }
-                    
+
                     td->last_tick_sample = td->tick_start_sample;
                 } else {
                     /* Invalid duration - reject */
                     td->ticks_rejected++;
                 }
-                
+
                 td->state = TICK_COOLDOWN;
                 td->cooldown_frames = MS_TO_FRAMES(TICK_COOLDOWN_MS);
             }
@@ -230,7 +236,7 @@ static bool tick_detector_update(tick_detector_t *td, float energy, uint64_t fra
                 td->cooldown_frames = MS_TO_FRAMES(TICK_COOLDOWN_MS);
             }
             break;
-            
+
         case TICK_COOLDOWN:
             td->cooldown_frames--;
             if (td->cooldown_frames <= 0) {
@@ -238,18 +244,18 @@ static bool tick_detector_update(tick_detector_t *td, float energy, uint64_t fra
             }
             break;
     }
-    
+
     return tick_detected;
 }
 
 static void tick_detector_print_stats(tick_detector_t *td, uint64_t current_frame) {
     (void)current_frame;  /* Use sample-based timing instead */
     float elapsed_sec = SAMPLES_TO_MS(td->total_samples) / 1000.0f;
-    float detection_sec = td->warmup_complete ? 
-        (elapsed_sec - (TICK_WARMUP_FRAMES * FFT_SIZE * 1000.0f / SAMPLE_RATE / 1000.0f)) : 0.0f;
+    float detection_sec = td->warmup_complete ?
+        (elapsed_sec - (TICK_WARMUP_FRAMES * HOP_SIZE * 1000.0f / SAMPLE_RATE / 1000.0f)) : 0.0f;
     int expected = (int)detection_sec;
     float hit_rate = (expected > 0) ? (100.0f * td->ticks_detected / expected) : 0.0f;
-    
+
     printf("\n=== TICK DETECTION STATS ===\n");
     printf("Elapsed:   %.1f sec (%.1f sec detecting)\n", elapsed_sec, detection_sec);
     printf("Detected:  %d ticks\n", td->ticks_detected);
@@ -368,13 +374,12 @@ int main(int argc, char *argv[]) {
     }
 
     /* Allocate buffers */
-    int16_t *pcm_buffer = (int16_t *)malloc(FFT_SIZE * sizeof(int16_t));
     kiss_fft_cpx *fft_in = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
     kiss_fft_cpx *fft_out = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
     uint8_t *pixels = (uint8_t *)malloc(WINDOW_WIDTH * WINDOW_HEIGHT * 3);
     float *magnitudes = (float *)malloc(WINDOW_WIDTH * sizeof(float));
 
-    if (!pcm_buffer || !fft_in || !fft_out || !pixels || !magnitudes) {
+    if (!fft_in || !fft_out || !pixels || !magnitudes) {
         fprintf(stderr, "Memory allocation failed\n");
         return 1;
     }
@@ -389,13 +394,18 @@ int main(int argc, char *argv[]) {
     }
 
     printf("Waterfall display ready. Reading from stdin...\n");
-    printf("Window: %dx%d, FFT: %d bins (%.1f Hz/bin)\n", WINDOW_WIDTH, WINDOW_HEIGHT, FFT_SIZE / 2, (float)SAMPLE_RATE / FFT_SIZE);
+    printf("Window: %dx%d, FFT: %d bins (%.1f Hz/bin)\n",
+           WINDOW_WIDTH, WINDOW_HEIGHT, FFT_SIZE / 2, (float)SAMPLE_RATE / FFT_SIZE);
+    printf("Timing: Hop=%d (%.2fms), Display=1:%d (~%d fps)\n",
+           HOP_SIZE, (float)HOP_SIZE * 1000.0f / SAMPLE_RATE,
+           DISPLAY_DECIMATION, (int)(SAMPLE_RATE / HOP_SIZE / DISPLAY_DECIMATION));
     printf("Keys: 0=gain, 1-7=tick thresholds, +/- adjust, D=detect, S=stats, Q/Esc quit\n");
-    printf("1:100Hz(±10) 2:440Hz(±5) 3:500Hz(±5) 4:600Hz(±5) 5:1000Hz(±100) 6:1200Hz(±100) 7:1500Hz(±20)\n");
+    printf("Buckets: 1:100Hz 2:440Hz 3:500Hz 4:600Hz 5:1000Hz 6:1200Hz 7:1500Hz\n");
 
     /* Initialize tick detector */
     tick_detector_init(&g_tick_detector);
     uint64_t frame_num = 0;
+    int display_frame_counter = 0;
     g_tick_detector.start_frame = 0;
     printf("\nTick detection ENABLED - watching 1000 Hz bucket\n");
     printf("Logging to wwv_ticks.csv\n\n");
@@ -467,22 +477,41 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        /* Read PCM samples from stdin */
-        size_t read_count = fread(pcm_buffer, sizeof(int16_t), FFT_SIZE, stdin);
-        if (read_count < FFT_SIZE) {
-            if (feof(stdin)) {
-                printf("End of input\n");
-                /* Keep window open but stop reading */
-                SDL_Delay(100);
-                continue;
+        /* Sliding window: read HOP_SIZE new samples, slide ring buffer */
+        if (!g_ring_initialized) {
+            /* First time: fill the entire ring buffer */
+            size_t read_count = fread(g_ring_buffer, sizeof(int16_t), FFT_SIZE, stdin);
+            if (read_count < FFT_SIZE) {
+                if (feof(stdin)) {
+                    printf("End of input (initial fill)\n");
+                    SDL_Delay(100);
+                    continue;
+                }
+                memset(g_ring_buffer + read_count, 0, (FFT_SIZE - read_count) * sizeof(int16_t));
             }
-            /* Pad with zeros if partial read */
-            memset(pcm_buffer + read_count, 0, (FFT_SIZE - read_count) * sizeof(int16_t));
+            g_ring_initialized = true;
+        } else {
+            /* Subsequent: slide window by HOP_SIZE */
+            int16_t new_samples[HOP_SIZE];
+            size_t read_count = fread(new_samples, sizeof(int16_t), HOP_SIZE, stdin);
+            if (read_count < HOP_SIZE) {
+                if (feof(stdin)) {
+                    printf("End of input\n");
+                    /* Keep window open but stop reading */
+                    SDL_Delay(100);
+                    continue;
+                }
+                /* Pad with zeros if partial read */
+                memset(new_samples + read_count, 0, (HOP_SIZE - read_count) * sizeof(int16_t));
+            }
+            /* Slide the buffer: move old data left, append new samples at end */
+            memmove(g_ring_buffer, g_ring_buffer + HOP_SIZE, (FFT_SIZE - HOP_SIZE) * sizeof(int16_t));
+            memcpy(g_ring_buffer + FFT_SIZE - HOP_SIZE, new_samples, HOP_SIZE * sizeof(int16_t));
         }
 
         /* Convert to complex and apply window */
         for (int i = 0; i < FFT_SIZE; i++) {
-            fft_in[i].r = (pcm_buffer[i] / 32768.0f) * window_func[i];
+            fft_in[i].r = (g_ring_buffer[i] / 32768.0f) * window_func[i];
             fft_in[i].i = 0.0f;
         }
 
@@ -513,42 +542,10 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        /* Auto-gain: track peak and floor */
-        float frame_max = -200.0f;
-        float frame_min = 200.0f;
-        for (int i = 0; i < WINDOW_WIDTH; i++) {
-            float db = 20.0f * log10f(magnitudes[i] + 1e-10f);
-            if (db > frame_max) frame_max = db;
-            if (db < frame_min) frame_min = db;
-        }
-        /* Update tracked values with attack/decay */
-        if (frame_max > g_peak_db) {
-            g_peak_db = g_peak_db + AGC_ATTACK * (frame_max - g_peak_db);
-        } else {
-            g_peak_db = g_peak_db + AGC_DECAY * (frame_max - g_peak_db);
-        }
-        if (frame_min < g_floor_db) {
-            g_floor_db = g_floor_db + AGC_ATTACK * (frame_min - g_floor_db);
-        } else {
-            g_floor_db = g_floor_db + AGC_DECAY * (frame_min - g_floor_db);
-        }
-
-        /* Scroll pixels down by 1 row */
-        memmove(pixels + WINDOW_WIDTH * 3,  /* dest: row 1 */
-                pixels,                      /* src: row 0 */
-                WINDOW_WIDTH * (WINDOW_HEIGHT - 1) * 3);
-
-        /* Draw new row at top (row 0) */
-        for (int x = 0; x < WINDOW_WIDTH; x++) {
-            uint8_t r, g, b;
-            magnitude_to_rgb(magnitudes[x], g_peak_db, g_floor_db, &r, &g, &b);
-            pixels[x * 3 + 0] = r;
-            pixels[x * 3 + 1] = g;
-            pixels[x * 3 + 2] = b;
-        }
-
-        /* Tick detection: check each frequency and mark with colored dot if above threshold */
+        /* === TICK DETECTION (runs at full rate - every 0.5ms) === */
         float hz_per_bin = (float)SAMPLE_RATE / FFT_SIZE;
+        float tick_energy_1000hz = 0.0f;  /* Store for display marker */
+        
         for (int f = 0; f < NUM_TICK_FREQS; f++) {
             int freq = TICK_FREQS[f];
             int bandwidth = TICK_BW[f];
@@ -578,52 +575,116 @@ int main(int argc, char *argv[]) {
 
             float combined_energy = pos_energy + neg_energy;
 
-            /* Feed 1000 Hz bucket (index 4) to tick detector */
+            /* Feed 1000 Hz bucket (index 4) to tick detector - ALWAYS */
             if (f == 4) {
                 tick_detector_update(&g_tick_detector, combined_energy, frame_num);
-            }
-
-            /* If above threshold, draw marker dot at the frequency position */
-            if (combined_energy > g_tick_thresholds[f]) {
-                /* Calculate x position in FFT-shifted display */
-                /* Positive freq: x = WINDOW_WIDTH/2 + center_bin */
-                int x_pos = WINDOW_WIDTH / 2 + center_bin;
-                int x_neg = WINDOW_WIDTH / 2 - center_bin;
-
-                /* Draw red dot at positive frequency */
-                if (x_pos >= 0 && x_pos < WINDOW_WIDTH) {
-                    pixels[x_pos * 3 + 0] = 255;  /* R */
-                    pixels[x_pos * 3 + 1] = 0;    /* G */
-                    pixels[x_pos * 3 + 2] = 0;    /* B */
-                }
-                /* Draw red dot at negative frequency */
-                if (x_neg >= 0 && x_neg < WINDOW_WIDTH) {
-                    pixels[x_neg * 3 + 0] = 255;  /* R */
-                    pixels[x_neg * 3 + 1] = 0;    /* G */
-                    pixels[x_neg * 3 + 2] = 0;    /* B */
-                }
+                tick_energy_1000hz = combined_energy;
             }
         }
 
-        /* Draw selection indicator at bottom of first row */
-        /* Small colored tick at the selected parameter position */
-        {
-            int indicator_x = 10 + g_selected_param * 20;
-            if (indicator_x < WINDOW_WIDTH) {
-                pixels[indicator_x * 3 + 0] = 255;  /* Cyan indicator */
-                pixels[indicator_x * 3 + 1] = 255;
-                pixels[indicator_x * 3 + 2] = 0;
+        /* === DISPLAY UPDATE (decimated - every DISPLAY_DECIMATION frames) === */
+        display_frame_counter++;
+        if (display_frame_counter >= DISPLAY_DECIMATION) {
+            display_frame_counter = 0;
+
+            /* Auto-gain: track peak and floor (runs at display rate, not detection rate) */
+            /* Include g_gain_offset so AGC tracks what magnitude_to_rgb actually sees */
+            float frame_max = -200.0f;
+            float frame_min = 200.0f;
+            for (int i = 0; i < WINDOW_WIDTH; i++) {
+                float db = 20.0f * log10f(magnitudes[i] + 1e-10f) + g_gain_offset;
+                if (db > frame_max) frame_max = db;
+                if (db < frame_min) frame_min = db;
             }
+            /* Update tracked values with attack/decay */
+            if (frame_max > g_peak_db) {
+                g_peak_db = g_peak_db + AGC_ATTACK * (frame_max - g_peak_db);
+            } else {
+                g_peak_db = g_peak_db + AGC_DECAY * (frame_max - g_peak_db);
+            }
+            if (frame_min < g_floor_db) {
+                g_floor_db = g_floor_db + AGC_ATTACK * (frame_min - g_floor_db);
+            } else {
+                g_floor_db = g_floor_db + AGC_DECAY * (frame_min - g_floor_db);
+            }
+
+            /* Scroll pixels down by 1 row */
+            memmove(pixels + WINDOW_WIDTH * 3,  /* dest: row 1 */
+                    pixels,                      /* src: row 0 */
+                    WINDOW_WIDTH * (WINDOW_HEIGHT - 1) * 3);
+
+            /* Draw new row at top (row 0) */
+            for (int x = 0; x < WINDOW_WIDTH; x++) {
+                uint8_t r, g, b;
+                magnitude_to_rgb(magnitudes[x], g_peak_db, g_floor_db, &r, &g, &b);
+                pixels[x * 3 + 0] = r;
+                pixels[x * 3 + 1] = g;
+                pixels[x * 3 + 2] = b;
+            }
+
+            /* Draw tick threshold markers for all frequencies */
+            for (int f = 0; f < NUM_TICK_FREQS; f++) {
+                int freq = TICK_FREQS[f];
+                int center_bin = (int)(freq / hz_per_bin + 0.5f);
+                int bin_span = (int)(TICK_BW[f] / hz_per_bin + 0.5f);
+                if (bin_span < 1) bin_span = 1;
+
+                /* Recalculate energy for display (or use cached for 1000Hz) */
+                float combined_energy = 0.0f;
+                if (f == 4) {
+                    combined_energy = tick_energy_1000hz;
+                } else {
+                    for (int b = -bin_span; b <= bin_span; b++) {
+                        int pos_bin = center_bin + b;
+                        int neg_bin = FFT_SIZE - center_bin + b;
+                        if (pos_bin >= 0 && pos_bin < FFT_SIZE) {
+                            float re = fft_out[pos_bin].r;
+                            float im = fft_out[pos_bin].i;
+                            combined_energy += sqrtf(re * re + im * im) / FFT_SIZE;
+                        }
+                        if (neg_bin >= 0 && neg_bin < FFT_SIZE) {
+                            float re = fft_out[neg_bin].r;
+                            float im = fft_out[neg_bin].i;
+                            combined_energy += sqrtf(re * re + im * im) / FFT_SIZE;
+                        }
+                    }
+                }
+
+                /* If above threshold, draw marker dot at the frequency position */
+                if (combined_energy > g_tick_thresholds[f]) {
+                    int x_pos = WINDOW_WIDTH / 2 + center_bin;
+                    int x_neg = WINDOW_WIDTH / 2 - center_bin;
+
+                    if (x_pos >= 0 && x_pos < WINDOW_WIDTH) {
+                        pixels[x_pos * 3 + 0] = 255;  /* R */
+                        pixels[x_pos * 3 + 1] = 0;    /* G */
+                        pixels[x_pos * 3 + 2] = 0;    /* B */
+                    }
+                    if (x_neg >= 0 && x_neg < WINDOW_WIDTH) {
+                        pixels[x_neg * 3 + 0] = 255;  /* R */
+                        pixels[x_neg * 3 + 1] = 0;    /* G */
+                        pixels[x_neg * 3 + 2] = 0;    /* B */
+                    }
+                }
+            }
+
+            /* Draw selection indicator */
+            {
+                int indicator_x = 10 + g_selected_param * 20;
+                if (indicator_x < WINDOW_WIDTH) {
+                    pixels[indicator_x * 3 + 0] = 255;  /* Cyan indicator */
+                    pixels[indicator_x * 3 + 1] = 255;
+                    pixels[indicator_x * 3 + 2] = 0;
+                }
+            }
+
+            /* Update texture and render */
+            SDL_UpdateTexture(texture, NULL, pixels, WINDOW_WIDTH * 3);
+            SDL_RenderClear(renderer);
+            SDL_RenderCopy(renderer, texture, NULL, NULL);
+            SDL_RenderPresent(renderer);
         }
 
-        /* Update texture */
-        SDL_UpdateTexture(texture, NULL, pixels, WINDOW_WIDTH * 3);
-
-        /* Render */
-        SDL_RenderClear(renderer);
-        SDL_RenderCopy(renderer, texture, NULL, NULL);
-
-        SDL_RenderPresent(renderer);
         frame_num++;
     }
 
@@ -638,7 +699,6 @@ int main(int argc, char *argv[]) {
     free(pixels);
     free(fft_out);
     free(fft_in);
-    free(pcm_buffer);
     kiss_fft_free(fft_cfg);
 
     SDL_DestroyTexture(texture);

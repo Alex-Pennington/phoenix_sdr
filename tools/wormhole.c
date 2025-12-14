@@ -3,15 +3,16 @@
  * @brief MIL-STD-188-110A Constellation Display
  *
  * Displays I/Q constellation for PSK signals.
- * Reads 16-bit signed mono PCM from stdin.
- * 
+ * Reads PCM files directly from tx_pcm_out directory and loops continuously.
+ *
  * MIL-STD-188-110A Parameters (from Cm110s.h):
  *   - Sample Rate: 9600 Hz (modem internal), 48000 Hz (audio)
  *   - Symbol Rate: 2400 baud
  *   - Center Frequency: 1800 Hz
  *   - Samples per Symbol: 4 @ 9600 Hz, 20 @ 48000 Hz
  *
- * Usage: Get-Content -Raw signal.pcm | wormhole.exe
+ * Usage: wormhole.exe [directory]
+ *        Default directory: tx_pcm_out
  */
 
 #include <stdio.h>
@@ -20,6 +21,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <math.h>
+#include <dirent.h>
 
 #include <SDL.h>
 #include "version.h"
@@ -27,6 +29,7 @@
 #ifdef _WIN32
 #include <io.h>
 #include <fcntl.h>
+#include <windows.h>
 #endif
 
 /*============================================================================
@@ -54,6 +57,65 @@
 #define POINT_FADE      0.985f          /* How fast old points fade */
 
 /*============================================================================
+ * File Management
+ *============================================================================*/
+
+#define MAX_FILES       100
+#define MAX_PATH_LEN    512
+
+static char g_pcm_files[MAX_FILES][MAX_PATH_LEN];
+static int g_num_files = 0;
+static int g_current_file = 0;
+static FILE *g_current_fp = NULL;
+static char g_pcm_dir[MAX_PATH_LEN] = "tx_pcm_out";
+
+static int scan_directory(const char *dir_path) {
+    DIR *dir = opendir(dir_path);
+    if (!dir) {
+        fprintf(stderr, "Cannot open directory: %s\n", dir_path);
+        return 0;
+    }
+    
+    g_num_files = 0;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL && g_num_files < MAX_FILES) {
+        const char *name = entry->d_name;
+        size_t len = strlen(name);
+        
+        /* Check for .pcm extension */
+        if (len > 4 && strcmp(name + len - 4, ".pcm") == 0) {
+            snprintf(g_pcm_files[g_num_files], MAX_PATH_LEN, "%s/%s", dir_path, name);
+            g_num_files++;
+        }
+    }
+    closedir(dir);
+    
+    printf("Found %d PCM files in %s\n", g_num_files, dir_path);
+    return g_num_files;
+}
+
+static FILE* open_next_file(void) {
+    if (g_num_files == 0) return NULL;
+    
+    if (g_current_fp) {
+        fclose(g_current_fp);
+    }
+    
+    g_current_file = (g_current_file + 1) % g_num_files;
+    g_current_fp = fopen(g_pcm_files[g_current_file], "rb");
+    
+    if (g_current_fp) {
+        /* Extract just filename for display */
+        const char *filename = strrchr(g_pcm_files[g_current_file], '/');
+        if (!filename) filename = strrchr(g_pcm_files[g_current_file], '\\');
+        if (filename) filename++; else filename = g_pcm_files[g_current_file];
+        printf("\rPlaying: %s                    \n", filename);
+    }
+    
+    return g_current_fp;
+}
+
+/*============================================================================
  * Matched Filter for Symbol Timing
  * Raised cosine pulse shaping per MIL-STD-188-110A
  *============================================================================*/
@@ -66,12 +128,12 @@ static void init_matched_filter(void) {
     float alpha = 0.35f;
     int center = MATCHED_FILTER_LEN / 2;
     float T = (float)SAMPLES_PER_SYMBOL;  /* Symbol period in samples */
-    
+
     for (int i = 0; i < MATCHED_FILTER_LEN; i++) {
         float t = (float)(i - center);
         float sinc_arg = t / T;
         float cos_arg = PI * alpha * t / T;
-        
+
         /* sinc(t/T) */
         float sinc;
         if (fabsf(t) < 0.0001f) {
@@ -79,7 +141,7 @@ static void init_matched_filter(void) {
         } else {
             sinc = sinf(PI * sinc_arg) / (PI * sinc_arg);
         }
-        
+
         /* cos(pi*alpha*t/T) / (1 - (2*alpha*t/T)^2) */
         float denom = 1.0f - 4.0f * alpha * alpha * sinc_arg * sinc_arg;
         float cosine_term;
@@ -88,10 +150,10 @@ static void init_matched_filter(void) {
         } else {
             cosine_term = cosf(cos_arg) / denom;
         }
-        
+
         g_matched_filter[i] = sinc * cosine_term;
     }
-    
+
     /* Normalize */
     float sum = 0.0f;
     for (int i = 0; i < MATCHED_FILTER_LEN; i++) {
@@ -119,9 +181,8 @@ static void costas_init(costas_loop_t *loop, float freq_hz, float bandwidth) {
     loop->phase = 0.0f;
     loop->freq_nominal = TWO_PI * freq_hz / SAMPLE_RATE;
     loop->freq = loop->freq_nominal;
-    
+
     /* Loop bandwidth determines tracking speed vs noise */
-    /* Typical: BW = symbol_rate / 100 for acquisition */
     float damping = 0.707f;  /* Critically damped */
     float bw_norm = bandwidth / SAMPLE_RATE;
     float denom = 1.0f + 2.0f * damping * bw_norm + bw_norm * bw_norm;
@@ -129,39 +190,37 @@ static void costas_init(costas_loop_t *loop, float freq_hz, float bandwidth) {
     loop->beta = 4.0f * bw_norm * bw_norm / denom;
 }
 
-static void costas_process(costas_loop_t *loop, float sample, 
+static void costas_process(costas_loop_t *loop, float sample,
                            float *out_i, float *out_q, float *phase_error) {
     /* Mix down to baseband */
     float cos_p = cosf(loop->phase);
     float sin_p = sinf(loop->phase);
-    
+
     *out_i = sample * cos_p * 2.0f;   /* 2x for mixer gain */
     *out_q = -sample * sin_p * 2.0f;
-    
+
     /* Phase error detector for BPSK/QPSK */
-    /* For 8-PSK, use: error = Q * sign(I) - I * sign(Q) / sqrt(2) */
-    /* For QPSK: error = I * Q (decision-directed) */
     float error = (*out_i) * (*out_q);  /* Works for QPSK */
-    
+
     /* Limit error to prevent wild swings */
     if (error > 1.0f) error = 1.0f;
     if (error < -1.0f) error = -1.0f;
-    
+
     *phase_error = error;
-    
+
     /* Update NCO */
     loop->freq += loop->beta * error;
     loop->phase += loop->freq + loop->alpha * error;
-    
+
     /* Keep phase in [0, 2*pi) */
     while (loop->phase >= TWO_PI) loop->phase -= TWO_PI;
     while (loop->phase < 0.0f) loop->phase += TWO_PI;
-    
+
     /* Limit frequency deviation (±50 Hz from nominal) */
     float max_dev = TWO_PI * 50.0f / SAMPLE_RATE;
-    if (loop->freq > loop->freq_nominal + max_dev) 
+    if (loop->freq > loop->freq_nominal + max_dev)
         loop->freq = loop->freq_nominal + max_dev;
-    if (loop->freq < loop->freq_nominal - max_dev) 
+    if (loop->freq < loop->freq_nominal - max_dev)
         loop->freq = loop->freq_nominal - max_dev;
 }
 
@@ -179,15 +238,14 @@ typedef struct {
 
 static void lpf_init(iir_filter_t *f, float cutoff_hz) {
     memset(f, 0, sizeof(*f));
-    
+
     /* Simple 2nd-order Butterworth approximation */
-    /* For proper filter, use bilinear transform */
     float fc = cutoff_hz / SAMPLE_RATE;
     float w = tanf(PI * fc);
     float w2 = w * w;
     float r = sqrtf(2.0f);
     float d = w2 + r * w + 1.0f;
-    
+
     f->b[0] = w2 / d;
     f->b[1] = 2.0f * w2 / d;
     f->b[2] = w2 / d;
@@ -203,12 +261,12 @@ static float lpf_process(iir_filter_t *f, float in) {
         f->y[i] = f->y[i-1];
     }
     f->x[0] = in;
-    
+
     /* IIR filter */
     float out = f->b[0] * f->x[0] + f->b[1] * f->x[1] + f->b[2] * f->x[2]
               - f->a[1] * f->y[1] - f->a[2] * f->y[2];
     f->y[0] = out;
-    
+
     return out;
 }
 
@@ -232,7 +290,7 @@ static void agc_init(agc_t *agc, float target) {
 
 static void agc_process(agc_t *agc, float *i, float *q) {
     float mag = sqrtf((*i)*(*i) + (*q)*(*q));
-    
+
     if (mag > 0.001f) {
         float error = agc->target - mag * agc->gain;
         if (error > 0) {
@@ -240,12 +298,12 @@ static void agc_process(agc_t *agc, float *i, float *q) {
         } else {
             agc->gain += agc->attack * error;
         }
-        
+
         /* Limit gain */
         if (agc->gain < 0.01f) agc->gain = 0.01f;
         if (agc->gain > 100.0f) agc->gain = 100.0f;
     }
-    
+
     *i *= agc->gain;
     *q *= agc->gain;
 }
@@ -267,7 +325,7 @@ static void add_constellation_point(float i, float q) {
     g_points[g_point_head].i = i;
     g_points[g_point_head].q = q;
     g_points[g_point_head].brightness = 1.0f;
-    
+
     g_point_head = (g_point_head + 1) % MAX_POINTS;
     if (g_point_count < MAX_POINTS) g_point_count++;
 }
@@ -285,14 +343,14 @@ static void fade_points(void) {
 static void draw_grid(uint8_t *pixels) {
     int cx = WINDOW_SIZE / 2;
     int cy = WINDOW_SIZE / 2;
-    
+
     /* Background */
     memset(pixels, 15, WINDOW_SIZE * WINDOW_SIZE * 3);
-    
+
     /* Draw grid lines */
     for (int g = 0; g <= GRID_DIVISIONS; g++) {
         int offset = (int)(g * CONSTELLATION_RADIUS * 2 / GRID_DIVISIONS - CONSTELLATION_RADIUS);
-        
+
         /* Vertical line */
         int x = cx + offset;
         if (x >= 0 && x < WINDOW_SIZE) {
@@ -306,13 +364,13 @@ static void draw_grid(uint8_t *pixels) {
                 }
             }
         }
-        
+
         /* Horizontal line */
-        int y = cy + offset;
-        if (y >= 0 && y < WINDOW_SIZE) {
+        int y2 = cy + offset;
+        if (y2 >= 0 && y2 < WINDOW_SIZE) {
             for (int x2 = cx - (int)CONSTELLATION_RADIUS; x2 <= cx + (int)CONSTELLATION_RADIUS; x2++) {
                 if (x2 >= 0 && x2 < WINDOW_SIZE) {
-                    int idx = (y * WINDOW_SIZE + x2) * 3;
+                    int idx = (y2 * WINDOW_SIZE + x2) * 3;
                     uint8_t color = (g == GRID_DIVISIONS/2) ? 60 : 35;
                     pixels[idx] = color;
                     pixels[idx+1] = color;
@@ -321,9 +379,9 @@ static void draw_grid(uint8_t *pixels) {
             }
         }
     }
-    
+
     /* Draw unit circle */
-    float unit_radius = CONSTELLATION_RADIUS * 0.7f;  /* Normalize so symbols hit ~0.7 */
+    float unit_radius = CONSTELLATION_RADIUS * 0.7f;
     for (int angle = 0; angle < 360; angle++) {
         float rad = angle * PI / 180.0f;
         int x = cx + (int)(unit_radius * cosf(rad));
@@ -335,13 +393,13 @@ static void draw_grid(uint8_t *pixels) {
             pixels[idx+2] = 70;
         }
     }
-    
+
     /* Draw ideal 8-PSK constellation points */
     for (int n = 0; n < 8; n++) {
         float angle = n * PI / 4.0f;
         int x = cx + (int)(unit_radius * cosf(angle));
         int y = cy - (int)(unit_radius * sinf(angle));
-        
+
         /* Draw cross marker */
         for (int d = -4; d <= 4; d++) {
             if (x+d >= 0 && x+d < WINDOW_SIZE) {
@@ -359,27 +417,27 @@ static void draw_grid(uint8_t *pixels) {
 static void draw_points(uint8_t *pixels) {
     int cx = WINDOW_SIZE / 2;
     int cy = WINDOW_SIZE / 2;
-    float scale = CONSTELLATION_RADIUS * 0.7f;  /* Match unit circle */
-    
+    float scale = CONSTELLATION_RADIUS * 0.7f;
+
     for (int p = 0; p < g_point_count; p++) {
         constellation_point_t *pt = &g_points[p];
         if (pt->brightness < 0.05f) continue;
-        
+
         int x = cx + (int)(pt->i * scale);
-        int y = cy - (int)(pt->q * scale);  /* Flip Y for screen coords */
-        
+        int y = cy - (int)(pt->q * scale);
+
         /* Color based on phase angle */
         float phase = atan2f(pt->q, pt->i);
-        float hue = (phase + PI) / TWO_PI;  /* 0-1 */
-        
-        /* Simple HSV to RGB (full saturation, brightness from fade) */
+        float hue = (phase + PI) / TWO_PI;
+
+        /* Simple HSV to RGB */
         float h = hue * 6.0f;
         int hi = (int)h % 6;
         float f = h - (int)h;
         float v = pt->brightness;
         float t = v * f;
         float s2 = v * (1.0f - f);
-        
+
         float r, g, b;
         switch (hi) {
             case 0: r = v; g = t; b = 0; break;
@@ -389,7 +447,7 @@ static void draw_points(uint8_t *pixels) {
             case 4: r = t; g = 0; b = v; break;
             default: r = v; g = 0; b = s2; break;
         }
-        
+
         /* Draw point (3x3 for visibility) */
         for (int dy = -1; dy <= 1; dy++) {
             for (int dx = -1; dx <= 1; dx++) {
@@ -397,7 +455,6 @@ static void draw_points(uint8_t *pixels) {
                 int py = y + dy;
                 if (px >= 0 && px < WINDOW_SIZE && py >= 0 && py < WINDOW_SIZE) {
                     int idx = (py * WINDOW_SIZE + px) * 3;
-                    /* Additive blend */
                     int nr = pixels[idx] + (int)(r * 200);
                     int ng = pixels[idx+1] + (int)(g * 200);
                     int nb = pixels[idx+2] + (int)(b * 200);
@@ -415,28 +472,32 @@ static void draw_points(uint8_t *pixels) {
  *============================================================================*/
 
 int main(int argc, char *argv[]) {
-    (void)argc;
-    (void)argv;
-
     print_version("Phoenix SDR - Wormhole (M110A Constellation)");
 
-#ifdef _WIN32
-    _setmode(_fileno(stdin), _O_BINARY);
-#endif
+    /* Parse command line */
+    if (argc > 1) {
+        strncpy(g_pcm_dir, argv[1], MAX_PATH_LEN - 1);
+    }
+
+    /* Scan for PCM files */
+    if (scan_directory(g_pcm_dir) == 0) {
+        fprintf(stderr, "No PCM files found in %s\n", g_pcm_dir);
+        return 1;
+    }
 
     /* Initialize DSP blocks */
     init_matched_filter();
-    
+
     costas_loop_t carrier;
-    costas_init(&carrier, M110A_CENTER_HZ, 50.0f);  /* 50 Hz loop BW */
-    
+    costas_init(&carrier, M110A_CENTER_HZ, 50.0f);
+
     iir_filter_t lpf_i, lpf_q;
-    lpf_init(&lpf_i, 1500.0f);  /* Cutoff at ~bandwidth/2 */
+    lpf_init(&lpf_i, 1500.0f);
     lpf_init(&lpf_q, 1500.0f);
-    
+
     agc_t agc;
-    agc_init(&agc, 0.7f);  /* Target amplitude */
-    
+    agc_init(&agc, 0.7f);
+
     /* Initialize SDL */
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -479,20 +540,22 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    printf("Wormhole display ready. Reading PCM from stdin...\n");
-    printf("Expected: 16-bit signed mono @ %d Hz\n", SAMPLE_RATE);
     printf("M110A: %d baud, %.0f Hz center, %d samples/symbol\n",
            M110A_SYMBOL_RATE, M110A_CENTER_HZ, SAMPLES_PER_SYMBOL);
     printf("\nControls:\n");
     printf("  C: Clear constellation\n");
+    printf("  N: Next file\n");
     printf("  +/-: Adjust AGC target\n");
     printf("  Q/Esc: Quit\n\n");
+
+    /* Open first file */
+    g_current_file = -1;  /* Will wrap to 0 */
+    open_next_file();
 
     bool running = true;
     int sample_counter = 0;
     int symbols_received = 0;
-    
-    /* Decimation filter state */
+
     float decim_i[SAMPLES_PER_SYMBOL];
     float decim_q[SAMPLES_PER_SYMBOL];
     int decim_idx = 0;
@@ -514,6 +577,9 @@ int main(int argc, char *argv[]) {
                         g_point_head = 0;
                         printf("Constellation cleared\n");
                         break;
+                    case SDLK_n:
+                        open_next_file();
+                        break;
                     case SDLK_PLUS:
                     case SDLK_EQUALS:
                         agc.target *= 1.2f;
@@ -527,57 +593,64 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        /* Read samples */
+        /* Read samples from current file */
         int16_t pcm_block[256];
-        size_t samples_read = fread(pcm_block, sizeof(int16_t), 256, stdin);
+        size_t samples_read = 0;
         
+        if (g_current_fp) {
+            samples_read = fread(pcm_block, sizeof(int16_t), 256, g_current_fp);
+        }
+
         if (samples_read == 0) {
-            SDL_Delay(50);
-        } else {
-            for (size_t s = 0; s < samples_read; s++) {
-                float sample = pcm_block[s] / 32768.0f;
-                
-                /* Carrier recovery and downconversion */
-                float raw_i, raw_q, phase_err;
-                costas_process(&carrier, sample, &raw_i, &raw_q, &phase_err);
-                
-                /* Low-pass filter */
-                float filt_i = lpf_process(&lpf_i, raw_i);
-                float filt_q = lpf_process(&lpf_q, raw_q);
-                
-                /* Accumulate for symbol decimation */
-                decim_i[decim_idx] = filt_i;
-                decim_q[decim_idx] = filt_q;
-                decim_idx++;
-                
-                sample_counter++;
-                
-                /* At symbol boundary, sample the constellation */
-                if (decim_idx >= SAMPLES_PER_SYMBOL) {
-                    /* Take sample at optimal point (middle of symbol) */
-                    int opt_idx = SAMPLES_PER_SYMBOL / 2;
-                    float sym_i = decim_i[opt_idx];
-                    float sym_q = decim_q[opt_idx];
-                    
-                    /* AGC */
-                    agc_process(&agc, &sym_i, &sym_q);
-                    
-                    /* Add to constellation */
-                    add_constellation_point(sym_i, sym_q);
-                    symbols_received++;
-                    
-                    decim_idx = 0;
-                }
+            /* End of file - open next one */
+            if (!open_next_file()) {
+                /* No files available, wait a bit */
+                SDL_Delay(100);
+                continue;
+            }
+            samples_read = fread(pcm_block, sizeof(int16_t), 256, g_current_fp);
+        }
+
+        /* Process samples */
+        for (size_t s = 0; s < samples_read; s++) {
+            float sample = pcm_block[s] / 32768.0f;
+
+            /* Carrier recovery and downconversion */
+            float raw_i, raw_q, phase_err;
+            costas_process(&carrier, sample, &raw_i, &raw_q, &phase_err);
+
+            /* Low-pass filter */
+            float filt_i = lpf_process(&lpf_i, raw_i);
+            float filt_q = lpf_process(&lpf_q, raw_q);
+
+            /* Accumulate for symbol decimation */
+            decim_i[decim_idx] = filt_i;
+            decim_q[decim_idx] = filt_q;
+            decim_idx++;
+
+            sample_counter++;
+
+            /* At symbol boundary, sample the constellation */
+            if (decim_idx >= SAMPLES_PER_SYMBOL) {
+                int opt_idx = SAMPLES_PER_SYMBOL / 2;
+                float sym_i = decim_i[opt_idx];
+                float sym_q = decim_q[opt_idx];
+
+                agc_process(&agc, &sym_i, &sym_q);
+                add_constellation_point(sym_i, sym_q);
+                symbols_received++;
+
+                decim_idx = 0;
             }
         }
 
         /* Fade old points */
         fade_points();
-        
+
         /* Draw */
         draw_grid(pixels);
         draw_points(pixels);
-        
+
         SDL_UpdateTexture(texture, NULL, pixels, WINDOW_SIZE * 3);
         SDL_RenderClear(renderer);
         SDL_RenderCopy(renderer, texture, NULL, NULL);
@@ -586,14 +659,16 @@ int main(int argc, char *argv[]) {
         /* Status update */
         if (sample_counter % 48000 < 256) {
             float freq_offset = (carrier.freq - carrier.freq_nominal) * SAMPLE_RATE / TWO_PI;
-            printf("\rSymbols: %d  AGC: %.2f  Freq offset: %+.1f Hz  ",
-                   symbols_received, agc.gain, freq_offset);
+            printf("\rSymbols: %d  AGC: %.2f  Freq: %+.1f Hz  File: %d/%d  ",
+                   symbols_received, agc.gain, freq_offset, 
+                   g_current_file + 1, g_num_files);
             fflush(stdout);
         }
     }
 
     printf("\n\nShutting down...\n");
 
+    if (g_current_fp) fclose(g_current_fp);
     free(pixels);
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);

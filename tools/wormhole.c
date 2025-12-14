@@ -75,13 +75,13 @@ static int scan_directory(const char *dir_path) {
         fprintf(stderr, "Cannot open directory: %s\n", dir_path);
         return 0;
     }
-    
+
     g_num_files = 0;
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL && g_num_files < MAX_FILES) {
         const char *name = entry->d_name;
         size_t len = strlen(name);
-        
+
         /* Check for .pcm extension */
         if (len > 4 && strcmp(name + len - 4, ".pcm") == 0) {
             snprintf(g_pcm_files[g_num_files], MAX_PATH_LEN, "%s/%s", dir_path, name);
@@ -89,21 +89,21 @@ static int scan_directory(const char *dir_path) {
         }
     }
     closedir(dir);
-    
+
     printf("Found %d PCM files in %s\n", g_num_files, dir_path);
     return g_num_files;
 }
 
 static FILE* open_next_file(void) {
     if (g_num_files == 0) return NULL;
-    
+
     if (g_current_fp) {
         fclose(g_current_fp);
     }
-    
+
     g_current_file = (g_current_file + 1) % g_num_files;
     g_current_fp = fopen(g_pcm_files[g_current_file], "rb");
-    
+
     if (g_current_fp) {
         /* Extract just filename for display */
         const char *filename = strrchr(g_pcm_files[g_current_file], '/');
@@ -111,7 +111,7 @@ static FILE* open_next_file(void) {
         if (filename) filename++; else filename = g_pcm_files[g_current_file];
         printf("\rPlaying: %s                    \n", filename);
     }
-    
+
     return g_current_fp;
 }
 
@@ -596,7 +596,7 @@ int main(int argc, char *argv[]) {
         /* Read samples from current file */
         int16_t pcm_block[256];
         size_t samples_read = 0;
-        
+
         if (g_current_fp) {
             samples_read = fread(pcm_block, sizeof(int16_t), 256, g_current_fp);
         }
@@ -660,7 +660,7 @@ int main(int argc, char *argv[]) {
         if (sample_counter % 48000 < 256) {
             float freq_offset = (carrier.freq - carrier.freq_nominal) * SAMPLE_RATE / TWO_PI;
             printf("\rSymbols: %d  AGC: %.2f  Freq: %+.1f Hz  File: %d/%d  ",
-                   symbols_received, agc.gain, freq_offset, 
+                   symbols_received, agc.gain, freq_offset,
                    g_current_file + 1, g_num_files);
             fflush(stdout);
         }

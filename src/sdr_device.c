@@ -73,6 +73,12 @@ void psdr_config_defaults(psdr_config_t *config) {
     config->decimation     = 1;             /* No hardware decimation */
     config->bias_t         = false;
     config->rf_notch       = false;
+    
+    /* Advanced settings */
+    config->if_mode           = PSDR_IF_ZERO;   /* Zero-IF (signal at DC) */
+    config->dc_offset_corr    = true;           /* DC offset correction ON */
+    config->iq_imbalance_corr = true;           /* IQ imbalance correction ON */
+    config->agc_setpoint_dbfs = -60;            /* AGC setpoint -60 dBFS */
 }
 
 /*============================================================================

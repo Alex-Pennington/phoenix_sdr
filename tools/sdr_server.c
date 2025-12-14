@@ -33,6 +33,7 @@ typedef int socklen_t;
 #include "tcp_server.h"
 #include "phoenix_sdr.h"
 #include "version.h"
+#include <stdarg.h>
 
 /*============================================================================
  * Globals
@@ -42,6 +43,97 @@ static volatile bool g_running = true;
 static SOCKET g_listen_socket = INVALID_SOCKET;
 static SOCKET g_client_socket = INVALID_SOCKET;
 static tcp_sdr_state_t g_sdr_state;
+
+/*============================================================================
+ * Notification Functions (thread-safe async notifications to client)
+ *============================================================================*/
+
+void tcp_notify_init(tcp_sdr_state_t *state) {
+#ifdef _WIN32
+    InitializeCriticalSection(&state->notify_mutex);
+#else
+    pthread_mutex_init(&state->notify_mutex, NULL);
+#endif
+    state->client_socket = TCP_INVALID_SOCKET;
+    state->notify_enabled = false;
+}
+
+void tcp_notify_cleanup(tcp_sdr_state_t *state) {
+#ifdef _WIN32
+    DeleteCriticalSection(&state->notify_mutex);
+#else
+    pthread_mutex_destroy(&state->notify_mutex);
+#endif
+}
+
+void tcp_notify_set_client(tcp_sdr_state_t *state, tcp_socket_t client) {
+#ifdef _WIN32
+    EnterCriticalSection(&state->notify_mutex);
+#else
+    pthread_mutex_lock(&state->notify_mutex);
+#endif
+    state->client_socket = client;
+    state->notify_enabled = true;
+#ifdef _WIN32
+    LeaveCriticalSection(&state->notify_mutex);
+#else
+    pthread_mutex_unlock(&state->notify_mutex);
+#endif
+}
+
+void tcp_notify_clear_client(tcp_sdr_state_t *state) {
+#ifdef _WIN32
+    EnterCriticalSection(&state->notify_mutex);
+#else
+    pthread_mutex_lock(&state->notify_mutex);
+#endif
+    state->client_socket = TCP_INVALID_SOCKET;
+    state->notify_enabled = false;
+#ifdef _WIN32
+    LeaveCriticalSection(&state->notify_mutex);
+#else
+    pthread_mutex_unlock(&state->notify_mutex);
+#endif
+}
+
+int tcp_send_notification(tcp_sdr_state_t *state, const char *format, ...) {
+    if (!state) return -1;
+    
+    char buf[TCP_MAX_LINE_LENGTH];
+    va_list args;
+    va_start(args, format);
+    int len = vsnprintf(buf, sizeof(buf) - 1, format, args);
+    va_end(args);
+    
+    if (len <= 0) return -1;
+    
+    /* Ensure newline termination */
+    if (buf[len-1] != '\n') {
+        buf[len++] = '\n';
+        buf[len] = '\0';
+    }
+    
+    int result = -1;
+    
+#ifdef _WIN32
+    EnterCriticalSection(&state->notify_mutex);
+#else
+    pthread_mutex_lock(&state->notify_mutex);
+#endif
+    
+    if (state->notify_enabled && state->client_socket != TCP_INVALID_SOCKET) {
+        int sent = send(state->client_socket, buf, len, 0);
+        result = (sent == len) ? 0 : -1;
+    }
+    
+#ifdef _WIN32
+    LeaveCriticalSection(&state->notify_mutex);
+#else
+    pthread_mutex_unlock(&state->notify_mutex);
+#endif
+    
+    return result;
+}
 
 /*============================================================================
  * SDR Callbacks
@@ -57,16 +149,33 @@ static void on_samples(const int16_t *xi, const int16_t *xq,
 static void on_gain_change(double gain_db, int lna_db, void *user_ctx) {
     tcp_sdr_state_t *state = (tcp_sdr_state_t*)user_ctx;
     if (state) {
+        int old_gain = state->gain_reduction;
+        int old_lna = state->lna_state;
+        
         state->gain_reduction = (int)gain_db;
-        printf("[SDR] Gain changed: GR=%.0f dB, LNA=%d\n", gain_db, lna_db);
+        state->lna_state = lna_db;
+        
+        /* Only notify if values actually changed */
+        if (old_gain != (int)gain_db || old_lna != lna_db) {
+            printf("[SDR] Gain changed: GR=%.0f dB, LNA=%d\n", gain_db, lna_db);
+            tcp_send_notification(state, "! GAIN_CHANGE GAIN=%d LNA=%d",
+                                  (int)gain_db, lna_db);
+        }
     }
 }
 
 static void on_overload(bool overloaded, void *user_ctx) {
     tcp_sdr_state_t *state = (tcp_sdr_state_t*)user_ctx;
     if (state) {
+        bool was_overloaded = state->overload;
         state->overload = overloaded;
-        printf("[SDR] %s\n", overloaded ? "OVERLOAD DETECTED" : "Overload cleared");
+        
+        /* Only notify if state changed */
+        if (was_overloaded != overloaded) {
+            printf("[SDR] %s\n", overloaded ? "OVERLOAD DETECTED" : "Overload cleared");
+            tcp_send_notification(state, "! OVERLOAD %s",
+                                  overloaded ? "DETECTED" : "CLEARED");
+        }
     }
 }
 
@@ -78,6 +187,12 @@ static void signal_handler(int sig) {
     (void)sig;
     printf("\nShutting down...\n");
     g_running = false;
+
+    /* Send DISCONNECT notification to client before closing */
+    if (g_client_socket != INVALID_SOCKET) {
+        const char *disconnect_msg = "! DISCONNECT server shutdown\n";
+        send(g_client_socket, disconnect_msg, (int)strlen(disconnect_msg), 0);
+    }
 
     /* Stop SDR streaming if active */
     if (g_sdr_state.streaming && g_sdr_state.sdr_ctx) {
@@ -154,6 +269,9 @@ static void handle_client(SOCKET client, tcp_sdr_state_t *state) {
     tcp_response_t resp;
 
     printf("Client connected\n");
+    
+    /* Enable async notifications for this client */
+    tcp_notify_set_client(state, client);
 
     while (g_running) {
         /* Receive command */
@@ -210,6 +328,9 @@ static void handle_client(SOCKET client, tcp_sdr_state_t *state) {
         }
         state->streaming = false;
     }
+    
+    /* Disable async notifications */
+    tcp_notify_clear_client(state);
 }
 
 /*============================================================================
@@ -233,54 +354,54 @@ static void print_usage(const char *prog) {
 
 static bool init_sdr(tcp_sdr_state_t *state, int device_idx) {
     printf("Initializing SDR hardware...\n");
-    
+
     /* Enumerate devices */
     psdr_device_info_t devices[4];
     size_t num_devices = 0;
-    
+
     psdr_error_t err = psdr_enumerate(devices, 4, &num_devices);
     if (err != PSDR_OK) {
         fprintf(stderr, "SDR enumeration failed: %s\n", psdr_strerror(err));
         return false;
     }
-    
+
     if (num_devices == 0) {
         fprintf(stderr, "No SDR devices found\n");
         return false;
     }
-    
+
     printf("Found %zu SDR device(s):\n", num_devices);
     for (size_t i = 0; i < num_devices; i++) {
-        printf("  [%zu] %s (HW v%d)%s\n", i, 
+        printf("  [%zu] %s (HW v%d)%s\n", i,
                devices[i].serial,
                devices[i].hw_version,
                devices[i].available ? "" : " [in use]");
     }
-    
+
     if (device_idx >= (int)num_devices) {
-        fprintf(stderr, "Device index %d out of range (0-%zu)\n", 
+        fprintf(stderr, "Device index %d out of range (0-%zu)\n",
                 device_idx, num_devices - 1);
         return false;
     }
-    
+
     if (!devices[device_idx].available) {
         fprintf(stderr, "Device %d is in use by another application\n", device_idx);
         return false;
     }
-    
+
     /* Open selected device */
     err = psdr_open(&state->sdr_ctx, (unsigned int)device_idx);
     if (err != PSDR_OK) {
         fprintf(stderr, "Failed to open SDR: %s\n", psdr_strerror(err));
         return false;
     }
-    
+
     /* Set up callbacks */
     state->sdr_callbacks.on_samples = on_samples;
     state->sdr_callbacks.on_gain_change = on_gain_change;
     state->sdr_callbacks.on_overload = on_overload;
     state->sdr_callbacks.user_ctx = state;
-    
+
     /* Configure with defaults from state */
     psdr_config_defaults(&state->sdr_config);
     state->sdr_config.freq_hz = state->freq_hz;
@@ -288,7 +409,7 @@ static bool init_sdr(tcp_sdr_state_t *state, int device_idx) {
     state->sdr_config.bandwidth = (psdr_bandwidth_t)state->bandwidth_khz;
     state->sdr_config.gain_reduction = state->gain_reduction;
     state->sdr_config.lna_state = state->lna_state;
-    
+
     err = psdr_configure(state->sdr_ctx, &state->sdr_config);
     if (err != PSDR_OK) {
         fprintf(stderr, "Failed to configure SDR: %s\n", psdr_strerror(err));
@@ -296,7 +417,7 @@ static bool init_sdr(tcp_sdr_state_t *state, int device_idx) {
         state->sdr_ctx = NULL;
         return false;
     }
-    
+
     state->hardware_connected = true;
     printf("SDR initialized: %s\n", devices[device_idx].serial);
     printf("  Frequency:    %.3f MHz\n", state->freq_hz / 1e6);
@@ -304,7 +425,7 @@ static bool init_sdr(tcp_sdr_state_t *state, int device_idx) {
     printf("  Bandwidth:    %d kHz\n", state->bandwidth_khz);
     printf("  Gain Red:     %d dB\n", state->gain_reduction);
     printf("  LNA State:    %d\n", state->lna_state);
-    
+
     return true;
 }
 
@@ -352,6 +473,9 @@ int main(int argc, char *argv[]) {
 
     /* Initialize SDR state */
     tcp_state_defaults(&g_sdr_state);
+    
+    /* Initialize notification mutex */
+    tcp_notify_init(&g_sdr_state);
 
     /* Initialize SDR hardware (unless -n flag) */
     if (!no_hardware) {
@@ -451,7 +575,8 @@ int main(int argc, char *argv[]) {
 
     /* Cleanup */
     cleanup_sdr(&g_sdr_state);
-    
+    tcp_notify_cleanup(&g_sdr_state);
+
     if (g_listen_socket != INVALID_SOCKET) {
         closesocket(g_listen_socket);
     }

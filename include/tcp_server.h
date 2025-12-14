@@ -56,6 +56,16 @@ typedef enum {
     CMD_GET_ANTENNA,
     CMD_SET_BIAST,
     CMD_SET_NOTCH,
+    CMD_SET_DECIM,
+    CMD_GET_DECIM,
+    CMD_SET_IFMODE,
+    CMD_GET_IFMODE,
+    CMD_SET_DCOFFSET,
+    CMD_GET_DCOFFSET,
+    CMD_SET_IQCORR,
+    CMD_GET_IQCORR,
+    CMD_SET_AGC_SETPOINT,
+    CMD_GET_AGC_SETPOINT,
 
     /* Streaming */
     CMD_START,
@@ -105,6 +115,9 @@ typedef struct {
         int         sample_rate;
         int         bandwidth_khz;
         bool        on_off;
+        int         decimation;
+        int         agc_setpoint;
+        char        if_mode[16];
         struct {
             char    mode[16];
         } agc;
@@ -127,6 +140,17 @@ typedef struct {
  * SDR State (for commands to query/modify)
  *============================================================================*/
 
+#ifdef _WIN32
+#include <winsock2.h>
+typedef SOCKET tcp_socket_t;
+typedef CRITICAL_SECTION tcp_mutex_t;
+#define TCP_INVALID_SOCKET INVALID_SOCKET
+#else
+typedef int tcp_socket_t;
+typedef pthread_mutex_t tcp_mutex_t;
+#define TCP_INVALID_SOCKET (-1)
+#endif
+
 typedef struct {
     /* Actual SDR hardware context (NULL if not connected) */
     psdr_context_t *sdr_ctx;
@@ -145,10 +169,55 @@ typedef struct {
     bool        bias_t;
     bool        notch;
     bool        overload;
+    
+    /* Advanced settings */
+    int         decimation;         /* 1,2,4,8,16,32 */
+    char        if_mode[16];        /* ZERO, LOW */
+    bool        dc_offset_corr;     /* DC offset correction */
+    bool        iq_imbalance_corr;  /* IQ imbalance correction */
+    int         agc_setpoint;       /* AGC setpoint in dBFS (-72 to 0) */
 
     /* Hardware integration flags */
     bool        hardware_connected;  /* True if SDR hardware is available */
+    
+    /* Async notification support */
+    tcp_socket_t client_socket;      /* Current client socket for notifications */
+    tcp_mutex_t  notify_mutex;       /* Protects socket access from callback thread */
+    bool         notify_enabled;     /* True when client is connected */
 } tcp_sdr_state_t;
+
+/*============================================================================
+ * Notification Functions
+ *============================================================================*/
+
+/**
+ * @brief Initialize notification mutex
+ */
+void tcp_notify_init(tcp_sdr_state_t *state);
+
+/**
+ * @brief Cleanup notification mutex
+ */
+void tcp_notify_cleanup(tcp_sdr_state_t *state);
+
+/**
+ * @brief Set client socket for async notifications
+ */
+void tcp_notify_set_client(tcp_sdr_state_t *state, tcp_socket_t client);
+
+/**
+ * @brief Clear client socket (client disconnected)
+ */
+void tcp_notify_clear_client(tcp_sdr_state_t *state);
+
+/**
+ * @brief Send async notification to client (thread-safe)
+ * 
+ * @param state     SDR state with client socket
+ * @param format    printf-style format string
+ * @return          0 on success, -1 if no client or send failed
+ */
+int tcp_send_notification(tcp_sdr_state_t *state, const char *format, ...);
 
 /*============================================================================
  * Command Parsing Functions

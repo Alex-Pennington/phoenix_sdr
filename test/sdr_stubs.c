@@ -37,6 +37,10 @@ void psdr_config_defaults(psdr_config_t *config) {
     config->decimation = 1;
     config->bias_t = false;
     config->rf_notch = false;
+    config->if_mode = PSDR_IF_ZERO;
+    config->dc_offset_corr = true;
+    config->iq_imbalance_corr = true;
+    config->agc_setpoint_dbfs = -60;
 }
 
 psdr_error_t psdr_enumerate(psdr_device_info_t *devices, size_t max_devices, size_t *num_found) {

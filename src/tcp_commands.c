@@ -47,6 +47,16 @@ static const cmd_def_t g_commands[] = {
     { "GET_ANTENNA", CMD_GET_ANTENNA, 0, 0 },
     { "SET_BIAST",   CMD_SET_BIAST,   1, 2 },  /* ON [CONFIRM] */
     { "SET_NOTCH",   CMD_SET_NOTCH,   1, 1 },
+    { "SET_DECIM",   CMD_SET_DECIM,   1, 1 },
+    { "GET_DECIM",   CMD_GET_DECIM,   0, 0 },
+    { "SET_IFMODE",  CMD_SET_IFMODE,  1, 1 },
+    { "GET_IFMODE",  CMD_GET_IFMODE,  0, 0 },
+    { "SET_DCOFFSET", CMD_SET_DCOFFSET, 1, 1 },
+    { "GET_DCOFFSET", CMD_GET_DCOFFSET, 0, 0 },
+    { "SET_IQCORR",  CMD_SET_IQCORR,  1, 1 },
+    { "GET_IQCORR",  CMD_GET_IQCORR,  0, 0 },
+    { "SET_AGC_SETPOINT", CMD_SET_AGC_SETPOINT, 1, 1 },
+    { "GET_AGC_SETPOINT", CMD_GET_AGC_SETPOINT, 0, 0 },
 
     /* Streaming */
     { "START",       CMD_START,       0, 0 },
@@ -273,6 +283,53 @@ tcp_error_t tcp_parse_command(const char *line, tcp_command_t *cmd) {
             }
             break;
 
+        case CMD_SET_DCOFFSET:
+        case CMD_SET_IQCORR:
+            /* Parse ON/OFF */
+            for (char *p = cmd->argv[0]; *p; p++) {
+                *p = toupper((unsigned char)*p);
+            }
+            if (strcmp(cmd->argv[0], "ON") == 0) {
+                cmd->value.on_off = true;
+            } else if (strcmp(cmd->argv[0], "OFF") == 0) {
+                cmd->value.on_off = false;
+            } else {
+                return TCP_ERR_PARAM;
+            }
+            break;
+
+        case CMD_SET_DECIM:
+            cmd->value.decimation = atoi(cmd->argv[0]);
+            /* Valid decimation factors: 1, 2, 4, 8, 16, 32 */
+            if (cmd->value.decimation != 1 &&
+                cmd->value.decimation != 2 &&
+                cmd->value.decimation != 4 &&
+                cmd->value.decimation != 8 &&
+                cmd->value.decimation != 16 &&
+                cmd->value.decimation != 32) {
+                return TCP_ERR_PARAM;
+            }
+            break;
+
+        case CMD_SET_IFMODE:
+            strncpy(cmd->value.if_mode, cmd->argv[0], 15);
+            cmd->value.if_mode[15] = '\0';
+            for (char *p = cmd->value.if_mode; *p; p++) {
+                *p = toupper((unsigned char)*p);
+            }
+            if (strcmp(cmd->value.if_mode, "ZERO") != 0 &&
+                strcmp(cmd->value.if_mode, "LOW") != 0) {
+                return TCP_ERR_PARAM;
+            }
+            break;
+
+        case CMD_SET_AGC_SETPOINT:
+            cmd->value.agc_setpoint = atoi(cmd->argv[0]);
+            if (cmd->value.agc_setpoint < -72 || cmd->value.agc_setpoint > 0) {
+                return TCP_ERR_RANGE;
+            }
+            break;
+
         default:
             break;
     }
@@ -328,6 +385,13 @@ void tcp_state_defaults(tcp_sdr_state_t *state) {
     state->notch = false;
     state->overload = false;
     
+    /* Advanced settings */
+    state->decimation = 1;
+    strcpy(state->if_mode, "ZERO");
+    state->dc_offset_corr = true;
+    state->iq_imbalance_corr = true;
+    state->agc_setpoint = -60;
+
     /* Initialize psdr_config with defaults */
     psdr_config_defaults(&state->sdr_config);
 }
@@ -338,15 +402,15 @@ void tcp_state_defaults(tcp_sdr_state_t *state) {
 
 static void sync_state_to_config(tcp_sdr_state_t *state) {
     psdr_config_t *cfg = &state->sdr_config;
-    
+
     cfg->freq_hz = state->freq_hz;
     cfg->sample_rate_hz = (double)state->sample_rate;
     cfg->gain_reduction = state->gain_reduction;
     cfg->lna_state = state->lna_state;
-    
+
     /* Map bandwidth */
     cfg->bandwidth = (psdr_bandwidth_t)state->bandwidth_khz;
-    
+
     /* Map antenna */
     if (strcmp(state->antenna, "A") == 0) {
         cfg->antenna = PSDR_ANT_A;
@@ -355,7 +419,7 @@ static void sync_state_to_config(tcp_sdr_state_t *state) {
     } else if (strcmp(state->antenna, "HIZ") == 0) {
         cfg->antenna = PSDR_ANT_HIZ;
     }
-    
+
     /* Map AGC mode */
     if (strcmp(state->agc_mode, "OFF") == 0) {
         cfg->agc_mode = PSDR_AGC_DISABLED;
@@ -366,9 +430,22 @@ static void sync_state_to_config(tcp_sdr_state_t *state) {
     } else if (strcmp(state->agc_mode, "100HZ") == 0) {
         cfg->agc_mode = PSDR_AGC_100HZ;
     }
-    
+
     cfg->bias_t = state->bias_t;
     cfg->rf_notch = state->notch;
+
+    /* New advanced settings */
+    cfg->decimation = state->decimation;
+    cfg->agc_setpoint_dbfs = state->agc_setpoint;
+    cfg->dc_offset_corr = state->dc_offset_corr;
+    cfg->iq_imbalance_corr = state->iq_imbalance_corr;
+
+    /* Map IF mode */
+    if (strcmp(state->if_mode, "ZERO") == 0) {
+        cfg->if_mode = PSDR_IF_ZERO;
+    } else if (strcmp(state->if_mode, "LOW") == 0) {
+        cfg->if_mode = PSDR_IF_LOW;
+    }
 }
 
 /*============================================================================
@@ -379,9 +456,9 @@ static tcp_error_t apply_config_to_hardware(tcp_sdr_state_t *state) {
     if (!state->hardware_connected || !state->sdr_ctx) {
         return TCP_OK;  /* No hardware, just update state */
     }
-    
+
     sync_state_to_config(state);
-    
+
     psdr_error_t err;
     if (state->streaming) {
         /* Use update for live changes */
@@ -390,11 +467,11 @@ static tcp_error_t apply_config_to_hardware(tcp_sdr_state_t *state) {
         /* Use configure for stopped SDR */
         err = psdr_configure(state->sdr_ctx, &state->sdr_config);
     }
-    
+
     if (err != PSDR_OK) {
         return TCP_ERR_HARDWARE;
     }
-    
+
     return TCP_OK;
 }
 
@@ -568,25 +645,106 @@ tcp_error_t tcp_execute_command(
             tcp_response_ok(response, NULL);
             break;
 
+        /* ----- Advanced Hardware Settings ----- */
+        case CMD_SET_DECIM:
+            if (state->streaming) {
+                tcp_response_error(response, TCP_ERR_STATE, "stop streaming first");
+                return TCP_ERR_STATE;
+            }
+            state->decimation = cmd->value.decimation;
+            hw_err = apply_config_to_hardware(state);
+            if (hw_err != TCP_OK) {
+                tcp_response_error(response, hw_err, "hardware update failed");
+                return hw_err;
+            }
+            tcp_response_ok(response, NULL);
+            break;
+
+        case CMD_GET_DECIM:
+            snprintf(buf, sizeof(buf), "%d", state->decimation);
+            tcp_response_ok(response, buf);
+            break;
+
+        case CMD_SET_IFMODE:
+            if (state->streaming) {
+                tcp_response_error(response, TCP_ERR_STATE, "stop streaming first");
+                return TCP_ERR_STATE;
+            }
+            strncpy(state->if_mode, cmd->value.if_mode, sizeof(state->if_mode) - 1);
+            hw_err = apply_config_to_hardware(state);
+            if (hw_err != TCP_OK) {
+                tcp_response_error(response, hw_err, "hardware update failed");
+                return hw_err;
+            }
+            tcp_response_ok(response, NULL);
+            break;
+
+        case CMD_GET_IFMODE:
+            tcp_response_ok(response, state->if_mode);
+            break;
+
+        case CMD_SET_DCOFFSET:
+            state->dc_offset_corr = cmd->value.on_off;
+            hw_err = apply_config_to_hardware(state);
+            if (hw_err != TCP_OK) {
+                tcp_response_error(response, hw_err, "hardware update failed");
+                return hw_err;
+            }
+            tcp_response_ok(response, NULL);
+            break;
+
+        case CMD_GET_DCOFFSET:
+            tcp_response_ok(response, state->dc_offset_corr ? "ON" : "OFF");
+            break;
+
+        case CMD_SET_IQCORR:
+            state->iq_imbalance_corr = cmd->value.on_off;
+            hw_err = apply_config_to_hardware(state);
+            if (hw_err != TCP_OK) {
+                tcp_response_error(response, hw_err, "hardware update failed");
+                return hw_err;
+            }
+            tcp_response_ok(response, NULL);
+            break;
+
+        case CMD_GET_IQCORR:
+            tcp_response_ok(response, state->iq_imbalance_corr ? "ON" : "OFF");
+            break;
+
+        case CMD_SET_AGC_SETPOINT:
+            state->agc_setpoint = cmd->value.agc_setpoint;
+            hw_err = apply_config_to_hardware(state);
+            if (hw_err != TCP_OK) {
+                tcp_response_error(response, hw_err, "hardware update failed");
+                return hw_err;
+            }
+            tcp_response_ok(response, NULL);
+            break;
+
+        case CMD_GET_AGC_SETPOINT:
+            snprintf(buf, sizeof(buf), "%d", state->agc_setpoint);
+            tcp_response_ok(response, buf);
+            break;
+
         /* ----- Streaming ----- */
         case CMD_START:
             if (state->streaming) {
                 tcp_response_error(response, TCP_ERR_STATE, "already streaming");
                 return TCP_ERR_STATE;
             }
-            
+
             /* Start actual SDR streaming if hardware is connected */
             if (state->hardware_connected && state->sdr_ctx) {
                 /* Ensure config is up to date */
                 sync_state_to_config(state);
-                
+
                 psdr_error_t err = psdr_start(state->sdr_ctx, &state->sdr_callbacks);
                 if (err != PSDR_OK) {
                     tcp_response_error(response, TCP_ERR_HARDWARE, psdr_strerror(err));
                     return TCP_ERR_HARDWARE;
                 }
             }
-            
+
             state->streaming = true;
             tcp_response_ok(response, NULL);
             break;
@@ -596,7 +754,7 @@ tcp_error_t tcp_execute_command(
                 tcp_response_error(response, TCP_ERR_STATE, "not streaming");
                 return TCP_ERR_STATE;
             }
-            
+
             /* Stop actual SDR streaming if hardware is connected */
             if (state->hardware_connected && state->sdr_ctx) {
                 psdr_error_t err = psdr_stop(state->sdr_ctx);
@@ -605,7 +763,7 @@ tcp_error_t tcp_execute_command(
                     return TCP_ERR_HARDWARE;
                 }
             }
-            
+
             state->streaming = false;
             tcp_response_ok(response, NULL);
             break;
@@ -615,7 +773,7 @@ tcp_error_t tcp_execute_command(
             if (state->hardware_connected && state->sdr_ctx) {
                 state->streaming = psdr_is_streaming(state->sdr_ctx);
             }
-            
+
             snprintf(buf, sizeof(buf),
                 "STREAMING=%d FREQ=%.0f GAIN=%d LNA=%d AGC=%s SRATE=%d BW=%d HW=%d",
                 state->streaming ? 1 : 0,

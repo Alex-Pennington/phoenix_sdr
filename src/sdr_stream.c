@@ -168,8 +168,12 @@ psdr_error_t psdr_configure(psdr_context_t *ctx, const psdr_config_t *config) {
         ch->tunerParams.rfFreq.rfHz = config->freq_hz;
         ch->tunerParams.bwType = map_bandwidth(config->bandwidth);
         
-        /* Zero-IF mode - signal at baseband, rely on DC offset correction */
-        ch->tunerParams.ifType = sdrplay_api_IF_Zero;
+        /* IF mode - Zero-IF or Low-IF */
+        if (config->if_mode == PSDR_IF_LOW) {
+            ch->tunerParams.ifType = sdrplay_api_IF_0_450;  /* 450 kHz IF */
+        } else {
+            ch->tunerParams.ifType = sdrplay_api_IF_Zero;   /* Zero-IF (signal at DC) */
+        }
         ch->tunerParams.loMode = sdrplay_api_LO_Auto;
         
         ch->tunerParams.gain.gRdB = config->gain_reduction;
@@ -177,11 +181,11 @@ psdr_error_t psdr_configure(psdr_context_t *ctx, const psdr_config_t *config) {
         
         /* Control parameters */
         ch->ctrlParams.agc.enable = map_agc(config->agc_mode);
-        ch->ctrlParams.agc.setPoint_dBfs = -60;
+        ch->ctrlParams.agc.setPoint_dBfs = config->agc_setpoint_dbfs;
         
-        /* CRITICAL: Enable DC offset and IQ imbalance correction */
-        ch->ctrlParams.dcOffset.DCenable = 1;      /* Remove DC spike */
-        ch->ctrlParams.dcOffset.IQenable = 1;      /* Correct IQ imbalance */
+        /* DC offset and IQ imbalance correction (configurable) */
+        ch->ctrlParams.dcOffset.DCenable = config->dc_offset_corr ? 1 : 0;
+        ch->ctrlParams.dcOffset.IQenable = config->iq_imbalance_corr ? 1 : 0;
         
         /* Decimation */
         if (config->decimation > 1) {

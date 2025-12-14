@@ -82,6 +82,12 @@ typedef enum {
     PSDR_AGC_100HZ
 } psdr_agc_mode_t;
 
+/** IF type (Zero-IF vs Low-IF) */
+typedef enum {
+    PSDR_IF_ZERO = 0,   /**< Zero-IF (signal at DC) */
+    PSDR_IF_LOW         /**< Low-IF (signal at IF offset) */
+} psdr_if_mode_t;
+
 /** SDR Configuration */
 typedef struct {
     double       freq_hz;        /**< Center frequency in Hz */
@@ -94,6 +100,12 @@ typedef struct {
     uint8_t      decimation;     /**< Hardware decimation factor (1,2,4,8,16,32) */
     bool         bias_t;         /**< Enable bias-T */
     bool         rf_notch;       /**< Enable FM broadcast notch filter */
+    
+    /* Advanced settings */
+    psdr_if_mode_t if_mode;      /**< IF mode (ZERO or LOW) */
+    bool         dc_offset_corr; /**< Enable DC offset correction */
+    bool         iq_imbalance_corr; /**< Enable IQ imbalance correction */
+    int          agc_setpoint_dbfs; /**< AGC setpoint in dBFS (-72 to 0) */
 } psdr_config_t;
 
 /** Device info (from enumeration) */

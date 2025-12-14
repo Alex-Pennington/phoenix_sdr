@@ -98,40 +98,40 @@ void tcp_notify_clear_client(tcp_sdr_state_t *state) {
 
 int tcp_send_notification(tcp_sdr_state_t *state, const char *format, ...) {
     if (!state) return -1;
-    
+
     char buf[TCP_MAX_LINE_LENGTH];
     va_list args;
     va_start(args, format);
     int len = vsnprintf(buf, sizeof(buf) - 1, format, args);
     va_end(args);
-    
+
     if (len <= 0) return -1;
-    
+
     /* Ensure newline termination */
     if (buf[len-1] != '\n') {
         buf[len++] = '\n';
         buf[len] = '\0';
     }
-    
+
     int result = -1;
-    
+
 #ifdef _WIN32
     EnterCriticalSection(&state->notify_mutex);
 #else
     pthread_mutex_lock(&state->notify_mutex);
 #endif
-    
+
     if (state->notify_enabled && state->client_socket != TCP_INVALID_SOCKET) {
         int sent = send(state->client_socket, buf, len, 0);
         result = (sent == len) ? 0 : -1;
     }
-    
+
 #ifdef _WIN32
     LeaveCriticalSection(&state->notify_mutex);
 #else
     pthread_mutex_unlock(&state->notify_mutex);
 #endif
-    
+
     return result;
 }
 
@@ -151,10 +151,10 @@ static void on_gain_change(double gain_db, int lna_db, void *user_ctx) {
     if (state) {
         int old_gain = state->gain_reduction;
         int old_lna = state->lna_state;
-        
+
         state->gain_reduction = (int)gain_db;
         state->lna_state = lna_db;
-        
+
         /* Only notify if values actually changed */
         if (old_gain != (int)gain_db || old_lna != lna_db) {
             printf("[SDR] Gain changed: GR=%.0f dB, LNA=%d\n", gain_db, lna_db);
@@ -169,7 +169,7 @@ static void on_overload(bool overloaded, void *user_ctx) {
     if (state) {
         bool was_overloaded = state->overload;
         state->overload = overloaded;
-        
+
         /* Only notify if state changed */
         if (was_overloaded != overloaded) {
             printf("[SDR] %s\n", overloaded ? "OVERLOAD DETECTED" : "Overload cleared");
@@ -269,7 +269,7 @@ static void handle_client(SOCKET client, tcp_sdr_state_t *state) {
     tcp_response_t resp;
 
     printf("Client connected\n");
-    
+
     /* Enable async notifications for this client */
     tcp_notify_set_client(state, client);
 
@@ -328,7 +328,7 @@ static void handle_client(SOCKET client, tcp_sdr_state_t *state) {
         }
         state->streaming = false;
     }
-    
+
     /* Disable async notifications */
     tcp_notify_clear_client(state);
 }
@@ -473,7 +473,7 @@ int main(int argc, char *argv[]) {
 
     /* Initialize SDR state */
     tcp_state_defaults(&g_sdr_state);
-    
+
     /* Initialize notification mutex */
     tcp_notify_init(&g_sdr_state);
 

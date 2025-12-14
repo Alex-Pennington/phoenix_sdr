@@ -169,7 +169,7 @@ typedef struct {
     bool        bias_t;
     bool        notch;
     bool        overload;
-    
+
     /* Advanced settings */
     int         decimation;         /* 1,2,4,8,16,32 */
     char        if_mode[16];        /* ZERO, LOW */
@@ -179,7 +179,7 @@ typedef struct {
 
     /* Hardware integration flags */
     bool        hardware_connected;  /* True if SDR hardware is available */
-    
+
     /* Async notification support */
     tcp_socket_t client_socket;      /* Current client socket for notifications */
     tcp_mutex_t  notify_mutex;       /* Protects socket access from callback thread */
@@ -212,7 +212,7 @@ void tcp_notify_clear_client(tcp_sdr_state_t *state);
 
 /**
  * @brief Send async notification to client (thread-safe)
- * 
+ *
  * @param state     SDR state with client socket
  * @param format    printf-style format string
  * @return          0 on success, -1 if no client or send failed

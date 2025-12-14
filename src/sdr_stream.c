@@ -29,7 +29,7 @@ static psdr_context_t *g_callback_ctx = NULL;
  *============================================================================*/
 
 static void stream_callback_a(
-    short *xi, 
+    short *xi,
     short *xq,
     sdrplay_api_StreamCbParamsT *params,
     unsigned int numSamples,
@@ -38,9 +38,9 @@ static void stream_callback_a(
 ) {
     (void)params;  /* Unused but required by API */
     psdr_context_t *ctx = (psdr_context_t *)cbContext;
-    
+
     if (!ctx || !ctx->user_callbacks.on_samples) return;
-    
+
     /* Forward to user callback */
     ctx->user_callbacks.on_samples(
         (const int16_t *)xi,
@@ -60,7 +60,7 @@ static void stream_callback_b(
     void *cbContext
 ) {
     /* RSP2 single tuner mode - Tuner B not used */
-    (void)xi; (void)xq; (void)params; 
+    (void)xi; (void)xq; (void)params;
     (void)numSamples; (void)reset; (void)cbContext;
 }
 
@@ -71,9 +71,9 @@ static void event_callback(
     void *cbContext
 ) {
     psdr_context_t *ctx = (psdr_context_t *)cbContext;
-    
+
     if (!ctx) return;
-    
+
     switch (eventId) {
         case sdrplay_api_GainChange:
             if (ctx->user_callbacks.on_gain_change) {
@@ -85,10 +85,10 @@ static void event_callback(
             }
             /* Verbose logging removed - user callback handles output */
             break;
-            
+
         case sdrplay_api_PowerOverloadChange:
             if (ctx->user_callbacks.on_overload) {
-                bool overloaded = (params->powerOverloadParams.powerOverloadChangeType 
+                bool overloaded = (params->powerOverloadParams.powerOverloadChangeType
                                    == sdrplay_api_Overload_Detected);
                 ctx->user_callbacks.on_overload(
                     overloaded,
@@ -96,18 +96,18 @@ static void event_callback(
                 );
             }
             /* Verbose logging removed - user callback handles output */
-            
+
             /* CRITICAL: Must acknowledge overload event */
             sdrplay_api_Update(ctx->device.dev, tuner,
                                sdrplay_api_Update_Ctrl_OverloadMsgAck,
                                sdrplay_api_Update_Ext1_None);
             break;
-            
+
         case sdrplay_api_DeviceRemoved:
             fprintf(stderr, "Event: Device removed!\n");
             ctx->streaming = false;
             break;
-            
+
         default:
             printf("Event: Unknown event %d\n", eventId);
             break;
@@ -150,24 +150,24 @@ psdr_error_t psdr_configure(psdr_context_t *ctx, const psdr_config_t *config) {
     if (!ctx || !config) return PSDR_ERR_INVALID_ARG;
     if (!ctx->device_selected) return PSDR_ERR_NOT_INITIALIZED;
     if (!ctx->params) return PSDR_ERR_DEVICE_PARAMS;
-    
+
     /* Store config */
     memcpy(&ctx->config, config, sizeof(ctx->config));
-    
+
     sdrplay_api_DeviceParamsT *dp = ctx->params;
     sdrplay_api_RxChannelParamsT *ch = dp->rxChannelA;
-    
+
     /* Device-level parameters */
     if (dp->devParams) {
         dp->devParams->fsFreq.fsHz = config->sample_rate_hz;
         ctx->actual_sample_rate = config->sample_rate_hz;
     }
-    
+
     /* Tuner parameters */
     if (ch) {
         ch->tunerParams.rfFreq.rfHz = config->freq_hz;
         ch->tunerParams.bwType = map_bandwidth(config->bandwidth);
-        
+
         /* IF mode - Zero-IF or Low-IF */
         if (config->if_mode == PSDR_IF_LOW) {
             ch->tunerParams.ifType = sdrplay_api_IF_0_450;  /* 450 kHz IF */
@@ -175,18 +175,18 @@ psdr_error_t psdr_configure(psdr_context_t *ctx, const psdr_config_t *config) {
             ch->tunerParams.ifType = sdrplay_api_IF_Zero;   /* Zero-IF (signal at DC) */
         }
         ch->tunerParams.loMode = sdrplay_api_LO_Auto;
-        
+
         ch->tunerParams.gain.gRdB = config->gain_reduction;
         ch->tunerParams.gain.LNAstate = (unsigned char)config->lna_state;
-        
+
         /* Control parameters */
         ch->ctrlParams.agc.enable = map_agc(config->agc_mode);
         ch->ctrlParams.agc.setPoint_dBfs = config->agc_setpoint_dbfs;
-        
+
         /* DC offset and IQ imbalance correction (configurable) */
         ch->ctrlParams.dcOffset.DCenable = config->dc_offset_corr ? 1 : 0;
         ch->ctrlParams.dcOffset.IQenable = config->iq_imbalance_corr ? 1 : 0;
-        
+
         /* Decimation */
         if (config->decimation > 1) {
             ch->ctrlParams.decimation.enable = 1;
@@ -195,7 +195,7 @@ psdr_error_t psdr_configure(psdr_context_t *ctx, const psdr_config_t *config) {
         } else {
             ch->ctrlParams.decimation.enable = 0;
         }
-        
+
         /* RSP2-specific */
         const char *ant_name;
         switch (config->antenna) {
@@ -218,15 +218,15 @@ psdr_error_t psdr_configure(psdr_context_t *ctx, const psdr_config_t *config) {
                 ant_name = "?";
                 break;
         }
-        
+
         ch->rsp2TunerParams.biasTEnable = config->bias_t ? 1 : 0;
         ch->rsp2TunerParams.rfNotchEnable = config->rf_notch ? 1 : 0;
-        
+
         printf("psdr_configure: freq=%.0f Hz, SR=%.0f Hz, BW=%d kHz, gain=%d dB, ant=%s\n",
-               config->freq_hz, config->sample_rate_hz, 
+               config->freq_hz, config->sample_rate_hz,
                config->bandwidth, config->gain_reduction, ant_name);
     }
-    
+
     return PSDR_OK;
 }
 
@@ -236,26 +236,26 @@ psdr_error_t psdr_configure(psdr_context_t *ctx, const psdr_config_t *config) {
 
 psdr_error_t psdr_start(psdr_context_t *ctx, const psdr_callbacks_t *callbacks) {
     sdrplay_api_ErrT err;
-    
+
     if (!ctx) return PSDR_ERR_INVALID_ARG;
     if (!ctx->device_selected) return PSDR_ERR_NOT_INITIALIZED;
     if (ctx->streaming) return PSDR_ERR_ALREADY_STREAMING;
-    
+
     /* Store user callbacks */
     if (callbacks) {
         memcpy(&ctx->user_callbacks, callbacks, sizeof(ctx->user_callbacks));
     } else {
         memset(&ctx->user_callbacks, 0, sizeof(ctx->user_callbacks));
     }
-    
+
     /* Set up API callbacks */
     ctx->api_callbacks.StreamACbFn = stream_callback_a;
     ctx->api_callbacks.StreamBCbFn = stream_callback_b;
     ctx->api_callbacks.EventCbFn = event_callback;
-    
+
     /* Store global context for callbacks */
     g_callback_ctx = ctx;
-    
+
     /* Initialize streaming */
     err = sdrplay_api_Init(ctx->device.dev, &ctx->api_callbacks, ctx);
     if (err != sdrplay_api_Success) {
@@ -263,31 +263,31 @@ psdr_error_t psdr_start(psdr_context_t *ctx, const psdr_callbacks_t *callbacks) 
                 sdrplay_api_GetErrorString(err));
         return PSDR_ERR_INIT;
     }
-    
+
     ctx->streaming = true;
     printf("psdr_start: Streaming started\n");
-    
+
     return PSDR_OK;
 }
 
 psdr_error_t psdr_stop(psdr_context_t *ctx) {
     sdrplay_api_ErrT err;
-    
+
     if (!ctx) return PSDR_ERR_INVALID_ARG;
     if (!ctx->streaming) return PSDR_ERR_NOT_STREAMING;
-    
+
     err = sdrplay_api_Uninit(ctx->device.dev);
     if (err != sdrplay_api_Success) {
         fprintf(stderr, "psdr_stop: sdrplay_api_Uninit failed: %s\n",
                 sdrplay_api_GetErrorString(err));
         return PSDR_ERR_UNINIT;
     }
-    
+
     ctx->streaming = false;
     g_callback_ctx = NULL;
-    
+
     printf("psdr_stop: Streaming stopped\n");
-    
+
     return PSDR_OK;
 }
 
@@ -298,22 +298,22 @@ psdr_error_t psdr_stop(psdr_context_t *ctx) {
 psdr_error_t psdr_update(psdr_context_t *ctx, const psdr_config_t *config) {
     sdrplay_api_ErrT err;
     sdrplay_api_ReasonForUpdateT reason = sdrplay_api_Update_None;
-    
+
     if (!ctx || !config) return PSDR_ERR_INVALID_ARG;
     if (!ctx->streaming) return PSDR_ERR_NOT_STREAMING;
-    
+
     sdrplay_api_RxChannelParamsT *ch = ctx->params->rxChannelA;
     if (!ch) return PSDR_ERR_DEVICE_PARAMS;
-    
+
     /* Check what changed and update accordingly */
-    
+
     /* Frequency */
     if (config->freq_hz != ctx->config.freq_hz) {
         ch->tunerParams.rfFreq.rfHz = config->freq_hz;
         reason |= sdrplay_api_Update_Tuner_Frf;
         ctx->config.freq_hz = config->freq_hz;
     }
-    
+
     /* Gain */
     if (config->gain_reduction != ctx->config.gain_reduction ||
         config->lna_state != ctx->config.lna_state) {
@@ -323,26 +323,26 @@ psdr_error_t psdr_update(psdr_context_t *ctx, const psdr_config_t *config) {
         ctx->config.gain_reduction = config->gain_reduction;
         ctx->config.lna_state = config->lna_state;
     }
-    
+
     /* AGC */
     if (config->agc_mode != ctx->config.agc_mode) {
         ch->ctrlParams.agc.enable = map_agc(config->agc_mode);
         reason |= sdrplay_api_Update_Ctrl_Agc;
         ctx->config.agc_mode = config->agc_mode;
     }
-    
+
     if (reason == sdrplay_api_Update_None) {
         return PSDR_OK;  /* Nothing to update */
     }
-    
+
     /* Apply updates */
-    err = sdrplay_api_Update(ctx->device.dev, sdrplay_api_Tuner_A, 
+    err = sdrplay_api_Update(ctx->device.dev, sdrplay_api_Tuner_A,
                              reason, sdrplay_api_Update_Ext1_None);
     if (err != sdrplay_api_Success) {
         fprintf(stderr, "psdr_update: sdrplay_api_Update failed: %s\n",
                 sdrplay_api_GetErrorString(err));
         return PSDR_ERR_UPDATE;
     }
-    
+
     return PSDR_OK;
 }

@@ -384,7 +384,7 @@ void tcp_state_defaults(tcp_sdr_state_t *state) {
     state->bias_t = false;
     state->notch = false;
     state->overload = false;
-    
+
     /* Advanced settings */
     state->decimation = 1;
     strcpy(state->if_mode, "ZERO");

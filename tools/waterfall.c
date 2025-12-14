@@ -327,8 +327,14 @@ int main(int argc, char *argv[]) {
 
     printf("Waterfall display ready. Reading from stdin...\n");
     printf("Window: %dx%d, FFT: %d bins (%.1f Hz/bin)\n", WINDOW_WIDTH, WINDOW_HEIGHT, FFT_SIZE / 2, (float)SAMPLE_RATE / FFT_SIZE);
-    printf("Keys: 0=gain, 1-7=tick thresholds, +/- adjust, Q/Esc quit\n");
+    printf("Keys: 0=gain, 1-7=tick thresholds, +/- adjust, D=detect, S=stats, Q/Esc quit\n");
     printf("1:100Hz(±10) 2:440Hz(±5) 3:500Hz(±5) 4:600Hz(±5) 5:1000Hz(±100) 6:1200Hz(±100) 7:1500Hz(±20)\n");
+
+    /* Initialize tick detector */
+    tick_detector_init(&g_tick_detector);
+    uint64_t frame_num = 0;
+    printf("\nTick detection ENABLED - watching 1000 Hz bucket\n");
+    printf("Logging to wwv_ticks.csv\n\n");
 
     bool running = true;
 
@@ -388,6 +394,11 @@ int main(int argc, char *argv[]) {
                 } else if (event.key.keysym.sym == SDLK_7 || event.key.keysym.sym == SDLK_KP_7) {
                     g_selected_param = 7;
                     printf("Selected: %s (threshold: %.4f)\n", TICK_NAMES[6], g_tick_thresholds[6]);
+                } else if (event.key.keysym.sym == SDLK_d) {
+                    g_tick_detector.detection_enabled = !g_tick_detector.detection_enabled;
+                    printf("Tick detection: %s\n", g_tick_detector.detection_enabled ? "ENABLED" : "DISABLED");
+                } else if (event.key.keysym.sym == SDLK_s) {
+                    tick_detector_print_stats(&g_tick_detector, frame_num);
                 }
             }
         }
@@ -504,6 +515,11 @@ int main(int argc, char *argv[]) {
             float combined_energy = pos_energy + neg_energy;
             g_bucket_energy[f] = combined_energy;  /* Store for right panel display */
 
+            /* Feed 1000 Hz bucket (index 4) to tick detector */
+            if (f == 4) {
+                tick_detector_update(&g_tick_detector, combined_energy, frame_num);
+            }
+
             /* If above threshold, draw marker dot at the frequency position */
             if (combined_energy > g_tick_thresholds[f]) {
                 /* Calculate x position in FFT-shifted display */
@@ -567,7 +583,17 @@ int main(int argc, char *argv[]) {
 
                 /* Get color based on magnitude */
                 uint8_t r, g, b;
-                magnitude_to_rgb(g_bucket_energy[f], g_peak_db, g_floor_db, &r, &g, &b);
+                
+                /* Check if this is the 1000Hz bar (index 4) and tick was just detected */
+                if (f == 4 && g_tick_detector.flash_frames_remaining > 0) {
+                    /* Purple flash for tick detection - full height bar */
+                    r = 180;
+                    g = 0;
+                    b = 255;
+                    bar_height = WINDOW_HEIGHT;  /* Full height when detected */
+                } else {
+                    magnitude_to_rgb(g_bucket_energy[f], g_peak_db, g_floor_db, &r, &g, &b);
+                }
 
                 /* Draw bar from bottom up */
                 for (int y = WINDOW_HEIGHT - bar_height; y < WINDOW_HEIGHT; y++) {
@@ -581,6 +607,11 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        /* Decrement flash counter */
+        if (g_tick_detector.flash_frames_remaining > 0) {
+            g_tick_detector.flash_frames_remaining--;
+        }
+
         /* Update texture */
         SDL_UpdateTexture(texture, NULL, pixels, WINDOW_WIDTH * 3);
 
@@ -589,7 +620,14 @@ int main(int argc, char *argv[]) {
         SDL_RenderCopy(renderer, texture, NULL, NULL);
 
         SDL_RenderPresent(renderer);
+
+        frame_num++;
     }
+
+    /* Print final tick stats and cleanup */
+    printf("\n");
+    tick_detector_print_stats(&g_tick_detector, frame_num);
+    tick_detector_close(&g_tick_detector);
 
     /* Cleanup */
     free(window_func);

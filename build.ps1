@@ -286,24 +286,36 @@ try {
 
     $tcpCmdObj = Build-Object "src\tcp_commands.c" @()
     $testTcpObj = Build-Object "test\test_tcp_commands.c" @()
+    $sdrStubsObj = Build-Object "test\sdr_stubs.c" @()
 
     Write-Status "Linking test_tcp_commands.exe..."
     $testLdflags = @("-lm")
-    $allArgs = @("-o", "`"$BinDir\test_tcp_commands.exe`"", "`"$testTcpObj`"", "`"$tcpCmdObj`"") + $testLdflags
+    $allArgs = @("-o", "`"$BinDir\test_tcp_commands.exe`"", "`"$testTcpObj`"", "`"$tcpCmdObj`"", "`"$sdrStubsObj`"") + $testLdflags
     $argString = $allArgs -join " "
     $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Linking failed for test_tcp_commands" }
     Write-Status "Built: $BinDir\test_tcp_commands.exe"
 
-    # Build sdr_server (TCP control server)
+    # Build SDR source files for sdr_server
+    Write-Status "Building SDR library objects..."
+    $sdrStreamObj = Build-Object "src\sdr_stream.c" @()
+    $sdrDeviceObj = Build-Object "src\sdr_device.c" @()
+
+    # Build sdr_server (TCP control server with SDR integration)
     Write-Status "Building sdr_server..."
 
     $sdrServerObj = Build-Object "tools\sdr_server.c" @()
     # Reuse tcpCmdObj from above
 
     Write-Status "Linking sdr_server.exe..."
-    $serverLdflags = @("-lws2_32", "-lm")
-    $allArgs = @("-o", "`"$BinDir\sdr_server.exe`"", "`"$sdrServerObj`"", "`"$tcpCmdObj`"") + $serverLdflags
+    $serverLdflags = @(
+        "-L`"$SDRplayLib`"",
+        "-lsdrplay_api",
+        "-lws2_32",
+        "-lm",
+        "-lwinmm"
+    )
+    $allArgs = @("-o", "`"$BinDir\sdr_server.exe`"", "`"$sdrServerObj`"", "`"$tcpCmdObj`"", "`"$sdrStreamObj`"", "`"$sdrDeviceObj`"") + $serverLdflags
     $argString = $allArgs -join " "
     $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Linking failed for sdr_server" }

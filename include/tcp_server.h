@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "phoenix_sdr.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,11 +32,11 @@ extern "C" {
 
 typedef enum {
     CMD_UNKNOWN = 0,
-    
+
     /* Frequency */
     CMD_SET_FREQ,
     CMD_GET_FREQ,
-    
+
     /* Gain */
     CMD_SET_GAIN,
     CMD_GET_GAIN,
@@ -43,31 +44,31 @@ typedef enum {
     CMD_GET_LNA,
     CMD_SET_AGC,
     CMD_GET_AGC,
-    
+
     /* Sample Rate / Bandwidth */
     CMD_SET_SRATE,
     CMD_GET_SRATE,
     CMD_SET_BW,
     CMD_GET_BW,
-    
+
     /* Hardware */
     CMD_SET_ANTENNA,
     CMD_GET_ANTENNA,
     CMD_SET_BIAST,
     CMD_SET_NOTCH,
-    
+
     /* Streaming */
     CMD_START,
     CMD_STOP,
     CMD_STATUS,
-    
+
     /* Utility */
     CMD_PING,
     CMD_VER,
     CMD_CAPS,
     CMD_HELP,
     CMD_QUIT,
-    
+
     CMD_COUNT  /* Number of commands */
 } tcp_cmd_type_t;
 
@@ -95,7 +96,7 @@ typedef struct {
     tcp_cmd_type_t type;
     int            argc;                       /* Number of arguments */
     char           argv[TCP_MAX_ARGS][64];     /* Argument strings */
-    
+
     /* Parsed values (filled by parse_command_args) */
     union {
         double      freq_hz;
@@ -127,6 +128,12 @@ typedef struct {
  *============================================================================*/
 
 typedef struct {
+    /* Actual SDR hardware context (NULL if not connected) */
+    psdr_context_t *sdr_ctx;
+    psdr_config_t   sdr_config;
+    psdr_callbacks_t sdr_callbacks;
+
+    /* Cached state (mirrors hardware or used when hardware not connected) */
     bool        streaming;
     double      freq_hz;
     int         gain_reduction;
@@ -138,6 +145,9 @@ typedef struct {
     bool        bias_t;
     bool        notch;
     bool        overload;
+
+    /* Hardware integration flags */
+    bool        hardware_connected;  /* True if SDR hardware is available */
 } tcp_sdr_state_t;
 
 /*============================================================================
@@ -146,7 +156,7 @@ typedef struct {
 
 /**
  * @brief Parse a command line into structured command
- * 
+ *
  * @param line      Input line (null-terminated, may include \n)
  * @param cmd       Output command structure
  * @return          TCP_OK on success, error code on failure
@@ -169,7 +179,7 @@ const char* tcp_error_name(tcp_error_t err);
 
 /**
  * @brief Execute a parsed command
- * 
+ *
  * @param cmd       Parsed command
  * @param state     SDR state (queried/modified)
  * @param response  Output response
@@ -197,7 +207,7 @@ void tcp_response_error(tcp_response_t *resp, tcp_error_t err, const char *msg);
 
 /**
  * @brief Format response as string for sending
- * 
+ *
  * @param resp      Response structure
  * @param buf       Output buffer
  * @param buf_size  Size of output buffer

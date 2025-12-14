@@ -13,6 +13,7 @@ $SrcDir = "src"
 $IncludeDir = "include"
 $BuildDir = "build"
 $BinDir = "bin"
+$VersionFile = "$IncludeDir\version.h"
 
 # CI-specific paths (set up by workflow)
 $SDL2Include = "$PSScriptRoot\..\include\SDL2"
@@ -27,6 +28,59 @@ $CC = "gcc"
 function Write-Status($msg) {
     Write-Host "[$ProjectName] " -ForegroundColor Cyan -NoNewline
     Write-Host $msg
+}
+
+function Generate-VersionHeader {
+    # Get git info
+    $commit = "unknown"
+    try {
+        $commit = (git rev-parse --short HEAD 2>$null).Trim()
+    } catch { }
+    
+    $dirty = $false
+    try {
+        $status = git status --porcelain 2>$null
+        if ($status) { $dirty = $true }
+    } catch { }
+    
+    $dirtyFlag = if ($dirty) { "-dirty" } else { "" }
+    $versionString = "0.1.0"
+    $fullVersion = "$versionString+ci.$commit$dirtyFlag"
+    
+    $content = @"
+/**
+ * @file version.h
+ * @brief Phoenix SDR version information (CI generated)
+ */
+
+#ifndef PHOENIX_VERSION_H
+#define PHOENIX_VERSION_H
+
+#define PHOENIX_VERSION_MAJOR   0
+#define PHOENIX_VERSION_MINOR   1
+#define PHOENIX_VERSION_PATCH   0
+#define PHOENIX_VERSION_BUILD   0
+#define PHOENIX_VERSION_STRING  "$versionString"
+#define PHOENIX_VERSION_FULL    "$fullVersion"
+#define PHOENIX_GIT_COMMIT      "$commit"
+#define PHOENIX_GIT_DIRTY       $($dirty.ToString().ToLower())
+
+#define PHOENIX_BUILD_DATE      __DATE__
+#define PHOENIX_BUILD_TIME      __TIME__
+
+#include <stdio.h>
+
+static inline void print_version(const char *tool_name) {
+    printf("%s v%s (built %s %s)\n", 
+           tool_name, PHOENIX_VERSION_FULL, 
+           PHOENIX_BUILD_DATE, PHOENIX_BUILD_TIME);
+}
+
+#endif /* PHOENIX_VERSION_H */
+"@
+    
+    Set-Content -Path $VersionFile -Value $content -NoNewline
+    Write-Status "Generated version.h: $fullVersion"
 }
 
 function Build-Object($source, $extraFlags) {
@@ -46,6 +100,9 @@ try {
     
     Write-Status "CI Build starting..."
     Write-Status "GCC version: $(gcc --version | Select-Object -First 1)"
+
+    # Generate version.h (not in repo, auto-generated)
+    Generate-VersionHeader
 
     # Set compiler flags
     $CFLAGS = @(

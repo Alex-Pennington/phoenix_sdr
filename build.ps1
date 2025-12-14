@@ -37,7 +37,7 @@ if ($Release) {
     $CFLAGS = @(
         "-std=c17",
         "-Wall",
-        "-Wextra", 
+        "-Wextra",
         "-pedantic",
         "-I`"$IncludeDir`"",
         "-I`"$SDRplayInclude`"",
@@ -60,11 +60,11 @@ function Write-Status($msg) {
 function Build-Object($source) {
     $objName = [System.IO.Path]::GetFileNameWithoutExtension($source)
     $objPath = "$BuildDir\$objName.o"
-    
+
     Write-Status "Compiling $source..."
     $allArgs = $CFLAGS + @("-c", "-o", "`"$objPath`"", "`"$source`"")
     $argString = $allArgs -join " "
-    
+
     $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Compilation failed for $source" }
     return $objPath
@@ -74,44 +74,41 @@ function Build-Object($source) {
 try {
     Push-Location $PSScriptRoot
     Write-Status "Using compiler: $CC"
-    
+
     if ($Clean) {
         Write-Status "Cleaning..."
         if (Test-Path $BuildDir) { Remove-Item -Recurse -Force $BuildDir }
         if (Test-Path $BinDir) { Remove-Item -Recurse -Force $BinDir }
         exit 0
     }
-    
+
     # Create directories
     if (-not (Test-Path $BuildDir)) { New-Item -ItemType Directory -Path $BuildDir | Out-Null }
     if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir | Out-Null }
-    
-    # Build wwv_listen
-    Write-Status "Building wwv_listen..."
-    
+
+    # Build simple_am_receiver
+    Write-Status "Building simple_am_receiver..."
+
     $objects = @(
-        (Build-Object "tools\wwv_listen.c"),
-        (Build-Object "$SrcDir\decimator.c"),
-        (Build-Object "$SrcDir\sdr_device.c"),
-        (Build-Object "$SrcDir\sdr_stream.c")
+        (Build-Object "tools\simple_am_receiver.c")
     )
-    
+
     # Link
-    Write-Status "Linking wwv_listen.exe..."
-    $allArgs = @("-o", "`"$BinDir\wwv_listen.exe`"") + $objects + $LDFLAGS
+    Write-Status "Linking simple_am_receiver.exe..."
+    $allArgs = @("-o", "`"$BinDir\simple_am_receiver.exe`"") + $objects + $LDFLAGS
     $argString = $allArgs -join " "
-    
+
     $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Linking failed" }
-    
+
     # Copy DLL
     $dllSrc = "$SDRplayLib\sdrplay_api.dll"
     $dllDst = "$BinDir\sdrplay_api.dll"
     if ((Test-Path $dllSrc) -and -not (Test-Path $dllDst)) {
         Copy-Item $dllSrc $dllDst
     }
-    
-    Write-Status "Built: $BinDir\wwv_listen.exe"
+
+    Write-Status "Built: $BinDir\simple_am_receiver.exe"
     Write-Status "Done."
 }
 catch {

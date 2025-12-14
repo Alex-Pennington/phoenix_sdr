@@ -262,6 +262,25 @@ try {
     }
     Write-Status "Built: $BinDir\waterfall.exe"
 
+    # Build wormhole (M110A constellation display)
+    Write-Status "Building wormhole..."
+    
+    $wormholeObj = Build-Object "tools\wormhole.c" @("-I`"$SDL2Include`"")
+
+    Write-Status "Linking wormhole.exe..."
+    $wormholeLdflags = @(
+        "-L`"$SDL2Lib`"",
+        "-lmingw32",
+        "-lSDL2main",
+        "-lSDL2",
+        "-lm"
+    )
+    $allArgs = @("-o", "`"$BinDir\wormhole.exe`"", "`"$wormholeObj`"") + $wormholeLdflags
+    $argString = $allArgs -join " "
+    $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Linking failed for wormhole" }
+    Write-Status "Built: $BinDir\wormhole.exe"
+
     Write-Status "Done."
 }
 catch {

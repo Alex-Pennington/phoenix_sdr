@@ -1,10 +1,10 @@
 /**
  * @file version.h
  * @brief Phoenix SDR version information
- * 
+ *
  * Version format: MAJOR.MINOR.PATCH+BUILD.COMMIT[-dirty]
  * Example: 0.2.5+9.abc1234 or 0.2.5+9.abc1234-dirty
- * 
+ *
  * Build number increments every build. Commit hash from git.
  */
 
@@ -14,10 +14,10 @@
 #define PHOENIX_VERSION_MAJOR   0
 #define PHOENIX_VERSION_MINOR   2
 #define PHOENIX_VERSION_PATCH   5
-#define PHOENIX_VERSION_BUILD   10
+#define PHOENIX_VERSION_BUILD   11
 #define PHOENIX_VERSION_STRING  "0.2.5"
-#define PHOENIX_VERSION_FULL    "0.2.5+10.f2ed173"
-#define PHOENIX_GIT_COMMIT      "f2ed173"
+#define PHOENIX_VERSION_FULL    "0.2.5+11.d3d612f"
+#define PHOENIX_GIT_COMMIT      "d3d612f"
 #define PHOENIX_GIT_DIRTY       false
 
 /* Build timestamp - set by compiler */
@@ -27,8 +27,8 @@
 #include <stdio.h>
 
 static inline void print_version(const char *tool_name) {
-    printf("%s v%s (built %s %s)\n", 
-           tool_name, PHOENIX_VERSION_FULL, 
+    printf("%s v%s (built %s %s)\n",
+           tool_name, PHOENIX_VERSION_FULL,
            PHOENIX_BUILD_DATE, PHOENIX_BUILD_TIME);
 }
 

@@ -38,6 +38,11 @@
 #define AUDIO_SAMPLE_RATE   48000.0     /* 48 kHz audio output */
 #define DECIMATION_FACTOR   42          /* 2M / 48k ≈ 42 */
 #define IQ_FILTER_CUTOFF    3000.0      /* 3 kHz lowpass on I/Q before magnitude */
+#define LIF_FREQUENCY       450000.0    /* 450 kHz Low-IF */
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 #define DEFAULT_FREQ_MHZ    15.0
 #define DEFAULT_GAIN_DB     40
@@ -199,6 +204,11 @@ static lowpass_t g_lowpass_q;   /* Lowpass for Q channel */
 static dc_block_t g_dc_block;
 static int g_decim_counter = 0;
 
+/* Low-IF mixer state */
+static bool g_use_lif = false;          /* true = Low-IF, false = Zero-IF */
+static double g_mixer_phase = 0.0;      /* Mixer phase accumulator */
+static double g_mixer_phase_inc = 0.0;  /* Phase increment per sample */
+
 /* Audio output buffer */
 static int16_t g_audio_out[8192];
 static int g_audio_out_count = 0;
@@ -229,7 +239,21 @@ static void stream_callback(
         float I = (float)xi[i];
         float Q = (float)xq[i];
 
-        /* Step 2: Lowpass filter I and Q separately
+        /* Step 2: If Low-IF mode, mix down 450 kHz to DC */
+        if (g_use_lif) {
+            float cos_phase = (float)cos(g_mixer_phase);
+            float sin_phase = (float)sin(g_mixer_phase);
+            float new_I = I * cos_phase - Q * sin_phase;
+            float new_Q = I * sin_phase + Q * cos_phase;
+            I = new_I;
+            Q = new_Q;
+            g_mixer_phase += g_mixer_phase_inc;
+            /* Keep phase in [-2π, 2π] range */
+            if (g_mixer_phase > 2.0 * M_PI) g_mixer_phase -= 2.0 * M_PI;
+            if (g_mixer_phase < -2.0 * M_PI) g_mixer_phase += 2.0 * M_PI;
+        }
+
+        /* Step 3: Lowpass filter I and Q separately
          * This isolates the signal at DC (our tuned frequency)
          * and rejects off-center stations within the bandwidth */
         float I_filt = lowpass_process(&g_lowpass_i, I);
@@ -330,14 +354,18 @@ int main(int argc, char *argv[]) {
             bw_khz = atoi(argv[++i]);
         } else if (strcmp(argv[i], "-v") == 0 && i + 1 < argc) {
             g_volume = (float)atof(argv[++i]);
+        } else if (strcmp(argv[i], "-i") == 0 && i + 1 < argc) {
+            int if_mode = atoi(argv[++i]);
+            g_use_lif = (if_mode == 450);
         } else if (strcmp(argv[i], "-h") == 0) {
             printf("Simple AM Receiver for WWV\n");
-            printf("Usage: %s [-f freq_mhz] [-g gain_db] [-l lna_state] [-b bw_khz] [-v volume]\n", argv[0]);
+            printf("Usage: %s [-f freq_mhz] [-g gain_db] [-l lna_state] [-b bw_khz] [-v volume] [-i if_mode]\n", argv[0]);
             printf("  -f  Frequency in MHz (default: %.1f)\n", DEFAULT_FREQ_MHZ);
             printf("  -g  Gain reduction 20-59 dB (default: %d)\n", DEFAULT_GAIN_DB);
             printf("  -l  LNA state 0-4 for Hi-Z port (default: 0)\n");
             printf("  -b  Bandwidth: 200, 300, 600, 1536, 5000, 6000, 7000, 8000 kHz (default: 200)\n");
             printf("  -v  Volume (default: %.1f)\n", g_volume);
+            printf("  -i  IF mode: 0=Zero-IF, 450=Low-IF (default: 0)\n");
             return 0;
         }
     }
@@ -361,6 +389,7 @@ int main(int argc, char *argv[]) {
     printf("Gain reduction: %d dB\n", gain_db);
     printf("LNA state: %d\n", lna_state);
     printf("Bandwidth: %d kHz\n", bw_khz);
+    printf("IF mode: %s\n", g_use_lif ? "Low-IF (450 kHz)" : "Zero-IF");
     printf("Volume: %.1f\n\n", g_volume);
 
     signal(SIGINT, signal_handler);
@@ -369,6 +398,10 @@ int main(int argc, char *argv[]) {
     lowpass_init(&g_lowpass_i, IQ_FILTER_CUTOFF, SDR_SAMPLE_RATE);
     lowpass_init(&g_lowpass_q, IQ_FILTER_CUTOFF, SDR_SAMPLE_RATE);
     dc_block_init(&g_dc_block);
+
+    /* Initialize mixer for Low-IF mode (negative frequency to shift down) */
+    g_mixer_phase = 0.0;
+    g_mixer_phase_inc = -2.0 * M_PI * LIF_FREQUENCY / SDR_SAMPLE_RATE;
 
     /* Initialize audio */
     if (!audio_init()) {
@@ -424,7 +457,7 @@ int main(int argc, char *argv[]) {
     sdrplay_api_RxChannelParamsT *ch = g_params->rxChannelA;
     ch->tunerParams.rfFreq.rfHz = freq_mhz * 1e6;
     ch->tunerParams.bwType = bw_type;
-    ch->tunerParams.ifType = sdrplay_api_IF_Zero;   /* Zero-IF */
+    ch->tunerParams.ifType = g_use_lif ? sdrplay_api_IF_0_450 : sdrplay_api_IF_Zero;
     ch->tunerParams.gain.gRdB = gain_db;
     ch->tunerParams.gain.LNAstate = (unsigned char)lna_state;
 

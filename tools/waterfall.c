@@ -403,7 +403,7 @@ int main(int argc, char *argv[]) {
         {
             int bar_width = BUCKET_WIDTH / NUM_TICK_FREQS;  /* ~28 pixels per bar */
             int bar_gap = 2;  /* Gap between bars */
-            
+
             /* Clear right panel (black background) */
             for (int y = 0; y < WINDOW_HEIGHT; y++) {
                 for (int x = WATERFALL_WIDTH; x < WINDOW_WIDTH; x++) {
@@ -413,24 +413,24 @@ int main(int argc, char *argv[]) {
                     pixels[idx + 2] = 0;
                 }
             }
-            
+
             /* Draw each bucket bar */
             for (int f = 0; f < NUM_TICK_FREQS; f++) {
                 int bar_x = WATERFALL_WIDTH + f * bar_width + bar_gap;
                 int bar_w = bar_width - bar_gap * 2;
-                
+
                 /* Convert energy to height using log scale */
                 float db = 20.0f * log10f(g_bucket_energy[f] + 1e-10f);
                 float norm = (db - g_floor_db) / (g_peak_db - g_floor_db + 0.1f);
                 if (norm < 0.0f) norm = 0.0f;
                 if (norm > 1.0f) norm = 1.0f;
-                
+
                 int bar_height = (int)(norm * WINDOW_HEIGHT);
-                
+
                 /* Get color based on magnitude */
                 uint8_t r, g, b;
                 magnitude_to_rgb(g_bucket_energy[f], g_peak_db, g_floor_db, &r, &g, &b);
-                
+
                 /* Draw bar from bottom up */
                 for (int y = WINDOW_HEIGHT - bar_height; y < WINDOW_HEIGHT; y++) {
                     for (int x = bar_x; x < bar_x + bar_w && x < WINDOW_WIDTH; x++) {

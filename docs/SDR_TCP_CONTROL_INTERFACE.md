@@ -2,10 +2,10 @@
 
 ## Design Specification for Remote SDR Control
 
-**Document Version:** 1.0  
-**Date:** December 14, 2025  
-**Status:** DRAFT  
-**Authors:** Phoenix Nest Development Team  
+**Document Version:** 1.0
+**Date:** December 14, 2025
+**Status:** DRAFT
+**Authors:** Phoenix Nest Development Team
 
 ---
 
@@ -622,7 +622,7 @@ class PhoenixSDRClient:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.connect((host, port))
         self.sock.settimeout(5.0)
-        
+
     def send_command(self, cmd):
         """Send command and return response."""
         self.sock.sendall((cmd + '\n').encode('ascii'))
@@ -633,33 +633,33 @@ class PhoenixSDRClient:
                 raise ConnectionError("Server closed connection")
             response += chunk
         return response.decode('ascii').strip()
-    
+
     def set_freq(self, freq_hz):
         resp = self.send_command(f'SET_FREQ {freq_hz}')
         if not resp.startswith('OK'):
             raise RuntimeError(f"SET_FREQ failed: {resp}")
-            
+
     def get_freq(self):
         resp = self.send_command('GET_FREQ')
         if resp.startswith('OK '):
             return int(resp[3:])
         raise RuntimeError(f"GET_FREQ failed: {resp}")
-        
+
     def set_gain(self, gain_db):
         resp = self.send_command(f'SET_GAIN {gain_db}')
         if not resp.startswith('OK'):
             raise RuntimeError(f"SET_GAIN failed: {resp}")
-            
+
     def start(self):
         resp = self.send_command('START')
         if not resp.startswith('OK'):
             raise RuntimeError(f"START failed: {resp}")
-            
+
     def stop(self):
         resp = self.send_command('STOP')
         if not resp.startswith('OK'):
             raise RuntimeError(f"STOP failed: {resp}")
-            
+
     def status(self):
         """Return dict of current status."""
         resp = self.send_command('STATUS')
@@ -671,7 +671,7 @@ class PhoenixSDRClient:
                     params[k] = v
             return params
         raise RuntimeError(f"STATUS failed: {resp}")
-        
+
     def close(self):
         self.send_command('QUIT')
         self.sock.close()
@@ -680,17 +680,17 @@ class PhoenixSDRClient:
 # Example usage:
 if __name__ == '__main__':
     sdr = PhoenixSDRClient()
-    
+
     sdr.set_freq(7255000)       # 7.255 MHz
     sdr.set_gain(40)            # 40 dB gain reduction
-    
+
     print(sdr.status())
-    
+
     sdr.start()
     import time
     time.sleep(5)
     sdr.stop()
-    
+
     sdr.close()
 ```
 
@@ -706,7 +706,7 @@ int send_command(SOCKET sock, const char *cmd, char *response, int resp_size) {
     char buf[256];
     snprintf(buf, sizeof(buf), "%s\n", cmd);
     send(sock, buf, strlen(buf), 0);
-    
+
     int n = recv(sock, response, resp_size - 1, 0);
     if (n > 0) {
         response[n] = '\0';
@@ -722,31 +722,31 @@ int send_command(SOCKET sock, const char *cmd, char *response, int resp_size) {
 int main() {
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
-    
+
     SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in server = {0};
     server.sin_family = AF_INET;
     server.sin_addr.s_addr = inet_addr("127.0.0.1");
     server.sin_port = htons(4535);
-    
+
     if (connect(sock, (struct sockaddr *)&server, sizeof(server)) < 0) {
         printf("Connection failed\n");
         return 1;
     }
-    
+
     char resp[256];
-    
+
     send_command(sock, "SET_FREQ 15000000", resp, sizeof(resp));
     printf("SET_FREQ: %s\n", resp);
-    
+
     send_command(sock, "SET_GAIN 35", resp, sizeof(resp));
     printf("SET_GAIN: %s\n", resp);
-    
+
     send_command(sock, "STATUS", resp, sizeof(resp));
     printf("STATUS: %s\n", resp);
-    
+
     send_command(sock, "QUIT", resp, sizeof(resp));
-    
+
     closesocket(sock);
     WSACleanup();
     return 0;

@@ -93,7 +93,7 @@ jobs:
       shell: powershell
       run: |
         # Build with release optimizations
-        .\build.ps1 -Release
+        .\.github\ci_build.ps1 -Release
     
     - name: Package Release
       shell: powershell

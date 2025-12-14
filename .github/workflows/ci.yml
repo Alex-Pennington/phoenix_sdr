@@ -68,7 +68,7 @@ jobs:
     
     - name: Build
       shell: powershell
-      run: .\build.ps1
+      run: .\.github\ci_build.ps1
     
     - name: Run Tests
       shell: powershell

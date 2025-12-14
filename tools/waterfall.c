@@ -61,6 +61,144 @@ static float g_tick_thresholds[NUM_TICK_FREQS] = { 0.001f, 0.001f, 0.001f, 0.001
 static float g_bucket_energy[NUM_TICK_FREQS];  /* Current energy in each bucket */
 static int g_selected_param = 0;      /* 0 = gain, 1-6 = tick thresholds */
 
+/*============================================================================
+ * Tick Detector State Machine (watches 1000 Hz bucket)
+ *============================================================================*/
+
+#define FRAME_DURATION_MS ((float)FFT_SIZE * 1000.0f / SAMPLE_RATE)  /* ~21.3ms */
+#define TICK_MIN_DURATION_MS    2
+#define TICK_MAX_DURATION_MS    50
+#define TICK_COOLDOWN_MS        500
+#define TICK_NOISE_ADAPT_RATE   0.001f
+#define TICK_WARMUP_ADAPT_RATE  0.05f
+#define TICK_HYSTERESIS_RATIO   0.7f
+#define TICK_WARMUP_FRAMES      50
+#define TICK_FLASH_FRAMES       3       /* How long to show purple flash */
+
+#define MS_TO_FRAMES(ms) ((int)((ms) / FRAME_DURATION_MS + 0.5f))
+
+typedef enum { TICK_IDLE, TICK_IN_TICK, TICK_COOLDOWN } tick_state_t;
+
+typedef struct {
+    tick_state_t state;
+    float noise_floor;
+    float threshold_high;
+    float threshold_low;
+    uint64_t tick_start_frame;
+    float tick_peak_energy;
+    int tick_duration_frames;
+    int ticks_detected;
+    int ticks_rejected;
+    uint64_t last_tick_frame;
+    uint64_t start_frame;
+    int cooldown_frames;
+    bool warmup_complete;
+    bool detection_enabled;
+    int flash_frames_remaining;  /* For purple flash */
+    FILE *csv_file;
+} tick_detector_t;
+
+static tick_detector_t g_tick_detector;
+
+static void tick_detector_init(tick_detector_t *td) {
+    memset(td, 0, sizeof(*td));
+    td->state = TICK_IDLE;
+    td->noise_floor = 0.001f;
+    td->threshold_high = td->noise_floor * 2.0f;
+    td->threshold_low = td->threshold_high * TICK_HYSTERESIS_RATIO;
+    td->detection_enabled = true;
+    td->flash_frames_remaining = 0;
+    td->csv_file = fopen("wwv_ticks.csv", "w");
+    if (td->csv_file) {
+        fprintf(td->csv_file, "timestamp_ms,tick_num,energy_peak,duration_ms,interval_ms,noise_floor\n");
+        fflush(td->csv_file);
+    }
+}
+
+static void tick_detector_close(tick_detector_t *td) {
+    if (td->csv_file) { fclose(td->csv_file); td->csv_file = NULL; }
+}
+
+static bool tick_detector_update(tick_detector_t *td, float energy, uint64_t frame_num) {
+    if (!td->detection_enabled) return false;
+    bool tick_detected = false;
+
+    /* Warmup */
+    if (!td->warmup_complete) {
+        td->noise_floor += TICK_WARMUP_ADAPT_RATE * (energy - td->noise_floor);
+        if (td->noise_floor < 0.0001f) td->noise_floor = 0.0001f;
+        td->threshold_high = td->noise_floor * 2.0f;
+        td->threshold_low = td->threshold_high * TICK_HYSTERESIS_RATIO;
+        if (frame_num >= td->start_frame + TICK_WARMUP_FRAMES) {
+            td->warmup_complete = true;
+            printf("[WARMUP] Complete. Noise=%.6f, Thresh=%.6f\n", td->noise_floor, td->threshold_high);
+        }
+        return false;
+    }
+
+    /* Adapt noise floor during idle */
+    if (td->state == TICK_IDLE && energy < td->threshold_high) {
+        td->noise_floor += TICK_NOISE_ADAPT_RATE * (energy - td->noise_floor);
+        if (td->noise_floor < 0.0001f) td->noise_floor = 0.0001f;
+        td->threshold_high = td->noise_floor * 2.0f;
+        td->threshold_low = td->threshold_high * TICK_HYSTERESIS_RATIO;
+    }
+
+    switch (td->state) {
+        case TICK_IDLE:
+            if (energy > td->threshold_high) {
+                td->state = TICK_IN_TICK;
+                td->tick_start_frame = frame_num;
+                td->tick_peak_energy = energy;
+                td->tick_duration_frames = 1;
+            }
+            break;
+        case TICK_IN_TICK:
+            td->tick_duration_frames++;
+            if (energy > td->tick_peak_energy) td->tick_peak_energy = energy;
+            if (energy < td->threshold_low) {
+                float duration_ms = td->tick_duration_frames * FRAME_DURATION_MS;
+                if (duration_ms >= TICK_MIN_DURATION_MS && duration_ms <= TICK_MAX_DURATION_MS) {
+                    td->ticks_detected++;
+                    tick_detected = true;
+                    td->flash_frames_remaining = TICK_FLASH_FRAMES;
+                    float timestamp_ms = frame_num * FRAME_DURATION_MS;
+                    float interval_ms = (td->last_tick_frame > 0) ?
+                        (td->tick_start_frame - td->last_tick_frame) * FRAME_DURATION_MS : 0.0f;
+                    char ind = (interval_ms > 950.0f && interval_ms < 1050.0f) ? ' ' : '!';
+                    printf("[%7.1fs] TICK #%-4d  peak=%.4f  dur=%4.1fms  int=%6.0fms %c\n",
+                           timestamp_ms/1000.0f, td->ticks_detected, td->tick_peak_energy, duration_ms, interval_ms, ind);
+                    if (td->csv_file) {
+                        fprintf(td->csv_file, "%.1f,%d,%.6f,%.1f,%.0f,%.6f\n",
+                                timestamp_ms, td->ticks_detected, td->tick_peak_energy, duration_ms, interval_ms, td->noise_floor);
+                        fflush(td->csv_file);
+                    }
+                    td->last_tick_frame = td->tick_start_frame;
+                } else { td->ticks_rejected++; }
+                td->state = TICK_COOLDOWN;
+                td->cooldown_frames = MS_TO_FRAMES(TICK_COOLDOWN_MS);
+            } else if (td->tick_duration_frames * FRAME_DURATION_MS > TICK_MAX_DURATION_MS) {
+                td->ticks_rejected++;
+                td->state = TICK_COOLDOWN;
+                td->cooldown_frames = MS_TO_FRAMES(TICK_COOLDOWN_MS);
+            }
+            break;
+        case TICK_COOLDOWN:
+            if (--td->cooldown_frames <= 0) td->state = TICK_IDLE;
+            break;
+    }
+    return tick_detected;
+}
+
+static void tick_detector_print_stats(tick_detector_t *td, uint64_t frame) {
+    float elapsed = frame * FRAME_DURATION_MS / 1000.0f;
+    float detecting = td->warmup_complete ? (elapsed - TICK_WARMUP_FRAMES * FRAME_DURATION_MS / 1000.0f) : 0.0f;
+    int expected = (int)detecting;
+    float rate = (expected > 0) ? (100.0f * td->ticks_detected / expected) : 0.0f;
+    printf("\n=== TICK STATS === Elapsed:%.1fs Detected:%d Expected:%d Rate:%.1f%% Rejected:%d Noise:%.6f ===\n\n",
+           elapsed, td->ticks_detected, expected, rate, td->ticks_rejected, td->noise_floor);
+}
+
 static void magnitude_to_rgb(float mag, float peak_db, float floor_db, uint8_t *r, uint8_t *g, uint8_t *b) {
     /* Log scale for better visibility */
     float db = 20.0f * log10f(mag + 1e-10f);

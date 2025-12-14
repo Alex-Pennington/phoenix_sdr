@@ -4,8 +4,8 @@
  *
  * DSP Pipeline:
  * 1. Receive IQ samples from SDRplay callback (short *xi, short *xq)
- * 2. Envelope detection: magnitude = sqrt(I² + Q²)
- * 3. Lowpass anti-aliasing filter (2.5 kHz cutoff)
+ * 2. Lowpass filter I and Q separately (isolate signal at DC, reject off-center stations)
+ * 3. Envelope detection: magnitude = sqrt(I² + Q²)
  * 4. Decimation: 2 MHz → 48 kHz (factor 42)
  * 5. DC removal: highpass IIR y[n] = x[n] - x[n-1] + 0.995*y[n-1]
  * 6. Output to speakers
@@ -37,7 +37,7 @@
 #define SDR_SAMPLE_RATE     2000000.0   /* 2 MHz from SDRplay */
 #define AUDIO_SAMPLE_RATE   48000.0     /* 48 kHz audio output */
 #define DECIMATION_FACTOR   42          /* 2M / 48k ≈ 42 */
-#define AUDIO_BANDWIDTH     2500.0      /* 2.5 kHz for WWV */
+#define IQ_FILTER_CUTOFF    3000.0      /* 3 kHz lowpass on I/Q before magnitude */
 
 #define DEFAULT_FREQ_MHZ    15.0
 #define DEFAULT_GAIN_DB     40
@@ -194,7 +194,8 @@ static sdrplay_api_DeviceT g_device;
 static sdrplay_api_DeviceParamsT *g_params = NULL;
 
 /* DSP state */
-static lowpass_t g_lowpass;
+static lowpass_t g_lowpass_i;   /* Lowpass for I channel */
+static lowpass_t g_lowpass_q;   /* Lowpass for Q channel */
 static dc_block_t g_dc_block;
 static int g_decim_counter = 0;
 
@@ -228,11 +229,14 @@ static void stream_callback(
         float I = (float)xi[i];
         float Q = (float)xq[i];
 
-        /* Step 2: Envelope detection - magnitude = sqrt(I² + Q²) */
-        float magnitude = sqrtf(I * I + Q * Q);
+        /* Step 2: Lowpass filter I and Q separately
+         * This isolates the signal at DC (our tuned frequency)
+         * and rejects off-center stations within the bandwidth */
+        float I_filt = lowpass_process(&g_lowpass_i, I);
+        float Q_filt = lowpass_process(&g_lowpass_q, Q);
 
-        /* Step 3: Anti-aliasing lowpass filter (2.5 kHz) */
-        float filtered = lowpass_process(&g_lowpass, magnitude);
+        /* Step 3: Envelope detection on filtered signal */
+        float magnitude = sqrtf(I_filt * I_filt + Q_filt * Q_filt);
 
         /* Step 4: Decimation (keep every 42nd sample) */
         g_decim_counter++;
@@ -240,7 +244,7 @@ static void stream_callback(
             g_decim_counter = 0;
 
             /* Step 5: DC removal */
-            float audio = dc_block_process(&g_dc_block, filtered);
+            float audio = dc_block_process(&g_dc_block, magnitude);
 
             /* Scale to audio level */
             audio = audio * g_volume;
@@ -307,6 +311,8 @@ int main(int argc, char *argv[]) {
     sdrplay_api_ErrT err;
     float freq_mhz = DEFAULT_FREQ_MHZ;
     int gain_db = DEFAULT_GAIN_DB;
+    int lna_state = 0;
+    int bw_khz = 200;
 
     /* Parse args */
     for (int i = 1; i < argc; i++) {
@@ -314,27 +320,54 @@ int main(int argc, char *argv[]) {
             freq_mhz = (float)atof(argv[++i]);
         } else if (strcmp(argv[i], "-g") == 0 && i + 1 < argc) {
             gain_db = atoi(argv[++i]);
+            if (gain_db < 20) gain_db = 20;
+            if (gain_db > 59) gain_db = 59;
+        } else if (strcmp(argv[i], "-l") == 0 && i + 1 < argc) {
+            lna_state = atoi(argv[++i]);
+            if (lna_state < 0) lna_state = 0;
+            if (lna_state > 4) lna_state = 4;
+        } else if (strcmp(argv[i], "-b") == 0 && i + 1 < argc) {
+            bw_khz = atoi(argv[++i]);
         } else if (strcmp(argv[i], "-v") == 0 && i + 1 < argc) {
             g_volume = (float)atof(argv[++i]);
         } else if (strcmp(argv[i], "-h") == 0) {
             printf("Simple AM Receiver for WWV\n");
-            printf("Usage: %s [-f freq_mhz] [-g gain_db] [-v volume]\n", argv[0]);
+            printf("Usage: %s [-f freq_mhz] [-g gain_db] [-l lna_state] [-b bw_khz] [-v volume]\n", argv[0]);
             printf("  -f  Frequency in MHz (default: %.1f)\n", DEFAULT_FREQ_MHZ);
             printf("  -g  Gain reduction 20-59 dB (default: %d)\n", DEFAULT_GAIN_DB);
+            printf("  -l  LNA state 0-4 for Hi-Z port (default: 0)\n");
+            printf("  -b  Bandwidth: 200, 300, 600, 1536, 5000, 6000, 7000, 8000 kHz (default: 200)\n");
             printf("  -v  Volume (default: %.1f)\n", g_volume);
             return 0;
         }
     }
 
+    /* Map bandwidth to API enum */
+    sdrplay_api_Bw_MHzT bw_type;
+    switch (bw_khz) {
+        case 200:  bw_type = sdrplay_api_BW_0_200; break;
+        case 300:  bw_type = sdrplay_api_BW_0_300; break;
+        case 600:  bw_type = sdrplay_api_BW_0_600; break;
+        case 1536: bw_type = sdrplay_api_BW_1_536; break;
+        case 5000: bw_type = sdrplay_api_BW_5_000; break;
+        case 6000: bw_type = sdrplay_api_BW_6_000; break;
+        case 7000: bw_type = sdrplay_api_BW_7_000; break;
+        case 8000: bw_type = sdrplay_api_BW_8_000; break;
+        default:   bw_type = sdrplay_api_BW_0_200; bw_khz = 200; break;
+    }
+
     printf("Simple AM Receiver\n");
     printf("Frequency: %.3f MHz\n", freq_mhz);
     printf("Gain reduction: %d dB\n", gain_db);
+    printf("LNA state: %d\n", lna_state);
+    printf("Bandwidth: %d kHz\n", bw_khz);
     printf("Volume: %.1f\n\n", g_volume);
 
     signal(SIGINT, signal_handler);
 
-    /* Initialize DSP */
-    lowpass_init(&g_lowpass, AUDIO_BANDWIDTH, SDR_SAMPLE_RATE);
+    /* Initialize DSP - lowpass I and Q at 3 kHz (isolates WWV at DC, rejects off-center stations) */
+    lowpass_init(&g_lowpass_i, IQ_FILTER_CUTOFF, SDR_SAMPLE_RATE);
+    lowpass_init(&g_lowpass_q, IQ_FILTER_CUTOFF, SDR_SAMPLE_RATE);
     dc_block_init(&g_dc_block);
 
     /* Initialize audio */
@@ -390,10 +423,10 @@ int main(int argc, char *argv[]) {
 
     sdrplay_api_RxChannelParamsT *ch = g_params->rxChannelA;
     ch->tunerParams.rfFreq.rfHz = freq_mhz * 1e6;
-    ch->tunerParams.bwType = sdrplay_api_BW_0_600;  /* 600 kHz BW */
+    ch->tunerParams.bwType = bw_type;
     ch->tunerParams.ifType = sdrplay_api_IF_Zero;   /* Zero-IF */
     ch->tunerParams.gain.gRdB = gain_db;
-    ch->tunerParams.gain.LNAstate = 0;
+    ch->tunerParams.gain.LNAstate = (unsigned char)lna_state;
 
     ch->ctrlParams.agc.enable = sdrplay_api_AGC_DISABLE;
     ch->ctrlParams.dcOffset.DCenable = 1;
@@ -403,8 +436,8 @@ int main(int argc, char *argv[]) {
     ch->rsp2TunerParams.amPortSel = sdrplay_api_Rsp2_AMPORT_1;
     ch->rsp2TunerParams.antennaSel = sdrplay_api_Rsp2_ANTENNA_A;
 
-    printf("Configured: %.3f MHz, BW=600 kHz, IF=Zero, Gain=%d dB\n",
-           freq_mhz, gain_db);
+    printf("Configured: %.3f MHz, BW=%d kHz, Gain=%d dB, LNA=%d\n",
+           freq_mhz, bw_khz, gain_db, lna_state);
 
     /* Set up callbacks */
     sdrplay_api_CallbackFnsT callbacks;

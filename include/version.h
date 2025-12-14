@@ -16,8 +16,8 @@
 #define PHOENIX_VERSION_PATCH   5
 #define PHOENIX_VERSION_BUILD   9
 #define PHOENIX_VERSION_STRING  "0.2.5"
-#define PHOENIX_VERSION_FULL    "0.2.5+9.95bab8c"
-#define PHOENIX_GIT_COMMIT      "95bab8c"
+#define PHOENIX_VERSION_FULL    "0.2.5+9.d60aa68"
+#define PHOENIX_GIT_COMMIT      "d60aa68"
 #define PHOENIX_GIT_DIRTY       false
 
 /* Build timestamp - set by compiler */

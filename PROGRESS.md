@@ -1,181 +1,126 @@
 # Phoenix SDR - Progress & Status
 
-**Last Updated:** 2025-12-13 ~21:00 EST
+**Last Updated:** 2025-12-14 ~12:00 EST
 
-## Current Status: 🟢 TOOLS WORKING
+## Current Status: 🟢 TICK DETECTION WORKING
 
-**Current Task:** Simple AM receiver and waterfall display with tick detection are functional. Ready for live WWV testing.
-
-## What We're Trying To Do
-
-### Immediate Goal
-1. Detect WWV second ticks reliably (>80% hit rate in clean windows)
-2. Use tick position for timing discipline
-3. Validate our SDR capture chain works
-
-### Why This Matters
-This is a smoke test. If we can detect WWV ticks reliably, we know:
-- SDR hardware interface works
-- Our signal processing works
-- Our timing (GPS) works
-- We can proceed to build the actual HF modem
+**Version:** v0.2.6 — Split-screen waterfall with tick detection and interval averaging
 
 ## What's Working ✅
 
 | Component | Status | Notes |
 |-----------|--------|-------|
 | SDRplay API | ✅ | Opens device, configures, streams |
-| GPS Serial | ✅ | Reads time from NEO-6M, parses milliseconds |
-| Decimator | ✅ | 2MHz → 48kHz, gain bug fixed |
-| DSP Math | ✅ | Unit tests pass 10/10 |
-| Build System | ✅ | PowerShell + MinGW |
-| Version Header | ✅ | v0.2.0 |
-| Simple AM Receiver | ✅ | Zero-IF + 450Hz offset, 6kHz RF BW, audio + waterfall output |
-| Waterfall Display | ✅ | 1024x800, auto-gain, tick detection with 7 frequency bands |
+| Simple AM Receiver | ✅ | Zero-IF + 450Hz offset, 6kHz RF BW |
+| Split-Screen Waterfall | ✅ | Left: FFT spectrum, Right: 7 bucket bars |
+| Tick Detection | ✅ | State machine with hysteresis, adaptive threshold |
+| Interval Tracking | ✅ | Per-tick interval + 15-second rolling average |
+| Purple Flash | ✅ | Visual indicator on 1000Hz bar when tick detected |
+| CSV Logging | ✅ | Full tick data to wwv_ticks.csv |
+| Keyboard Controls | ✅ | D=toggle, S=stats, 0-7=params, +/-=adjust |
 
-## New Tools (This Session)
+## Today's Achievement 🎯
 
-### simple_am_receiver.exe
-Standalone AM receiver for WWV with audio output and waterfall pipe.
+**Split-screen waterfall with real-time tick detection:**
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `-f` | Frequency in MHz | 15.0 |
-| `-g` | Gain reduction 20-59 dB | 40 |
-| `-l` | LNA state 0-4 | 0 |
-| `-v` | Volume | 50.0 |
-| `-o` | Output PCM to stdout (for waterfall) | off |
-| `-a` | Mute audio (disable speakers) | off |
-| | RF bandwidth | 6 kHz (fixed) |
-
-**DSP Pipeline:**
-1. IQ samples from SDRplay (2 MHz)
-2. Lowpass filter I/Q at 3 kHz (gives 6 kHz RF bandwidth)
-3. Envelope detection: magnitude = sqrt(I² + Q²)
-4. Decimation: 2 MHz → 48 kHz
-5. DC removal: highpass IIR
-6. Output: speakers and/or stdout
-
-### waterfall.exe
-FFT waterfall display with WWV tick detection.
-
-| Key | Frequency | Bandwidth | Signal |
-|-----|-----------|-----------|--------|
-| 0 | - | - | Gain adjustment |
-| 1 | 100 Hz | ±10 Hz | BCD subcarrier |
-| 2 | 440 Hz | ±5 Hz | Calibration tone |
-| 3 | 500 Hz | ±5 Hz | Minute marker |
-| 4 | 600 Hz | ±5 Hz | Station ID |
-| 5 | 1000 Hz | ±100 Hz | Second tick (5ms pulse) |
-| 6 | 1200 Hz | ±100 Hz | WWVH tick (5ms pulse) |
-| 7 | 1500 Hz | ±20 Hz | 800ms tone |
-
-**Features:**
-- Window: 1024×800
-- FFT: 1024 bins (46.9 Hz/bin)
-- Auto-gain with attack/decay
-- Sideband folding (combines +freq and -freq)
-- Red dot markers when energy exceeds threshold
-- Keys: `0-7` select parameter, `+/-` adjust, `Q/Esc` quit
-
-**Usage:**
-```powershell
-cmd /c ".\bin\simple_am_receiver.exe -g 50 -l 2 -f 10.000450 -o | .\bin\waterfall.exe"
+```
+┌────────────────────────────┬──────┐
+│                            │ ▌▌▌▌▌│
+│   FFT Waterfall            │ ▌█▌▌▌│  ← Purple flash on tick
+│   (carrier + sidebands)    │ ▌▌▌▌▌│
+│                            │ ▌▌▌▌▌│
+│   1024 x 800               │ 200px│
+└────────────────────────────┴──────┘
 ```
 
-## What's In Progress 🟡
+**Console output:**
+```
+[WARMUP] Complete. Noise=0.000342, Thresh=0.000684
+[   1.1s] TICK #1    int=     0ms  avg=     0ms  
+[   2.1s] TICK #2    int=  1002ms  avg= 1002ms  
+[   3.1s] TICK #3    int=   998ms  avg= 1000ms  
+[   4.1s] TICK #4    int=  1001ms  avg= 1000ms  
+```
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Tick Detection Tuning | 🟡 | Thresholds need calibration with live signal |
-| Edge Detection (wwv_scan) | 🟡 | Original approach paused; new tools working |
+## Tick Detector Features
 
-## Recent Changes (This Session)
+- **Adaptive threshold:** Noise floor tracking during idle
+- **Hysteresis:** High threshold to enter, low threshold to exit
+- **Duration validation:** 2-50ms (rejects voice, accepts 5ms ticks)
+- **Cooldown:** 500ms debounce between detections
+- **Warmup:** 1 second adaptation before detection starts
+- **Interval averaging:** Rolling 15-second window
+- **CSV logging:** Full data for analysis
 
-### Simple AM Receiver Cleanup
-- Removed confusing `-b` (SDRplay hardware BW) and `-bp` flags
-- Fixed 6 kHz RF bandwidth (3 kHz I/Q lowpass, hardcoded)
-- Added `-a` flag to mute audio while keeping waterfall output
-- Zero-IF mode with +450 Hz offset to avoid DC hole
+## Usage
 
-### Waterfall Tick Detection
-- Added 7 WWV frequency bands with specific bandwidths
-- Narrow bands (±5 Hz) for pure tones (440, 500, 600 Hz)
-- Wide bands (±100 Hz) for short pulses (1000, 1200 Hz)
-- Sideband folding: energy = mag[+freq] + mag[-freq]
-- Threshold-based detection with red dot markers
-- Keyboard control for threshold adjustment
+```powershell
+# Night (5 MHz)
+cmd /c ".\bin\simple_am_receiver.exe -f 5.000450 -g 59 -l 0 -o | .\bin\waterfall.exe"
+
+# Day (10 MHz)
+cmd /c ".\bin\simple_am_receiver.exe -f 10.000450 -g 50 -l 2 -o | .\bin\waterfall.exe"
+```
+
+## Keyboard Controls
+
+| Key | Function |
+|-----|----------|
+| D | Toggle tick detection |
+| S | Print statistics |
+| 0 | Select gain adjustment |
+| 1-7 | Select frequency threshold |
+| +/- | Adjust selected parameter |
+| Q/Esc | Quit |
 
 ## Files Changed Today
 
-- `tools/simple_am_receiver.c` - Cleanup: removed -b/-bp flags, fixed 6kHz BW, added -a mute
-- `tools/waterfall.c` - Added 7-band tick detection with sideband folding
-- `src/decimator.c` - DC offset fix, gain bug fix (earlier)
-- `src/gps_serial.c` - Millisecond parsing, thread-safe resync (earlier)
+- `tools/waterfall.c` — Complete rewrite with split-screen, tick detector, interval tracking
+- `README.md` — Updated with new features
+- `PROGRESS.md` — This file
+
+## What's Next
+
+1. **Beta testing** — Get feedback from MARS operators
+2. **Threshold tuning** — Optimize for different signal conditions
+3. **Minute marker detection** — Detect the 800ms pulse
+4. **GPS integration** — Compare detected ticks to GPS PPS
 
 ## Build Commands
 
 ```powershell
 cd D:\claude_sandbox\phoenix_sdr
-.\build.ps1 -Clean
-.\build.ps1
 .\build.ps1 -Target tools
-
-# Run AM receiver with waterfall
-cmd /c ".\bin\simple_am_receiver.exe -g 50 -l 2 -f 10.000450 -o | .\bin\waterfall.exe"
-
-# Audio only (no waterfall)
-.\bin\simple_am_receiver.exe -g 50 -l 2 -f 10.000450
-
-# Waterfall only (mute audio)
-cmd /c ".\bin\simple_am_receiver.exe -g 50 -l 2 -f 10.000450 -o -a | .\bin\waterfall.exe"
 ```
 
 ## Hardware
 
-- **SDR:** SDRplay RSP2 Pro (Serial: 1717046711)
-- **GPS:** NEO-6M on Arduino (COM6, 115200 baud)
+- **SDR:** SDRplay RSP2 Pro
 - **Antenna:** HF antenna on Hi-Z port
-
-## Waterfall Keys
-
-| Key | Function |
-|-----|----------|
-| 0 | Select gain adjustment |
-| 1 | Select 100 Hz (BCD) threshold |
-| 2 | Select 440 Hz (Cal) threshold |
-| 3 | Select 500 Hz (Min) threshold |
-| 4 | Select 600 Hz (ID) threshold |
-| 5 | Select 1000 Hz (Tick) threshold |
-| 6 | Select 1200 Hz (WWVH) threshold |
-| 7 | Select 1500 Hz (Tone) threshold |
-| +/- | Adjust selected parameter |
-| Q/Esc | Quit |
 
 ## Session History
 
-### This Session (Evening)
-- Created simple_am_receiver.c - standalone AM receiver
-- Created waterfall.c - FFT display with SDL2 + KissFFT
-- Fixed LIF mode bug (signal at -450 kHz not +450 kHz) - switched to Zero-IF
-- Added auto-gain to waterfall
-- Added manual gain control (+/- keys)
-- Doubled display to 1024x800
-- Removed -b and -bp flags (confusing, not needed)
-- Added 7-band tick detection with proper bandwidths
-- Added sideband folding for AM signal
+### Dec 14 - Morning/Afternoon
+- Fixed waterfall display (was broken by sliding window changes)
+- Discovered working code was in commit 2c99002
+- Branched from working commit
+- Added split-screen display (waterfall left, buckets right)
+- Added tick detector state machine
+- Added purple flash on detection
+- Added interval tracking with 15-second rolling average
+- Added D/S keyboard controls
 
-### Earlier Today
-- Fixed DC offset corruption in decimator
-- Fixed decimator gain bug
-- Narrowed tick window to 10ms
-- Added peak energy tracking
-- Added waveform dump mode
-- Added interactive mode with live bucket display
-- Added voice window filtering (s01-28, s52-58 clean)
-- Fixed GPS millisecond parsing
-- Fixed thread-safe resync
-- Calibrated PPS offset (-440ms)
-- Fixed race condition in display
-- Researched FLDIGI WWV implementation
-- Implemented edge detection approach (paused)
+### Dec 14 - Early Morning
+- Implemented sliding window FFT (broke display)
+- Multiple restoration attempts
+- Eventually reverted to commit 2c99002
+
+### Dec 13 - Evening
+- Created simple_am_receiver.c
+- Created waterfall.c with tick detection
+- Fixed Zero-IF mode, DC offset, gain bugs
+
+---
+
+**Phoenix Nest MARS Suite**  
+KY4OLB

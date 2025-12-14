@@ -1,0 +1,78 @@
+name: CI Build
+
+on:
+  push:
+    branches: [ main, 'feature/**' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Install MinGW
+      uses: egor-tensin/setup-mingw@v2
+      with:
+        platform: x64
+    
+    - name: Download SDL2
+      shell: powershell
+      run: |
+        $sdlVersion = "2.30.9"
+        $sdlUrl = "https://github.com/libsdl-org/SDL/releases/download/release-$sdlVersion/SDL2-devel-$sdlVersion-mingw.zip"
+        Invoke-WebRequest -Uri $sdlUrl -OutFile "SDL2.zip"
+        Expand-Archive -Path "SDL2.zip" -DestinationPath "."
+        
+        New-Item -ItemType Directory -Force -Path "lib"
+        Copy-Item "SDL2-$sdlVersion\x86_64-w64-mingw32\lib\*" -Destination "lib\" -Recurse
+        Copy-Item "SDL2-$sdlVersion\x86_64-w64-mingw32\bin\SDL2.dll" -Destination "bin\" -Force
+        
+        New-Item -ItemType Directory -Force -Path "include\SDL2"
+        Copy-Item "SDL2-$sdlVersion\x86_64-w64-mingw32\include\SDL2\*" -Destination "include\SDL2\" -Recurse
+    
+    - name: Download KissFFT
+      shell: powershell
+      run: |
+        $kissfftUrl = "https://github.com/mborgerding/kissfft/archive/refs/tags/v131.zip"
+        Invoke-WebRequest -Uri $kissfftUrl -OutFile "kissfft.zip"
+        Expand-Archive -Path "kissfft.zip" -DestinationPath "."
+        
+        New-Item -ItemType Directory -Force -Path "lib\kissfft"
+        Copy-Item "kissfft-131\kiss_fft.h" -Destination "lib\kissfft\"
+        Copy-Item "kissfft-131\kiss_fft.c" -Destination "lib\kissfft\"
+    
+    - name: Setup SDRplay API stub
+      shell: powershell
+      run: |
+        New-Item -ItemType Directory -Force -Path "include\sdrplay"
+        
+        @"
+        #ifndef SDRPLAY_API_H
+        #define SDRPLAY_API_H
+        #include <stdint.h>
+        typedef void* HANDLE;
+        typedef int sdrplay_api_ErrT;
+        typedef int sdrplay_api_DbgLvl_t;
+        #define sdrplay_api_Success 0
+        #define sdrplay_api_Fail 1
+        #endif
+        "@ | Out-File -FilePath "include\sdrplay\sdrplay_api.h" -Encoding UTF8
+    
+    - name: Build
+      shell: powershell
+      run: .\build.ps1
+    
+    - name: Run Tests
+      shell: powershell
+      run: |
+        if (Test-Path "bin\test_test_dsp.exe") {
+          .\bin\test_test_dsp.exe
+        } else {
+          Write-Host "No tests found, skipping"
+        }

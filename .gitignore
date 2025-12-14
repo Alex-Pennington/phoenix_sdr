@@ -4,9 +4,34 @@ bin/
 *.o
 *.exe
 
-# Test recordings (too large for git)
+# External libraries (downloaded locally)
+libs/
+
+# Recordings (too large)
 *.iqr
+recordings/
 
 # IDE
 .vscode/
 *.swp
+*.code-workspace
+
+# Logs and temp files
+logs/
+
+# Auto-generated version header
+include/version.h
+
+# Misc junk files
+*.csv
+*.bat
+scanforclaude.txt
+wwv_scan_out.txt
+wwv_waveform.csv
+organize_recordings.ps1
+compass_artifact_*.md
+
+# Old docs we deleted
+PROTOCOL.md
+docs/HANDOFF_TO_MODEM_AGENT.md
+docs/SDR_INTEGRATION_ANALYSIS.md

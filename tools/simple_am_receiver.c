@@ -2,6 +2,11 @@
  * @file simple_am_receiver.c
  * @brief Simple AM Receiver for WWV
  *
+ * Tuning Strategy:
+ * - Zero-IF mode with +450 Hz offset (e.g., tune 10.000450 MHz for 10 MHz)
+ * - This avoids the DC hole (a few Hz notch at exactly 0 Hz)
+ * - 450 Hz offset is negligible compared to 3 kHz audio bandwidth
+ *
  * DSP Pipeline:
  * 1. Receive IQ samples from SDRplay callback (short *xi, short *xq)
  * 2. Lowpass filter I and Q separately (isolate signal at DC, reject off-center stations)
@@ -20,10 +25,13 @@
 #include <signal.h>
 
 #include "sdrplay_api.h"
+#include "version.h"
 
 #ifdef _WIN32
 #include <Windows.h>
 #include <mmsystem.h>
+#include <io.h>
+#include <fcntl.h>
 #define sleep_ms(ms) Sleep(ms)
 #else
 #include <unistd.h>
@@ -38,7 +46,6 @@
 #define AUDIO_SAMPLE_RATE   48000.0     /* 48 kHz audio output */
 #define DECIMATION_FACTOR   42          /* 2M / 48k ≈ 42 */
 #define IQ_FILTER_CUTOFF    3000.0      /* 3 kHz lowpass on I/Q before magnitude */
-#define LIF_FREQUENCY       450000.0    /* 450 kHz Low-IF */
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -204,17 +211,19 @@ static lowpass_t g_lowpass_q;   /* Lowpass for Q channel */
 static dc_block_t g_dc_block;
 static int g_decim_counter = 0;
 
-/* Low-IF mixer state */
-static bool g_use_lif = false;          /* true = Low-IF, false = Zero-IF */
-static double g_mixer_phase = 0.0;      /* Mixer phase accumulator */
-static double g_mixer_phase_inc = 0.0;  /* Phase increment per sample */
-
 /* Audio output buffer */
 static int16_t g_audio_out[8192];
 static int g_audio_out_count = 0;
 
 /* Volume */
 static float g_volume = 50.0f;
+
+/* Output modes - can both be enabled */
+static bool g_stdout_mode = false;  /* true = also output PCM to stdout (for waterfall) */
+static bool g_audio_enabled = true; /* true = output to speakers */
+
+/* Diagnostic output - goes to stderr in stdout mode */
+#define LOG(...) fprintf(g_stdout_mode ? stderr : stdout, __VA_ARGS__)
 
 /*============================================================================
  * SDRplay Stream Callback
@@ -239,21 +248,7 @@ static void stream_callback(
         float I = (float)xi[i];
         float Q = (float)xq[i];
 
-        /* Step 2: If Low-IF mode, mix down 450 kHz to DC */
-        if (g_use_lif) {
-            float cos_phase = (float)cos(g_mixer_phase);
-            float sin_phase = (float)sin(g_mixer_phase);
-            float new_I = I * cos_phase - Q * sin_phase;
-            float new_Q = I * sin_phase + Q * cos_phase;
-            I = new_I;
-            Q = new_Q;
-            g_mixer_phase += g_mixer_phase_inc;
-            /* Keep phase in [-2π, 2π] range */
-            if (g_mixer_phase > 2.0 * M_PI) g_mixer_phase -= 2.0 * M_PI;
-            if (g_mixer_phase < -2.0 * M_PI) g_mixer_phase += 2.0 * M_PI;
-        }
-
-        /* Step 3: Lowpass filter I and Q separately
+        /* Step 2: Lowpass filter I and Q separately
          * This isolates the signal at DC (our tuned frequency)
          * and rejects off-center stations within the bandwidth */
         float I_filt = lowpass_process(&g_lowpass_i, I);
@@ -280,9 +275,15 @@ static void stream_callback(
             /* Store in output buffer */
             g_audio_out[g_audio_out_count++] = (int16_t)audio;
 
-            /* Step 6: Output to speakers when buffer full */
+            /* Step 6: Output when buffer full */
             if (g_audio_out_count >= AUDIO_BUFFER_SIZE) {
-                audio_write(g_audio_out, g_audio_out_count);
+                if (g_stdout_mode) {
+                    fwrite(g_audio_out, sizeof(int16_t), g_audio_out_count, stdout);
+                    fflush(stdout);
+                }
+                if (g_audio_enabled) {
+                    audio_write(g_audio_out, g_audio_out_count);
+                }
                 g_audio_out_count = 0;
             }
         }
@@ -312,7 +313,7 @@ static void event_callback(
                            sdrplay_api_Update_Ctrl_OverloadMsgAck,
                            sdrplay_api_Update_Ext1_None);
         if (params->powerOverloadParams.powerOverloadChangeType == sdrplay_api_Overload_Detected) {
-            printf("[OVERLOAD]\n");
+            LOG("[OVERLOAD]\n");
         }
     }
 }
@@ -323,7 +324,7 @@ static void event_callback(
 
 static void signal_handler(int sig) {
     (void)sig;
-    printf("\nStopping...\n");
+    LOG("\nStopping...\n");
     g_running = false;
 }
 
@@ -332,11 +333,12 @@ static void signal_handler(int sig) {
  *============================================================================*/
 
 int main(int argc, char *argv[]) {
+    print_version("Phoenix SDR - AM Receiver");
+    
     sdrplay_api_ErrT err;
     float freq_mhz = DEFAULT_FREQ_MHZ;
     int gain_db = DEFAULT_GAIN_DB;
     int lna_state = 0;
-    int bw_khz = 200;
 
     /* Parse args */
     for (int i = 1; i < argc; i++) {
@@ -350,71 +352,66 @@ int main(int argc, char *argv[]) {
             lna_state = atoi(argv[++i]);
             if (lna_state < 0) lna_state = 0;
             if (lna_state > 4) lna_state = 4;
-        } else if (strcmp(argv[i], "-b") == 0 && i + 1 < argc) {
-            bw_khz = atoi(argv[++i]);
         } else if (strcmp(argv[i], "-v") == 0 && i + 1 < argc) {
             g_volume = (float)atof(argv[++i]);
-        } else if (strcmp(argv[i], "-i") == 0 && i + 1 < argc) {
-            int if_mode = atoi(argv[++i]);
-            g_use_lif = (if_mode == 450);
+        } else if (strcmp(argv[i], "-o") == 0) {
+            g_stdout_mode = true;
+        } else if (strcmp(argv[i], "-a") == 0) {
+            g_audio_enabled = false;  /* -a = disable audio (mute) */
         } else if (strcmp(argv[i], "-h") == 0) {
             printf("Simple AM Receiver for WWV\n");
-            printf("Usage: %s [-f freq_mhz] [-g gain_db] [-l lna_state] [-b bw_khz] [-v volume] [-i if_mode]\n", argv[0]);
+            printf("Usage: %s [-f freq_mhz] [-g gain_db] [-l lna_state] [-v volume] [-o] [-a]\n", argv[0]);
             printf("  -f  Frequency in MHz (default: %.1f)\n", DEFAULT_FREQ_MHZ);
+            printf("      Tip: Offset by 450 Hz to avoid DC hole (e.g., 10.000450 for 10 MHz)\n");
             printf("  -g  Gain reduction 20-59 dB (default: %d)\n", DEFAULT_GAIN_DB);
             printf("  -l  LNA state 0-4 for Hi-Z port (default: 0)\n");
-            printf("  -b  Bandwidth: 200, 300, 600, 1536, 5000, 6000, 7000, 8000 kHz (default: 200)\n");
             printf("  -v  Volume (default: %.1f)\n", g_volume);
-            printf("  -i  IF mode: 0=Zero-IF, 450=Low-IF (default: 0)\n");
+            printf("  -o  Output raw PCM to stdout (for waterfall)\n");
+            printf("  -a  Mute audio (disable speakers)\n");
+            printf("\nRF bandwidth: 6 kHz (fixed)\n");
             return 0;
         }
     }
 
-    /* Map bandwidth to API enum */
-    sdrplay_api_Bw_MHzT bw_type;
-    switch (bw_khz) {
-        case 200:  bw_type = sdrplay_api_BW_0_200; break;
-        case 300:  bw_type = sdrplay_api_BW_0_300; break;
-        case 600:  bw_type = sdrplay_api_BW_0_600; break;
-        case 1536: bw_type = sdrplay_api_BW_1_536; break;
-        case 5000: bw_type = sdrplay_api_BW_5_000; break;
-        case 6000: bw_type = sdrplay_api_BW_6_000; break;
-        case 7000: bw_type = sdrplay_api_BW_7_000; break;
-        case 8000: bw_type = sdrplay_api_BW_8_000; break;
-        default:   bw_type = sdrplay_api_BW_0_200; bw_khz = 200; break;
-    }
-
-    printf("Simple AM Receiver\n");
-    printf("Frequency: %.3f MHz\n", freq_mhz);
-    printf("Gain reduction: %d dB\n", gain_db);
-    printf("LNA state: %d\n", lna_state);
-    printf("Bandwidth: %d kHz\n", bw_khz);
-    printf("IF mode: %s\n", g_use_lif ? "Low-IF (450 kHz)" : "Zero-IF");
-    printf("Volume: %.1f\n\n", g_volume);
+    LOG("Simple AM Receiver\n");
+    LOG("Frequency: %.3f MHz\n", freq_mhz);
+    LOG("Gain reduction: %d dB\n", gain_db);
+    LOG("LNA state: %d\n", lna_state);
+    LOG("RF bandwidth: 6 kHz (fixed)\n");
+    LOG("Audio: %s\n", g_audio_enabled ? "speakers" : "muted");
+    LOG("Waterfall: %s\n", g_stdout_mode ? "stdout (raw PCM)" : "off");
+    LOG("Volume: %.1f\n\n", g_volume);
 
     signal(SIGINT, signal_handler);
 
-    /* Initialize DSP - lowpass I and Q at 3 kHz (isolates WWV at DC, rejects off-center stations) */
+    /* Initialize DSP - lowpass I and Q at 3 kHz (gives 6 kHz RF bandwidth) */
     lowpass_init(&g_lowpass_i, IQ_FILTER_CUTOFF, SDR_SAMPLE_RATE);
     lowpass_init(&g_lowpass_q, IQ_FILTER_CUTOFF, SDR_SAMPLE_RATE);
     dc_block_init(&g_dc_block);
 
-    /* Initialize mixer for Low-IF mode (negative frequency to shift down) */
-    g_mixer_phase = 0.0;
-    g_mixer_phase_inc = -2.0 * M_PI * LIF_FREQUENCY / SDR_SAMPLE_RATE;
-
-    /* Initialize audio */
-    if (!audio_init()) {
-        fprintf(stderr, "Failed to initialize audio\n");
-        return 1;
+    /* Initialize audio if enabled */
+    if (g_audio_enabled) {
+        if (!audio_init()) {
+            fprintf(stderr, "Failed to initialize audio\n");
+            return 1;
+        }
+        LOG("Audio initialized (%.0f Hz)\n", AUDIO_SAMPLE_RATE);
     }
-    printf("Audio initialized (%.0f Hz)\n", AUDIO_SAMPLE_RATE);
+
+    /* Set up stdout for PCM if waterfall mode */
+    if (g_stdout_mode) {
+        LOG("PCM output: 48000 Hz, 16-bit signed, mono\n");
+#ifdef _WIN32
+        /* Set stdout to binary mode on Windows */
+        _setmode(_fileno(stdout), _O_BINARY);
+#endif
+    }
 
     /* Open SDRplay API */
     err = sdrplay_api_Open();
     if (err != sdrplay_api_Success) {
         fprintf(stderr, "sdrplay_api_Open failed: %s\n", sdrplay_api_GetErrorString(err));
-        audio_close();
+        if (g_audio_enabled) audio_close();
         return 1;
     }
 
@@ -425,19 +422,19 @@ int main(int argc, char *argv[]) {
     if (err != sdrplay_api_Success || numDevs == 0) {
         fprintf(stderr, "No SDRplay devices found\n");
         sdrplay_api_Close();
-        audio_close();
+        if (g_audio_enabled) audio_close();
         return 1;
     }
 
     g_device = devices[0];
-    printf("Device: %s\n", g_device.SerNo);
+    LOG("Device: %s\n", g_device.SerNo);
 
     /* Select device */
     err = sdrplay_api_SelectDevice(&g_device);
     if (err != sdrplay_api_Success) {
         fprintf(stderr, "sdrplay_api_SelectDevice failed: %s\n", sdrplay_api_GetErrorString(err));
         sdrplay_api_Close();
-        audio_close();
+        if (g_audio_enabled) audio_close();
         return 1;
     }
 
@@ -447,7 +444,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "sdrplay_api_GetDeviceParams failed\n");
         sdrplay_api_ReleaseDevice(&g_device);
         sdrplay_api_Close();
-        audio_close();
+        if (g_audio_enabled) audio_close();
         return 1;
     }
 
@@ -456,8 +453,8 @@ int main(int argc, char *argv[]) {
 
     sdrplay_api_RxChannelParamsT *ch = g_params->rxChannelA;
     ch->tunerParams.rfFreq.rfHz = freq_mhz * 1e6;
-    ch->tunerParams.bwType = bw_type;
-    ch->tunerParams.ifType = g_use_lif ? sdrplay_api_IF_0_450 : sdrplay_api_IF_Zero;
+    ch->tunerParams.bwType = sdrplay_api_BW_0_200;  /* Minimum BW; I/Q filter is tighter */
+    ch->tunerParams.ifType = sdrplay_api_IF_Zero;  /* Zero-IF mode */
     ch->tunerParams.gain.gRdB = gain_db;
     ch->tunerParams.gain.LNAstate = (unsigned char)lna_state;
 
@@ -469,8 +466,8 @@ int main(int argc, char *argv[]) {
     ch->rsp2TunerParams.amPortSel = sdrplay_api_Rsp2_AMPORT_1;
     ch->rsp2TunerParams.antennaSel = sdrplay_api_Rsp2_ANTENNA_A;
 
-    printf("Configured: %.3f MHz, BW=%d kHz, Gain=%d dB, LNA=%d\n",
-           freq_mhz, bw_khz, gain_db, lna_state);
+    LOG("Configured: %.3f MHz, RF BW=6 kHz, Gain=%d dB, LNA=%d\n",
+           freq_mhz, gain_db, lna_state);
 
     /* Set up callbacks */
     sdrplay_api_CallbackFnsT callbacks;
@@ -484,11 +481,11 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "sdrplay_api_Init failed: %s\n", sdrplay_api_GetErrorString(err));
         sdrplay_api_ReleaseDevice(&g_device);
         sdrplay_api_Close();
-        audio_close();
+        if (g_audio_enabled) audio_close();
         return 1;
     }
 
-    printf("\nListening... (Ctrl+C to stop)\n");
+    LOG("\nListening... (Ctrl+C to stop)\n");
 
     /* Run until interrupted */
     while (g_running) {
@@ -499,8 +496,8 @@ int main(int argc, char *argv[]) {
     sdrplay_api_Uninit(g_device.dev);
     sdrplay_api_ReleaseDevice(&g_device);
     sdrplay_api_Close();
-    audio_close();
+    if (g_audio_enabled) audio_close();
 
-    printf("Done.\n");
+    LOG("Done.\n");
     return 0;
 }

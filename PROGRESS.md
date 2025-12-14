@@ -1,10 +1,10 @@
 # Phoenix SDR - Progress & Status
 
-**Last Updated:** 2025-12-13 ~17:30 EST
+**Last Updated:** 2025-12-13 ~21:00 EST
 
-## Current Status: 🟡 IN PROGRESS
+## Current Status: 🟢 TOOLS WORKING
 
-**Current Task:** Edge detection diagnostics - need to rebuild wwv_scan.c and run diagnostics to find why edge detection isn't triggering.
+**Current Task:** Simple AM receiver and waterfall display with tick detection are functional. Ready for live WWV testing.
 
 ## What We're Trying To Do
 
@@ -30,85 +30,88 @@ This is a smoke test. If we can detect WWV ticks reliably, we know:
 | DSP Math | ✅ | Unit tests pass 10/10 |
 | Build System | ✅ | PowerShell + MinGW |
 | Version Header | ✅ | v0.2.0 |
-| DC Offset Fix | ✅ | Removed corruption from decimator |
-| Tick Window | ✅ | Narrowed to 0-10ms |
-| Voice Window Filter | ✅ | s01-28, s52-58 clean |
-| PPS Offset Calibration | ✅ | -440ms default |
-| GPS Resync | ✅ | Thread-safe handoff |
-| Interactive Mode | ✅ | Live bucket display, key controls |
-| WWV-Disciplined Mode | ✅ | Toggle with 'G' key |
+| Simple AM Receiver | ✅ | Zero-IF + 450Hz offset, 6kHz RF BW, audio + waterfall output |
+| Waterfall Display | ✅ | 1024x800, auto-gain, tick detection with 7 frequency bands |
+
+## New Tools (This Session)
+
+### simple_am_receiver.exe
+Standalone AM receiver for WWV with audio output and waterfall pipe.
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-f` | Frequency in MHz | 15.0 |
+| `-g` | Gain reduction 20-59 dB | 40 |
+| `-l` | LNA state 0-4 | 0 |
+| `-v` | Volume | 50.0 |
+| `-o` | Output PCM to stdout (for waterfall) | off |
+| `-a` | Mute audio (disable speakers) | off |
+| | RF bandwidth | 6 kHz (fixed) |
+
+**DSP Pipeline:**
+1. IQ samples from SDRplay (2 MHz)
+2. Lowpass filter I/Q at 3 kHz (gives 6 kHz RF bandwidth)
+3. Envelope detection: magnitude = sqrt(I² + Q²)
+4. Decimation: 2 MHz → 48 kHz
+5. DC removal: highpass IIR
+6. Output: speakers and/or stdout
+
+### waterfall.exe
+FFT waterfall display with WWV tick detection.
+
+| Key | Frequency | Bandwidth | Signal |
+|-----|-----------|-----------|--------|
+| 0 | - | - | Gain adjustment |
+| 1 | 100 Hz | ±10 Hz | BCD subcarrier |
+| 2 | 440 Hz | ±5 Hz | Calibration tone |
+| 3 | 500 Hz | ±5 Hz | Minute marker |
+| 4 | 600 Hz | ±5 Hz | Station ID |
+| 5 | 1000 Hz | ±100 Hz | Second tick (5ms pulse) |
+| 6 | 1200 Hz | ±100 Hz | WWVH tick (5ms pulse) |
+| 7 | 1500 Hz | ±20 Hz | 800ms tone |
+
+**Features:**
+- Window: 1024×800
+- FFT: 1024 bins (46.9 Hz/bin)
+- Auto-gain with attack/decay
+- Sideband folding (combines +freq and -freq)
+- Red dot markers when energy exceeds threshold
+- Keys: `0-7` select parameter, `+/-` adjust, `Q/Esc` quit
+
+**Usage:**
+```powershell
+cmd /c ".\bin\simple_am_receiver.exe -g 50 -l 2 -f 10.000450 -o | .\bin\waterfall.exe"
+```
 
 ## What's In Progress 🟡
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Edge Detection | 🟡 | Implemented but not triggering - diagnostics added |
-| Build System | 🟡 | Not rebuilding wwv_scan.c (cache issue) |
+| Tick Detection Tuning | 🟡 | Thresholds need calibration with live signal |
+| Edge Detection (wwv_scan) | 🟡 | Original approach paused; new tools working |
 
-## Recent Bug Fixes (This Session)
+## Recent Changes (This Session)
 
-| Bug | Symptom | Root Cause | Fix |
-|-----|---------|------------|-----|
-| DC offset corruption | Signal corrupted | Decimator init bug | Fixed in decimator.c |
-| Decimator gain | Wrong output levels | Missing gain compensation | Fixed gain calculation |
-| Display copy race | `mx0.0000` always | Values reset before display | Added `_display` copy variables |
-| Printf format | `mx0.0000` for valid data | `%.4f` rounds small numbers | Changed to `%.2e` |
-| Wrong threshold scale | Edge never triggers | Default 0.002 but derivatives ~1e-5 | Changed default to 5e-6 |
+### Simple AM Receiver Cleanup
+- Removed confusing `-b` (SDRplay hardware BW) and `-bp` flags
+- Fixed 6 kHz RF bandwidth (3 kHz I/Q lowpass, hardcoded)
+- Added `-a` flag to mute audio while keeping waterfall output
+- Zero-IF mode with +450 Hz offset to avoid DC hole
 
-## Edge Detection Implementation
-
-Added to `wwv_scan.c`:
-
-1. **Moving Average Filter** (48 samples = 1ms at 48kHz)
-   ```c
-   float envelope_smoothed = ma_process(fabsf(filtered));
-   ```
-
-2. **Derivative-Based Edge Detection**
-   ```c
-   float derivative = envelope_smoothed - g_prev_envelope;
-   if (derivative > g_edge_threshold && envelope_smoothed > g_noise_floor * 3.0f) {
-       g_tick_sample_pos = adjusted_pos;
-       g_tick_detected = true;
-   }
-   ```
-
-3. **Noise Floor Estimation** (200-800ms window)
-   ```c
-   g_noise_floor = 0.999f * g_noise_floor + 0.001f * envelope_smoothed;
-   ```
-
-4. **Diagnostic Output**
-   ```
-   15.0MHz G G40 O-440 T5e-06 ||#------------------| s05   NO-EDGE mx1.23e-05 H 0% C 0%
-     [EDGE-DBG] maxD@250ms env=5.00e-04 nf=1.00e-03 nf*3=3.00e-03 thresh=5.00e-06 | deriv:PASS env:FAIL win:FAIL
-   ```
-
-5. **New Keyboard Controls**
-   - `[` = decrease threshold (more sensitive)
-   - `]` = increase threshold (less sensitive)
-
-## Next Action
-
-**Rebuild and run diagnostics:**
-```powershell
-Remove-Item .\build\wwv_scan.o -ErrorAction SilentlyContinue
-.\build.ps1 -Target tools
-.\bin\wwv_scan.exe -i
-```
-
-The diagnostic output will show which condition blocks edge detection:
-- `deriv:FAIL` → derivative below threshold
-- `env:FAIL` → envelope below noise_floor * 3
-- `win:FAIL` → max derivative outside 0-100ms tick window
+### Waterfall Tick Detection
+- Added 7 WWV frequency bands with specific bandwidths
+- Narrow bands (±5 Hz) for pure tones (440, 500, 600 Hz)
+- Wide bands (±100 Hz) for short pulses (1000, 1200 Hz)
+- Sideband folding: energy = mag[+freq] + mag[-freq]
+- Threshold-based detection with red dot markers
+- Keyboard control for threshold adjustment
 
 ## Files Changed Today
 
-- `tools/wwv_scan.c` - Edge detection, moving average, diagnostics
-- `src/decimator.c` - DC offset fix, gain bug fix
-- `src/gps_serial.c` - Millisecond parsing, thread-safe resync
-- `src/sdr_stream.c` - DC/IQ correction enable
-- `docs/fldigi_wwv_analysis.md` - FLDIGI research, implementation progress
+- `tools/simple_am_receiver.c` - Cleanup: removed -b/-bp flags, fixed 6kHz BW, added -a mute
+- `tools/waterfall.c` - Added 7-band tick detection with sideband folding
+- `src/decimator.c` - DC offset fix, gain bug fix (earlier)
+- `src/gps_serial.c` - Millisecond parsing, thread-safe resync (earlier)
 
 ## Build Commands
 
@@ -117,8 +120,15 @@ cd D:\claude_sandbox\phoenix_sdr
 .\build.ps1 -Clean
 .\build.ps1
 .\build.ps1 -Target tools
-.\bin\wwv_scan.exe -i          # Interactive mode
-.\bin\wwv_scan.exe -scantime 5 # Scan mode
+
+# Run AM receiver with waterfall
+cmd /c ".\bin\simple_am_receiver.exe -g 50 -l 2 -f 10.000450 -o | .\bin\waterfall.exe"
+
+# Audio only (no waterfall)
+.\bin\simple_am_receiver.exe -g 50 -l 2 -f 10.000450
+
+# Waterfall only (mute audio)
+cmd /c ".\bin\simple_am_receiver.exe -g 50 -l 2 -f 10.000450 -o -a | .\bin\waterfall.exe"
 ```
 
 ## Hardware
@@ -127,19 +137,33 @@ cd D:\claude_sandbox\phoenix_sdr
 - **GPS:** NEO-6M on Arduino (COM6, 115200 baud)
 - **Antenna:** HF antenna on Hi-Z port
 
-## Interactive Mode Keys
+## Waterfall Keys
 
 | Key | Function |
 |-----|----------|
-| 1-6 | Select frequency (2.5, 5, 10, 15, 20, 25 MHz) |
-| +/- | Adjust PPS offset ±10ms |
-| </> | Adjust gain ±3dB |
-| [/] | Adjust edge threshold ×0.8/×1.25 |
-| G | Toggle GPS/WWV discipline mode |
-| R | Reset offset to -440ms |
-| Q | Quit |
+| 0 | Select gain adjustment |
+| 1 | Select 100 Hz (BCD) threshold |
+| 2 | Select 440 Hz (Cal) threshold |
+| 3 | Select 500 Hz (Min) threshold |
+| 4 | Select 600 Hz (ID) threshold |
+| 5 | Select 1000 Hz (Tick) threshold |
+| 6 | Select 1200 Hz (WWVH) threshold |
+| 7 | Select 1500 Hz (Tone) threshold |
+| +/- | Adjust selected parameter |
+| Q/Esc | Quit |
 
 ## Session History
+
+### This Session (Evening)
+- Created simple_am_receiver.c - standalone AM receiver
+- Created waterfall.c - FFT display with SDL2 + KissFFT
+- Fixed LIF mode bug (signal at -450 kHz not +450 kHz) - switched to Zero-IF
+- Added auto-gain to waterfall
+- Added manual gain control (+/- keys)
+- Doubled display to 1024x800
+- Removed -b and -bp flags (confusing, not needed)
+- Added 7-band tick detection with proper bandwidths
+- Added sideband folding for AM signal
 
 ### Earlier Today
 - Fixed DC offset corruption in decimator
@@ -153,13 +177,5 @@ cd D:\claude_sandbox\phoenix_sdr
 - Fixed thread-safe resync
 - Calibrated PPS offset (-440ms)
 - Fixed race condition in display
-
-### This Session
-- Researched FLDIGI WWV implementation (it's visual only, no algorithm to port)
-- Implemented edge detection approach
-- Added moving average filter
-- Added derivative-based tick detection
-- Fixed printf format bug (%.4f → %.2e)
-- Fixed display copy race condition
-- Added comprehensive diagnostics
-- Current blocker: build not rebuilding wwv_scan.c
+- Researched FLDIGI WWV implementation
+- Implemented edge detection approach (paused)

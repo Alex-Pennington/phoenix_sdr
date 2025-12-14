@@ -1,0 +1,137 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Trigger on version tags like v0.2.1
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  build:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for git commit hash
+    
+    - name: Install MinGW
+      uses: egor-tensin/setup-mingw@v2
+      with:
+        platform: x64
+    
+    - name: Download SDL2
+      shell: powershell
+      run: |
+        # Download SDL2 development libraries
+        $sdlVersion = "2.30.9"
+        $sdlUrl = "https://github.com/libsdl-org/SDL/releases/download/release-$sdlVersion/SDL2-devel-$sdlVersion-mingw.zip"
+        Invoke-WebRequest -Uri $sdlUrl -OutFile "SDL2.zip"
+        Expand-Archive -Path "SDL2.zip" -DestinationPath "."
+        
+        # Copy to expected location
+        New-Item -ItemType Directory -Force -Path "lib"
+        Copy-Item "SDL2-$sdlVersion\x86_64-w64-mingw32\lib\*" -Destination "lib\" -Recurse
+        Copy-Item "SDL2-$sdlVersion\x86_64-w64-mingw32\bin\SDL2.dll" -Destination "bin\" -Force
+        
+        # Copy headers
+        New-Item -ItemType Directory -Force -Path "include\SDL2"
+        Copy-Item "SDL2-$sdlVersion\x86_64-w64-mingw32\include\SDL2\*" -Destination "include\SDL2\" -Recurse
+    
+    - name: Download KissFFT
+      shell: powershell
+      run: |
+        # Download KissFFT
+        $kissfftUrl = "https://github.com/mborgerding/kissfft/archive/refs/tags/v131.zip"
+        Invoke-WebRequest -Uri $kissfftUrl -OutFile "kissfft.zip"
+        Expand-Archive -Path "kissfft.zip" -DestinationPath "."
+        
+        # Copy to expected location
+        New-Item -ItemType Directory -Force -Path "lib\kissfft"
+        Copy-Item "kissfft-131\kiss_fft.h" -Destination "lib\kissfft\"
+        Copy-Item "kissfft-131\kiss_fft.c" -Destination "lib\kissfft\"
+    
+    - name: Setup SDRplay API headers (stub)
+      shell: powershell
+      run: |
+        # Note: SDRplay API requires manual installation on end-user machines
+        # For CI, we create stub headers to allow compilation
+        # The actual API DLL must be installed separately
+        
+        New-Item -ItemType Directory -Force -Path "include\sdrplay"
+        
+        # Create minimal stub header for compilation
+        @"
+        // SDRplay API stub for CI builds
+        // Real API must be installed from https://www.sdrplay.com/api/
+        #ifndef SDRPLAY_API_H
+        #define SDRPLAY_API_H
+        
+        #include <stdint.h>
+        
+        // Minimal type definitions for compilation
+        typedef void* HANDLE;
+        typedef int sdrplay_api_ErrT;
+        typedef int sdrplay_api_DbgLvl_t;
+        
+        // Error codes
+        #define sdrplay_api_Success 0
+        #define sdrplay_api_Fail 1
+        
+        // Stub function declarations would go here
+        // Actual implementation requires SDRplay API installation
+        
+        #endif
+        "@ | Out-File -FilePath "include\sdrplay\sdrplay_api.h" -Encoding UTF8
+        
+        Write-Host "Note: SDRplay API stub created. Real API required for actual use."
+    
+    - name: Build Release
+      shell: powershell
+      run: |
+        # Build with release optimizations
+        .\build.ps1 -Release
+    
+    - name: Package Release
+      shell: powershell
+      run: |
+        # Get version from tag or version.h
+        $version = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "dev" }
+        
+        # Create release package
+        $packageName = "phoenix_sdr-$version-win64"
+        New-Item -ItemType Directory -Force -Path "release\$packageName"
+        
+        # Copy executables
+        Copy-Item "bin\*.exe" -Destination "release\$packageName\" -ErrorAction SilentlyContinue
+        
+        # Copy required DLLs
+        Copy-Item "bin\SDL2.dll" -Destination "release\$packageName\" -ErrorAction SilentlyContinue
+        
+        # Copy documentation
+        Copy-Item "README.md" -Destination "release\$packageName\" -ErrorAction SilentlyContinue
+        Copy-Item "docs\BETA_TESTING_GUIDE.md" -Destination "release\$packageName\" -ErrorAction SilentlyContinue
+        
+        # Create zip
+        Compress-Archive -Path "release\$packageName" -DestinationPath "release\$packageName.zip"
+        
+        Write-Host "Created release package: release\$packageName.zip"
+    
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: phoenix_sdr-build
+        path: release/*.zip
+        retention-days: 30
+    
+    - name: Create GitHub Release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: release/*.zip
+        draft: false
+        prerelease: ${{ contains(github.ref, '-alpha') || contains(github.ref, '-beta') || contains(github.ref, '-rc') }}
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

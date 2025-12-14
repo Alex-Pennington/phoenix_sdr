@@ -44,7 +44,7 @@ function Generate-VersionHeader {
     } catch { }
     
     $dirtyFlag = if ($dirty) { "-dirty" } else { "" }
-    $versionString = "0.1.0"
+    $versionString = "0.2.4"
     $fullVersion = "$versionString+ci.$commit$dirtyFlag"
     
     $content = @"
@@ -57,8 +57,8 @@ function Generate-VersionHeader {
 #define PHOENIX_VERSION_H
 
 #define PHOENIX_VERSION_MAJOR   0
-#define PHOENIX_VERSION_MINOR   1
-#define PHOENIX_VERSION_PATCH   0
+#define PHOENIX_VERSION_MINOR   2
+#define PHOENIX_VERSION_PATCH   4
 #define PHOENIX_VERSION_BUILD   0
 #define PHOENIX_VERSION_STRING  "$versionString"
 #define PHOENIX_VERSION_FULL    "$fullVersion"

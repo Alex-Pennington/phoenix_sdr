@@ -78,11 +78,11 @@ $verBuild++
 
 $versionString = "$verMajor.$verMinor.$verPatch"
 
-Write-Status "New version: $versionString+$build"
+Write-Status "New version: $versionString+$verBuild"
 
 if ($DryRun) {
     Write-Status "[DRY RUN] Would update version.h, commit, tag, and push"
-    Write-Status "[DRY RUN] Tag would be: v$versionString+$build.<commit>"
+    Write-Status "[DRY RUN] Tag would be: v$versionString+$verBuild.<commit>"
     exit 0
 }
 
@@ -104,12 +104,12 @@ $newContent = @"
 #ifndef PHOENIX_VERSION_H
 #define PHOENIX_VERSION_H
 
-#define PHOENIX_VERSION_MAJOR   $major
-#define PHOENIX_VERSION_MINOR   $minor
-#define PHOENIX_VERSION_PATCH   $patch
-#define PHOENIX_VERSION_BUILD   $build
+#define PHOENIX_VERSION_MAJOR   $verMajor
+#define PHOENIX_VERSION_MINOR   $verMinor
+#define PHOENIX_VERSION_PATCH   $verPatch
+#define PHOENIX_VERSION_BUILD   $verBuild
 #define PHOENIX_VERSION_STRING  "$versionString"
-#define PHOENIX_VERSION_FULL    "$versionString+$build.PENDING"
+#define PHOENIX_VERSION_FULL    "$versionString+$verBuild.PENDING"
 #define PHOENIX_GIT_COMMIT      "PENDING"
 #define PHOENIX_GIT_DIRTY       false
 
@@ -133,7 +133,7 @@ Write-Status "Updated version.h"
 
 # Commit
 git add $VersionFile
-git commit -m "v$versionString build $build"
+git commit -m "v$versionString build $verBuild"
 Write-Status "Committed"
 
 # Get the actual commit hash
@@ -141,7 +141,7 @@ $commit = (git rev-parse --short HEAD).Trim()
 
 # Update version.h with real commit hash
 $content = Get-Content $VersionFile -Raw
-$content = $content -replace 'PHOENIX_VERSION_FULL\s+"[^"]+"', "PHOENIX_VERSION_FULL    `"$versionString+$build.$commit`""
+$content = $content -replace 'PHOENIX_VERSION_FULL\s+"[^"]+"', "PHOENIX_VERSION_FULL    `"$versionString+$verBuild.$commit`""
 $content = $content -replace 'PHOENIX_GIT_COMMIT\s+"[^"]+"', "PHOENIX_GIT_COMMIT      `"$commit`""
 Set-Content -Path $VersionFile -Value $content -NoNewline
 
@@ -158,7 +158,7 @@ Write-Status "Pushed to origin"
 $finalCommit = (git rev-parse --short HEAD).Trim()
 
 # Create and push tag
-$tag = "v$versionString+$build.$finalCommit"
+$tag = "v$versionString+$verBuild.$finalCommit"
 git tag $tag -m $tag
 git push origin $tag
 Write-Status "Created and pushed tag: $tag"

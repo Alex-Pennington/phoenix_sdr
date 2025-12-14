@@ -45,38 +45,38 @@ if ($status) {
 
 # Read current version
 $content = Get-Content $VersionFile -Raw
-$major = 0; $minor = 0; $patch = 0; $build = 0
+$verMajor = 0; $verMinor = 0; $verPatch = 0; $verBuild = 0
 
-if ($content -match 'PHOENIX_VERSION_MAJOR\s+(\d+)') { $major = [int]$matches[1] }
-if ($content -match 'PHOENIX_VERSION_MINOR\s+(\d+)') { $minor = [int]$matches[1] }
-if ($content -match 'PHOENIX_VERSION_PATCH\s+(\d+)') { $patch = [int]$matches[1] }
-if ($content -match 'PHOENIX_VERSION_BUILD\s+(\d+)') { $build = [int]$matches[1] }
+if ($content -match 'PHOENIX_VERSION_MAJOR\s+(\d+)') { $verMajor = [int]$matches[1] }
+if ($content -match 'PHOENIX_VERSION_MINOR\s+(\d+)') { $verMinor = [int]$matches[1] }
+if ($content -match 'PHOENIX_VERSION_PATCH\s+(\d+)') { $verPatch = [int]$matches[1] }
+if ($content -match 'PHOENIX_VERSION_BUILD\s+(\d+)') { $verBuild = [int]$matches[1] }
 
-$oldVersion = "$major.$minor.$patch+$build"
+$oldVersion = "$verMajor.$verMinor.$verPatch+$verBuild"
 Write-Status "Current version: $oldVersion"
 
 # Increment version
 if ($Major) {
-    $major++
-    $minor = 0
-    $patch = 0
-    $build = 0
+    $verMajor++
+    $verMinor = 0
+    $verPatch = 0
+    $verBuild = 0
     Write-Status "Incrementing MAJOR version"
 } elseif ($Minor) {
-    $minor++
-    $patch = 0
-    $build = 0
+    $verMinor++
+    $verPatch = 0
+    $verBuild = 0
     Write-Status "Incrementing MINOR version"
 } elseif ($Patch) {
-    $patch++
-    $build = 0
+    $verPatch++
+    $verBuild = 0
     Write-Status "Incrementing PATCH version"
 }
 
 # Always increment build
-$build++
+$verBuild++
 
-$versionString = "$major.$minor.$patch"
+$versionString = "$verMajor.$verMinor.$verPatch"
 
 Write-Status "New version: $versionString+$build"
 

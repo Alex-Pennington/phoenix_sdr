@@ -107,7 +107,7 @@ Reads PCM from stdin. Displays spectrum with tick detection.
 
 ## Version
 
-Beta 1.0 — Hardware validation release
+Beta 0.2.4+8.2c99002  — Hardware validation release
 
 Phoenix Nest MARS Suite
 KY4OLB

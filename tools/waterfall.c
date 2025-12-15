@@ -1059,9 +1059,9 @@ int main(int argc, char *argv[]) {
             int bar_x = WATERFALL_WIDTH + f * bar_width + bar_gap;
             int bar_w = bar_width - bar_gap * 2;
 
-            /* Fixed dB scale: -80 to -20 dB */
+            /* Use waterfall's tracked dB scale */
             float db = 20.0f * log10f(g_bucket_energy[f] + 1e-10f);
-            float norm = (db - (-80.0f)) / ((-20.0f) - (-80.0f));
+            float norm = (db - g_floor_db) / (g_peak_db - g_floor_db);
             if (norm < 0.0f) norm = 0.0f;
             if (norm > 1.0f) norm = 1.0f;
 

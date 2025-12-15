@@ -14,10 +14,10 @@
 #define PHOENIX_VERSION_MAJOR   0
 #define PHOENIX_VERSION_MINOR   3
 #define PHOENIX_VERSION_PATCH   0
-#define PHOENIX_VERSION_BUILD   60
+#define PHOENIX_VERSION_BUILD   62
 #define PHOENIX_VERSION_STRING  "0.3.0"
-#define PHOENIX_VERSION_FULL    "0.3.0+60.9871558-dirty"
-#define PHOENIX_GIT_COMMIT      "9871558"
+#define PHOENIX_VERSION_FULL    "0.3.0+62.511740f-dirty"
+#define PHOENIX_GIT_COMMIT      "511740f"
 #define PHOENIX_GIT_DIRTY       true
 
 /* Build timestamp - set by compiler */

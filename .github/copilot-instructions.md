@@ -12,6 +12,21 @@
 
 3. **Stick to the exact scope of the request.** If asked to fix X, fix X only.
 
+4. **ONE CHANGE AT A TIME.** Do not batch multiple changes together.
+   - Make one change, let user test it
+   - If it doesn't work or causes problems, it's easy to revert
+   - Never make 6 changes when user asked for 1
+
+5. **SUGGEST, THEN ASK.** Before implementing anything:
+   - Explain what you think needs to happen
+   - Ask the user if they want you to proceed
+   - Wait for confirmation before touching any code
+
+6. **KNOW BEFORE YOU ACT.** Before using git commands or editing files:
+   - Check the current state first (git status, git log, read the file)
+   - Verify what you're reverting TO, not just FROM
+   - Never run destructive commands blindly
+
 ---
 
 ## READ THIS FIRST

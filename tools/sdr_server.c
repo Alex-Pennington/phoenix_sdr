@@ -557,7 +557,7 @@ static void on_gain_change(double gain_db, int lna_gr_db, void *user_ctx) {
 
         /* Log the hardware-reported values for debugging */
         printf("[SDR] Gain changed: GR=%.0f dB, LNA_GR=%d dB\n", gain_db, lna_gr_db);
-        
+
         /* Send notification with actual hardware values (informational only) */
         tcp_send_notification(state, "! GAIN_CHANGE GR_ACTUAL=%d LNA_GR=%d",
                               (int)gain_db, lna_gr_db);

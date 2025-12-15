@@ -638,13 +638,13 @@ tcp_error_t tcp_execute_command(
             strncpy(old_antenna, state->antenna, sizeof(old_antenna) - 1);
             old_antenna[7] = '\0';
             strncpy(state->antenna, cmd->value.antenna.port, sizeof(state->antenna) - 1);
-            
+
             /* If switching to Hi-Z, clamp LNA state to valid range (0-4) */
             int old_lna = state->lna_state;
             if (strcmp(state->antenna, "HIZ") == 0 && state->lna_state > 4) {
                 state->lna_state = 4;
             }
-            
+
             hw_err = apply_config_to_hardware(state);
             if (hw_err != TCP_OK) {
                 strncpy(state->antenna, old_antenna, sizeof(state->antenna) - 1);  /* Restore */

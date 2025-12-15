@@ -29,6 +29,27 @@
 
 ---
 
+## P1 - FROZEN FILES
+
+**Do not alter any frozen files.** These files are working correctly and must not be changed.
+
+| File | Reason |
+|------|--------|
+| `tools/waterfall.c` | Waterfall display is working - audio chain moved to separate file |
+
+---
+
+## P2 - WATERFALL/AUDIO ISOLATION
+
+In `tools/waterfall.c`, the **display path** and **audio path** must never share variables or filters.
+
+- Display path uses: `g_display_lowpass_i`, `g_display_lowpass_q`, `g_display_dc_block`, `pcm_buffer`
+- Audio path uses: `g_audio_lowpass_i`, `g_audio_lowpass_q`, `g_audio_dc_block`, `g_audio_out`
+- Both paths receive the same raw `i_raw`, `q_raw` input - that is the ONLY shared data
+- **Never** let audio code touch display variables or vice versa
+
+---
+
 ## READ THIS FIRST
 
 You are helping debug a **WWV signal detection problem**. This is part of a larger project (MIL-STD-188-110A HF modem), but right now the ONLY goal is:

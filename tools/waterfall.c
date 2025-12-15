@@ -1,3 +1,8 @@
+/*******************************************************************************
+ * FROZEN FILE - DO NOT MODIFY
+ * See .github/copilot-instructions.md P1 section
+ ******************************************************************************/
+
 /**
  * @file waterfall.c
  * @brief Simple waterfall display for audio PCM input
@@ -172,51 +177,17 @@ static float dc_block_process(dc_block_t *dc, float x) {
     return y;
 }
 
-/* DSP filter instances */
-static lowpass_t g_lowpass_i;
-static lowpass_t g_lowpass_q;
-static dc_block_t g_dc_block;
-static bool g_dsp_initialized = false;
+/* DSP filter instances - DISPLAY PATH (see P2 in copilot-instructions.md) */
+static lowpass_t g_display_lowpass_i;
+static lowpass_t g_display_lowpass_q;
+static dc_block_t g_display_dc_block;
+static bool g_display_dsp_initialized = false;
 
-/*============================================================================
- * Audio Limiter - soft limiting to prevent harsh clipping
- *============================================================================*/
-
-typedef struct {
-    float envelope;         /* Tracked signal envelope */
-    float attack;           /* Attack time constant (fast) */
-    float release;          /* Release time constant (slower) */
-} audio_limiter_t;
-
-static audio_limiter_t g_audio_limiter;
-
-static void audio_limiter_init(audio_limiter_t *lim, float sample_rate) {
-    lim->envelope = 0.0f;
-    /* Attack ~1ms, release ~50ms for smooth limiting */
-    lim->attack = 1.0f - expf(-1.0f / (sample_rate * 0.001f));
-    lim->release = 1.0f - expf(-1.0f / (sample_rate * 0.050f));
-}
-
-static float audio_limiter_process(audio_limiter_t *lim, float sample, float threshold) {
-    /* Track envelope */
-    float abs_sample = fabsf(sample);
-    if (abs_sample > lim->envelope) {
-        lim->envelope += lim->attack * (abs_sample - lim->envelope);
-    } else {
-        lim->envelope += lim->release * (abs_sample - lim->envelope);
-    }
-    
-    /* Apply soft limiting with tanh-style curve */
-    if (lim->envelope > threshold) {
-        float gain = threshold / lim->envelope;
-        return sample * gain;
-    }
-    return sample;
-}
-
-/* Mute counter - silence audio briefly after signal level changes (e.g., LNA switch) */
-static int g_audio_mute_samples = 0;
-#define AUDIO_MUTE_ON_CHANGE_MS  50  /* 50ms mute after big changes */
+/* DSP filter instances - AUDIO PATH (see P2 in copilot-instructions.md) */
+static lowpass_t g_audio_lowpass_i;
+static lowpass_t g_audio_lowpass_q;
+static dc_block_t g_audio_dc_block;
+static bool g_audio_dsp_initialized = false;
 
 #define IQ_FILTER_CUTOFF    3000.0f     /* 3 kHz lowpass on I/Q before magnitude */
 
@@ -479,7 +450,8 @@ static bool tcp_reconnect(void) {
     }
 
     /* Reset DSP state for fresh start after reconnection */
-    g_dsp_initialized = false;
+    g_display_dsp_initialized = false;
+    g_audio_dsp_initialized = false;
     g_decim_counter = 0;
 
     printf("\n*** CONNECTION LOST - Reconnecting to %s:%d ***\n", g_tcp_host, g_iq_port);
@@ -1177,13 +1149,20 @@ int main(int argc, char *argv[]) {
                 /* Convert I/Q to magnitude and decimate - verbatim from simple_am_receiver.c */
 
                 /* Initialize DSP filters on first sample (after we know sample rate) */
-                if (!g_dsp_initialized) {
-                    lowpass_init(&g_lowpass_i, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
-                    lowpass_init(&g_lowpass_q, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
-                    dc_block_init(&g_dc_block);
-                    audio_limiter_init(&g_audio_limiter, (float)g_effective_sample_rate);
-                    g_dsp_initialized = true;
-                    printf("DSP initialized: lowpass @ %.0f Hz, sample rate = %u\n",
+                if (!g_display_dsp_initialized) {
+                    lowpass_init(&g_display_lowpass_i, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                    lowpass_init(&g_display_lowpass_q, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                    dc_block_init(&g_display_dc_block);
+                    g_display_dsp_initialized = true;
+                    printf("Display DSP initialized: lowpass @ %.0f Hz, sample rate = %u\n",
+                           IQ_FILTER_CUTOFF, g_tcp_sample_rate);
+                }
+                if (!g_audio_dsp_initialized) {
+                    lowpass_init(&g_audio_lowpass_i, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                    lowpass_init(&g_audio_lowpass_q, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                    dc_block_init(&g_audio_dc_block);
+                    g_audio_dsp_initialized = true;
+                    printf("Audio DSP initialized: lowpass @ %.0f Hz, sample rate = %u\n",
                            IQ_FILTER_CUTOFF, g_tcp_sample_rate);
                 }
 
@@ -1205,56 +1184,32 @@ int main(int argc, char *argv[]) {
                         q_raw = (float)(iq_buffer[s * 2 + 1] - 128);
                     }
 
-                    /* Lowpass filter I and Q separately (from simple_am_receiver) */
-                    float i_filt = lowpass_process(&g_lowpass_i, i_raw);
-                    float q_filt = lowpass_process(&g_lowpass_q, q_raw);
+                    /* ===== DISPLAY PATH (frozen logic - see P2) ===== */
+                    float display_i_filt = lowpass_process(&g_display_lowpass_i, i_raw);
+                    float display_q_filt = lowpass_process(&g_display_lowpass_q, q_raw);
+
+                    /* ===== AUDIO PATH (can be modified - see P2) ===== */
+                    float audio_i_filt = lowpass_process(&g_audio_lowpass_i, i_raw);
+                    float audio_q_filt = lowpass_process(&g_audio_lowpass_q, q_raw);
 
                     /* Simple decimation: keep every Nth sample */
                     g_decim_counter++;
                     if (g_decim_counter >= g_decimation_factor) {
-                        /* Compute envelope from filtered I/Q */
-                        float mag = sqrtf(i_filt * i_filt + q_filt * q_filt);
                         
-                        /* Detect sudden magnitude changes (e.g., LNA switch) */
-                        static float prev_mag = 0.0f;
-                        static float mag_avg = 0.0f;
-                        if (mag_avg > 0.0f) {
-                            float ratio = (mag > mag_avg) ? (mag / mag_avg) : (mag_avg / mag);
-                            /* If magnitude changes by >3x suddenly, mute to hide DC block transient */
-                            if (ratio > 3.0f && prev_mag > 0.0f) {
-                                g_audio_mute_samples = (int)(g_effective_sample_rate * AUDIO_MUTE_ON_CHANGE_MS / 1000);
-                                /* Also reset DC blocker to speed up settling */
-                                dc_block_init(&g_dc_block);
-                            }
-                        }
-                        /* Update running average (slow) */
-                        mag_avg = mag_avg * 0.999f + mag * 0.001f;
-                        prev_mag = mag;
-
-                        /* DC block (from simple_am_receiver) */
-                        float ac = dc_block_process(&g_dc_block, mag);
-
-                        /* Fixed scaling for FFT/waterfall display (volume-independent) */
-                        float display_sample = ac * 50.0f;
+                        /* ===== DISPLAY PATH OUTPUT ===== */
+                        float display_mag = sqrtf(display_i_filt * display_i_filt + display_q_filt * display_q_filt);
+                        float display_ac = dc_block_process(&g_display_dc_block, display_mag);
+                        float display_sample = display_ac * 50.0f;
                         if (display_sample > 32767.0f) display_sample = 32767.0f;
                         if (display_sample < -32767.0f) display_sample = -32767.0f;
                         pcm_buffer[pcm_idx++] = (int16_t)display_sample;
 
-                        /* Apply volume scaling for audio output only */
-                        float audio_sample = ac * g_volume;
-                        
-                        /* Apply soft limiter to prevent harsh clipping */
-                        audio_sample = audio_limiter_process(&g_audio_limiter, audio_sample, 24000.0f);
-                        
-                        /* Final safety clamp */
+                        /* ===== AUDIO PATH OUTPUT ===== */
+                        float audio_mag = sqrtf(audio_i_filt * audio_i_filt + audio_q_filt * audio_q_filt);
+                        float audio_ac = dc_block_process(&g_audio_dc_block, audio_mag);
+                        float audio_sample = audio_ac * g_volume;
                         if (audio_sample > 32767.0f) audio_sample = 32767.0f;
                         if (audio_sample < -32767.0f) audio_sample = -32767.0f;
-                        
-                        /* If muted (e.g., after LNA change), output silence */
-                        if (g_audio_mute_samples > 0) {
-                            g_audio_mute_samples--;
-                            audio_sample = 0.0f;
-                        }
 
                         /* Accumulate in audio output buffer */
                         g_audio_out[g_audio_out_count++] = (int16_t)audio_sample;

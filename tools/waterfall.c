@@ -1183,9 +1183,9 @@ int main(int argc, char *argv[]) {
                         /* Clamp to int16 range */
                         if (audio_sample > 32767.0f) audio_sample = 32767.0f;
                         if (audio_sample < -32767.0f) audio_sample = -32767.0f;
-                        
+
                         int16_t sample_out = (int16_t)audio_sample;
-                        
+
                         /* Store in display buffer (for FFT/waterfall) */
                         pcm_buffer[pcm_idx++] = sample_out;
 

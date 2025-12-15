@@ -134,12 +134,20 @@ static wf_dsp_path_t g_audio_dsp;
  * Configuration
  *============================================================================*/
 
-#define WATERFALL_WIDTH 1024    /* Left panel: waterfall display */
-#define BUCKET_WIDTH    200     /* Right panel: bucket bars */
-#define WINDOW_WIDTH    (WATERFALL_WIDTH + BUCKET_WIDTH)  /* Total width */
-#define WINDOW_HEIGHT   800     /* Scrolling history */
-#define FFT_SIZE        1024    /* FFT size (512 usable bins) */
+/* Fixed signal processing parameters */
+#define FFT_SIZE        1024    /* FFT size (512 usable bins) - FIXED */
 #define SAMPLE_RATE     48000   /* Expected input sample rate */
+
+/* Default window dimensions (runtime adjustable) */
+#define DEFAULT_WATERFALL_WIDTH 800
+#define DEFAULT_BUCKET_WIDTH    200
+#define DEFAULT_WINDOW_HEIGHT   600
+
+/* Runtime display dimensions */
+static int g_waterfall_width = DEFAULT_WATERFALL_WIDTH;
+static int g_bucket_width = DEFAULT_BUCKET_WIDTH;
+static int g_window_width = DEFAULT_WATERFALL_WIDTH + DEFAULT_BUCKET_WIDTH;
+static int g_window_height = DEFAULT_WINDOW_HEIGHT;
 
 /* Frequency bins to monitor for WWV tick detection
  * Each has a center frequency and bandwidth based on signal characteristics:
@@ -608,6 +616,37 @@ static void magnitude_to_rgb(float mag, float peak_db, float floor_db, uint8_t *
 }
 
 /*============================================================================
+ * FFT to Display Scaling
+ *============================================================================*/
+
+/**
+ * Scale FFT magnitudes (FFT_SIZE bins, DC-centered) to display width.
+ * Uses linear interpolation when display is smaller or larger than FFT.
+ *
+ * @param fft_mags      Input: FFT_SIZE magnitude values (DC at center)
+ * @param display_mags  Output: g_waterfall_width magnitude values
+ */
+static void scale_fft_to_display(const float *fft_mags, float *display_mags) {
+    float scale = (float)FFT_SIZE / (float)g_waterfall_width;
+    
+    for (int x = 0; x < g_waterfall_width; x++) {
+        /* Map display pixel to FFT bin (floating point) */
+        float fft_pos = x * scale;
+        int bin_low = (int)fft_pos;
+        int bin_high = bin_low + 1;
+        float frac = fft_pos - bin_low;
+        
+        /* Clamp to valid range */
+        if (bin_low < 0) bin_low = 0;
+        if (bin_high >= FFT_SIZE) bin_high = FFT_SIZE - 1;
+        if (bin_low >= FFT_SIZE) bin_low = FFT_SIZE - 1;
+        
+        /* Linear interpolation between adjacent bins */
+        display_mags[x] = fft_mags[bin_low] * (1.0f - frac) + fft_mags[bin_high] * frac;
+    }
+}
+
+/*============================================================================
  * Main
  *============================================================================*/
 
@@ -735,8 +774,8 @@ int main(int argc, char *argv[]) {
     SDL_Window *window = SDL_CreateWindow(
         g_tcp_mode ? "Waterfall (TCP)" : "Waterfall",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        WINDOW_WIDTH, WINDOW_HEIGHT,
-        SDL_WINDOW_SHOWN
+        g_window_width, g_window_height,
+        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
     );
     if (!window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
@@ -756,7 +795,7 @@ int main(int argc, char *argv[]) {
         renderer,
         SDL_PIXELFORMAT_RGB24,
         SDL_TEXTUREACCESS_STREAMING,
-        WINDOW_WIDTH, WINDOW_HEIGHT
+        g_window_width, g_window_height
     );
     if (!texture) {
         fprintf(stderr, "SDL_CreateTexture failed: %s\n", SDL_GetError());
@@ -781,16 +820,17 @@ int main(int argc, char *argv[]) {
     int16_t *pcm_buffer = (int16_t *)malloc(FFT_SIZE * sizeof(int16_t));
     kiss_fft_cpx *fft_in = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
     kiss_fft_cpx *fft_out = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
-    uint8_t *pixels = (uint8_t *)malloc(WINDOW_WIDTH * WINDOW_HEIGHT * 3);
-    float *magnitudes = (float *)malloc(WATERFALL_WIDTH * sizeof(float));
+    uint8_t *pixels = (uint8_t *)malloc(g_window_width * g_window_height * 3);
+    float *fft_magnitudes = (float *)malloc(FFT_SIZE * sizeof(float));        /* Full FFT resolution */
+    float *display_magnitudes = (float *)malloc(g_waterfall_width * sizeof(float)); /* Scaled for display */
 
-    if (!pcm_buffer || !fft_in || !fft_out || !pixels || !magnitudes) {
+    if (!pcm_buffer || !fft_in || !fft_out || !pixels || !fft_magnitudes || !display_magnitudes) {
         fprintf(stderr, "Memory allocation failed\n");
         return 1;
     }
 
     /* Clear pixel buffer */
-    memset(pixels, 0, WINDOW_WIDTH * WINDOW_HEIGHT * 3);
+    memset(pixels, 0, g_window_width * g_window_height * 3);
 
     /* Hanning window */
     float *window_func = (float *)malloc(FFT_SIZE * sizeof(float));
@@ -806,7 +846,7 @@ int main(int argc, char *argv[]) {
         printf("Mode: Stdin PCM (rate=%d Hz)\n", SAMPLE_RATE);
     }
     printf("Window: %dx%d, FFT: %d bins (%.1f Hz/bin)\n",
-           WINDOW_WIDTH, WINDOW_HEIGHT, FFT_SIZE / 2, (float)g_effective_sample_rate / FFT_SIZE);
+           g_window_width, g_window_height, FFT_SIZE / 2, (float)g_effective_sample_rate / FFT_SIZE);
     printf("Keys: 0=gain, 1-7=tick thresholds, +/- adjust, D=detect, S=stats, Q/Esc quit\n");
     printf("1:100Hz(±10) 2:440Hz(±5) 3:500Hz(±5) 4:600Hz(±5) 5:1000Hz(±100) 6:1200Hz(±100) 7:1500Hz(±20)\n");
 
@@ -824,6 +864,38 @@ int main(int argc, char *argv[]) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 running = false;
+            } else if (event.type == SDL_WINDOWEVENT) {
+                if (event.window.event == SDL_WINDOWEVENT_RESIZED) {
+                    int new_width = event.window.data1;
+                    int new_height = event.window.data2;
+                    
+                    /* Update runtime dimensions */
+                    g_window_width = new_width;
+                    g_window_height = new_height;
+                    g_waterfall_width = new_width - g_bucket_width;
+                    if (g_waterfall_width < 100) g_waterfall_width = 100;  /* Minimum waterfall width */
+                    
+                    /* Recreate texture */
+                    SDL_DestroyTexture(texture);
+                    texture = SDL_CreateTexture(
+                        renderer,
+                        SDL_PIXELFORMAT_RGB24,
+                        SDL_TEXTUREACCESS_STREAMING,
+                        g_window_width, g_window_height
+                    );
+                    
+                    /* Reallocate pixel buffer */
+                    free(pixels);
+                    pixels = (uint8_t *)malloc(g_window_width * g_window_height * 3);
+                    memset(pixels, 0, g_window_width * g_window_height * 3);
+                    
+                    /* Reallocate display magnitudes buffer */
+                    free(display_magnitudes);
+                    display_magnitudes = (float *)malloc(g_waterfall_width * sizeof(float));
+                    
+                    printf("Window resized to %dx%d (waterfall: %d)\n", 
+                           g_window_width, g_window_height, g_waterfall_width);
+                }
             } else if (event.type == SDL_KEYDOWN) {
                 if (event.key.keysym.sym == SDLK_ESCAPE ||
                     event.key.keysym.sym == SDLK_q) {
@@ -1056,15 +1128,15 @@ int main(int argc, char *argv[]) {
         /* Run FFT */
         kiss_fft(fft_cfg, fft_in, fft_out);
 
-        /* Calculate magnitudes with FFT shift (DC in center) */
-        for (int i = 0; i < WATERFALL_WIDTH; i++) {
+        /* Calculate magnitudes with FFT shift (DC in center) - full FFT resolution */
+        for (int i = 0; i < FFT_SIZE; i++) {
             int bin;
-            if (i < WATERFALL_WIDTH / 2) {
+            if (i < FFT_SIZE / 2) {
                 /* Left half: negative frequencies */
                 bin = FFT_SIZE / 2 + i;
             } else {
                 /* Right half: positive frequencies */
-                bin = i - WATERFALL_WIDTH / 2;
+                bin = i - FFT_SIZE / 2;
             }
             /* Wrap around */
             if (bin < 0) bin += FFT_SIZE;
@@ -1074,17 +1146,20 @@ int main(int argc, char *argv[]) {
             if (bin >= 0 && bin < FFT_SIZE) {
                 float re = fft_out[bin].r;
                 float im = fft_out[bin].i;
-                magnitudes[i] = sqrtf(re * re + im * im) / FFT_SIZE;
+                fft_magnitudes[i] = sqrtf(re * re + im * im) / FFT_SIZE;
             } else {
-                magnitudes[i] = 0.0f;
+                fft_magnitudes[i] = 0.0f;
             }
         }
+
+        /* Scale FFT magnitudes to display width */
+        scale_fft_to_display(fft_magnitudes, display_magnitudes);
 
         /* Auto-gain: track peak and floor */
         float frame_max = -200.0f;
         float frame_min = 200.0f;
-        for (int i = 0; i < WATERFALL_WIDTH; i++) {
-            float db = 20.0f * log10f(magnitudes[i] + 1e-10f);
+        for (int i = 0; i < g_waterfall_width; i++) {
+            float db = 20.0f * log10f(display_magnitudes[i] + 1e-10f);
             if (db > frame_max) frame_max = db;
             if (db < frame_min) frame_min = db;
         }
@@ -1101,14 +1176,14 @@ int main(int argc, char *argv[]) {
         }
 
         /* Scroll pixels down by 1 row */
-        memmove(pixels + WINDOW_WIDTH * 3,  /* dest: row 1 */
-                pixels,                      /* src: row 0 */
-                WINDOW_WIDTH * (WINDOW_HEIGHT - 1) * 3);
+        memmove(pixels + g_window_width * 3,  /* dest: row 1 */
+                pixels,                        /* src: row 0 */
+                g_window_width * (g_window_height - 1) * 3);
 
         /* Draw new row at top (row 0) - WATERFALL ONLY */
-        for (int x = 0; x < WATERFALL_WIDTH; x++) {
+        for (int x = 0; x < g_waterfall_width; x++) {
             uint8_t r, g, b;
-            magnitude_to_rgb(magnitudes[x], g_peak_db, g_floor_db, &r, &g, &b);
+            magnitude_to_rgb(display_magnitudes[x], g_peak_db, g_floor_db, &r, &g, &b);
             pixels[x * 3 + 0] = r;
             pixels[x * 3 + 1] = g;
             pixels[x * 3 + 2] = b;
@@ -1153,19 +1228,19 @@ int main(int argc, char *argv[]) {
 
             /* If above threshold, draw marker dot at the frequency position */
             if (combined_energy > g_tick_thresholds[f]) {
-                /* Calculate x position in FFT-shifted display */
-                /* Positive freq: x = WATERFALL_WIDTH/2 + center_bin */
-                int x_pos = WATERFALL_WIDTH / 2 + center_bin;
-                int x_neg = WATERFALL_WIDTH / 2 - center_bin;
+                /* Calculate x position in FFT-shifted display, scaled to display width */
+                float scale = (float)g_waterfall_width / (float)FFT_SIZE;
+                int x_pos = (int)((FFT_SIZE / 2 + center_bin) * scale);
+                int x_neg = (int)((FFT_SIZE / 2 - center_bin) * scale);
 
                 /* Draw red dot at positive frequency */
-                if (x_pos >= 0 && x_pos < WATERFALL_WIDTH) {
+                if (x_pos >= 0 && x_pos < g_waterfall_width) {
                     pixels[x_pos * 3 + 0] = 255;  /* R */
                     pixels[x_pos * 3 + 1] = 0;    /* G */
                     pixels[x_pos * 3 + 2] = 0;    /* B */
                 }
                 /* Draw red dot at negative frequency */
-                if (x_neg >= 0 && x_neg < WATERFALL_WIDTH) {
+                if (x_neg >= 0 && x_neg < g_waterfall_width) {
                     pixels[x_neg * 3 + 0] = 255;  /* R */
                     pixels[x_neg * 3 + 1] = 0;    /* G */
                     pixels[x_neg * 3 + 2] = 0;    /* B */
@@ -1177,7 +1252,7 @@ int main(int argc, char *argv[]) {
         /* Small colored tick at the selected parameter position */
         {
             int indicator_x = 10 + g_selected_param * 20;
-            if (indicator_x < WATERFALL_WIDTH) {
+            if (indicator_x < g_waterfall_width) {
                 pixels[indicator_x * 3 + 0] = 255;  /* Cyan indicator */
                 pixels[indicator_x * 3 + 1] = 255;
                 pixels[indicator_x * 3 + 2] = 0;
@@ -1186,13 +1261,13 @@ int main(int argc, char *argv[]) {
 
         /* === RIGHT PANEL: Bucket energy bars === */
         {
-            int bar_width = BUCKET_WIDTH / NUM_TICK_FREQS;  /* ~28 pixels per bar */
+            int bar_width = g_bucket_width / NUM_TICK_FREQS;  /* ~28 pixels per bar */
             int bar_gap = 2;  /* Gap between bars */
 
             /* Clear right panel (black background) */
-            for (int y = 0; y < WINDOW_HEIGHT; y++) {
-                for (int x = WATERFALL_WIDTH; x < WINDOW_WIDTH; x++) {
-                    int idx = (y * WINDOW_WIDTH + x) * 3;
+            for (int y = 0; y < g_window_height; y++) {
+                for (int x = g_waterfall_width; x < g_window_width; x++) {
+                    int idx = (y * g_window_width + x) * 3;
                     pixels[idx + 0] = 0;
                     pixels[idx + 1] = 0;
                     pixels[idx + 2] = 0;
@@ -1201,7 +1276,7 @@ int main(int argc, char *argv[]) {
 
             /* Draw each bucket bar */
             for (int f = 0; f < NUM_TICK_FREQS; f++) {
-                int bar_x = WATERFALL_WIDTH + f * bar_width + bar_gap;
+                int bar_x = g_waterfall_width + f * bar_width + bar_gap;
                 int bar_w = bar_width - bar_gap * 2;
 
                 /* Convert energy to height using log scale */
@@ -1210,7 +1285,7 @@ int main(int argc, char *argv[]) {
                 if (norm < 0.0f) norm = 0.0f;
                 if (norm > 1.0f) norm = 1.0f;
 
-                int bar_height = (int)(norm * WINDOW_HEIGHT);
+                int bar_height = (int)(norm * g_window_height);
 
                 /* Get color based on magnitude */
                 uint8_t r, g, b;
@@ -1221,15 +1296,15 @@ int main(int argc, char *argv[]) {
                     r = 180;
                     g = 0;
                     b = 255;
-                    bar_height = WINDOW_HEIGHT;  /* Full height when detected */
+                    bar_height = g_window_height;  /* Full height when detected */
                 } else {
                     magnitude_to_rgb(g_bucket_energy[f], g_peak_db, g_floor_db, &r, &g, &b);
                 }
 
                 /* Draw bar from bottom up */
-                for (int y = WINDOW_HEIGHT - bar_height; y < WINDOW_HEIGHT; y++) {
-                    for (int x = bar_x; x < bar_x + bar_w && x < WINDOW_WIDTH; x++) {
-                        int idx = (y * WINDOW_WIDTH + x) * 3;
+                for (int y = g_window_height - bar_height; y < g_window_height; y++) {
+                    for (int x = bar_x; x < bar_x + bar_w && x < g_window_width; x++) {
+                        int idx = (y * g_window_width + x) * 3;
                         pixels[idx + 0] = r;
                         pixels[idx + 1] = g;
                         pixels[idx + 2] = b;
@@ -1244,7 +1319,7 @@ int main(int argc, char *argv[]) {
         }
 
         /* Update texture */
-        SDL_UpdateTexture(texture, NULL, pixels, WINDOW_WIDTH * 3);
+        SDL_UpdateTexture(texture, NULL, pixels, g_window_width * 3);
 
         /* Render */
         SDL_RenderClear(renderer);
@@ -1273,7 +1348,8 @@ int main(int argc, char *argv[]) {
 
     /* Cleanup */
     free(window_func);
-    free(magnitudes);
+    free(display_magnitudes);
+    free(fft_magnitudes);
     free(pixels);
     free(fft_out);
     free(fft_in);

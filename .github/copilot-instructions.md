@@ -35,7 +35,6 @@
 
 | File | Reason |
 |------|--------|
-| `tools/waterfall.c` | Waterfall display is working - audio chain moved to separate file |
 | `tools/waterfall_dsp.c` | Frozen DSP module - lowpass filters and DC block |
 | `tools/waterfall_dsp.h` | Frozen DSP header - struct definitions |
 

@@ -178,6 +178,46 @@ static lowpass_t g_lowpass_q;
 static dc_block_t g_dc_block;
 static bool g_dsp_initialized = false;
 
+/*============================================================================
+ * Audio Limiter - soft limiting to prevent harsh clipping
+ *============================================================================*/
+
+typedef struct {
+    float envelope;         /* Tracked signal envelope */
+    float attack;           /* Attack time constant (fast) */
+    float release;          /* Release time constant (slower) */
+} audio_limiter_t;
+
+static audio_limiter_t g_audio_limiter;
+
+static void audio_limiter_init(audio_limiter_t *lim, float sample_rate) {
+    lim->envelope = 0.0f;
+    /* Attack ~1ms, release ~50ms for smooth limiting */
+    lim->attack = 1.0f - expf(-1.0f / (sample_rate * 0.001f));
+    lim->release = 1.0f - expf(-1.0f / (sample_rate * 0.050f));
+}
+
+static float audio_limiter_process(audio_limiter_t *lim, float sample, float threshold) {
+    /* Track envelope */
+    float abs_sample = fabsf(sample);
+    if (abs_sample > lim->envelope) {
+        lim->envelope += lim->attack * (abs_sample - lim->envelope);
+    } else {
+        lim->envelope += lim->release * (abs_sample - lim->envelope);
+    }
+    
+    /* Apply soft limiting with tanh-style curve */
+    if (lim->envelope > threshold) {
+        float gain = threshold / lim->envelope;
+        return sample * gain;
+    }
+    return sample;
+}
+
+/* Mute counter - silence audio briefly after signal level changes (e.g., LNA switch) */
+static int g_audio_mute_samples = 0;
+#define AUDIO_MUTE_ON_CHANGE_MS  50  /* 50ms mute after big changes */
+
 #define IQ_FILTER_CUTOFF    3000.0f     /* 3 kHz lowpass on I/Q before magnitude */
 
 /*============================================================================
@@ -185,8 +225,8 @@ static bool g_dsp_initialized = false;
  *============================================================================*/
 
 #define AUDIO_SAMPLE_RATE   48000       /* Must match SAMPLE_RATE */
-#define AUDIO_BUFFERS       4
-#define AUDIO_BUFFER_SIZE   4096
+#define AUDIO_BUFFERS       8           /* More buffers = smoother playback */
+#define AUDIO_BUFFER_SIZE   1024        /* Smaller buffers = lower latency (~21ms) */
 
 #ifdef _WIN32
 #include <mmsystem.h>
@@ -1141,6 +1181,7 @@ int main(int argc, char *argv[]) {
                     lowpass_init(&g_lowpass_i, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
                     lowpass_init(&g_lowpass_q, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
                     dc_block_init(&g_dc_block);
+                    audio_limiter_init(&g_audio_limiter, (float)g_effective_sample_rate);
                     g_dsp_initialized = true;
                     printf("DSP initialized: lowpass @ %.0f Hz, sample rate = %u\n",
                            IQ_FILTER_CUTOFF, g_tcp_sample_rate);
@@ -1173,6 +1214,22 @@ int main(int argc, char *argv[]) {
                     if (g_decim_counter >= g_decimation_factor) {
                         /* Compute envelope from filtered I/Q */
                         float mag = sqrtf(i_filt * i_filt + q_filt * q_filt);
+                        
+                        /* Detect sudden magnitude changes (e.g., LNA switch) */
+                        static float prev_mag = 0.0f;
+                        static float mag_avg = 0.0f;
+                        if (mag_avg > 0.0f) {
+                            float ratio = (mag > mag_avg) ? (mag / mag_avg) : (mag_avg / mag);
+                            /* If magnitude changes by >3x suddenly, mute to hide DC block transient */
+                            if (ratio > 3.0f && prev_mag > 0.0f) {
+                                g_audio_mute_samples = (int)(g_effective_sample_rate * AUDIO_MUTE_ON_CHANGE_MS / 1000);
+                                /* Also reset DC blocker to speed up settling */
+                                dc_block_init(&g_dc_block);
+                            }
+                        }
+                        /* Update running average (slow) */
+                        mag_avg = mag_avg * 0.999f + mag * 0.001f;
+                        prev_mag = mag;
 
                         /* DC block (from simple_am_receiver) */
                         float ac = dc_block_process(&g_dc_block, mag);
@@ -1185,8 +1242,19 @@ int main(int argc, char *argv[]) {
 
                         /* Apply volume scaling for audio output only */
                         float audio_sample = ac * g_volume;
+                        
+                        /* Apply soft limiter to prevent harsh clipping */
+                        audio_sample = audio_limiter_process(&g_audio_limiter, audio_sample, 24000.0f);
+                        
+                        /* Final safety clamp */
                         if (audio_sample > 32767.0f) audio_sample = 32767.0f;
                         if (audio_sample < -32767.0f) audio_sample = -32767.0f;
+                        
+                        /* If muted (e.g., after LNA change), output silence */
+                        if (g_audio_mute_samples > 0) {
+                            g_audio_mute_samples--;
+                            audio_sample = 0.0f;
+                        }
 
                         /* Accumulate in audio output buffer */
                         g_audio_out[g_audio_out_count++] = (int16_t)audio_sample;

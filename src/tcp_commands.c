@@ -213,6 +213,7 @@ tcp_error_t tcp_parse_command(const char *line, tcp_command_t *cmd) {
 
         case CMD_SET_LNA:
             cmd->value.lna_state = atoi(cmd->argv[0]);
+            /* Range check done in execute based on antenna port */
             if (cmd->value.lna_state < 0 || cmd->value.lna_state > 8) {
                 return TCP_ERR_RANGE;
             }
@@ -489,15 +490,18 @@ tcp_error_t tcp_execute_command(
 
     switch (cmd->type) {
         /* ----- Frequency ----- */
-        case CMD_SET_FREQ:
+        case CMD_SET_FREQ: {
+            double old_freq = state->freq_hz;
             state->freq_hz = cmd->value.freq_hz;
             hw_err = apply_config_to_hardware(state);
             if (hw_err != TCP_OK) {
+                state->freq_hz = old_freq;  /* Restore on failure */
                 tcp_response_error(response, hw_err, "hardware update failed");
                 return hw_err;
             }
             tcp_response_ok(response, NULL);
             break;
+        }
 
         case CMD_GET_FREQ:
             snprintf(buf, sizeof(buf), "%.0f", state->freq_hz);
@@ -505,64 +509,87 @@ tcp_error_t tcp_execute_command(
             break;
 
         /* ----- Gain ----- */
-        case CMD_SET_GAIN:
+        case CMD_SET_GAIN: {
+            int old_gain = state->gain_reduction;
             state->gain_reduction = cmd->value.gain_db;
             hw_err = apply_config_to_hardware(state);
             if (hw_err != TCP_OK) {
+                state->gain_reduction = old_gain;  /* Restore on failure */
                 tcp_response_error(response, hw_err, "hardware update failed");
                 return hw_err;
             }
             tcp_response_ok(response, NULL);
             break;
+        }
 
         case CMD_GET_GAIN:
             snprintf(buf, sizeof(buf), "%d", state->gain_reduction);
             tcp_response_ok(response, buf);
             break;
 
-        case CMD_SET_LNA:
+        case CMD_SET_LNA: {
+            /* Hi-Z antenna only supports LNA states 0-4 */
+            int max_lna = (strcmp(state->antenna, "HIZ") == 0) ? 4 : 8;
+            if (cmd->value.lna_state > max_lna) {
+                char errmsg[64];
+                snprintf(errmsg, sizeof(errmsg), "LNA must be 0-%d for %s antenna",
+                         max_lna, state->antenna);
+                tcp_response_error(response, TCP_ERR_RANGE, errmsg);
+                return TCP_ERR_RANGE;
+            }
+            int old_lna = state->lna_state;
             state->lna_state = cmd->value.lna_state;
             hw_err = apply_config_to_hardware(state);
             if (hw_err != TCP_OK) {
+                state->lna_state = old_lna;  /* Restore on failure */
                 tcp_response_error(response, hw_err, "hardware update failed");
                 return hw_err;
             }
             tcp_response_ok(response, NULL);
             break;
+        }
 
         case CMD_GET_LNA:
             snprintf(buf, sizeof(buf), "%d", state->lna_state);
             tcp_response_ok(response, buf);
             break;
 
-        case CMD_SET_AGC:
+        case CMD_SET_AGC: {
+            char old_agc[16];
+            strncpy(old_agc, state->agc_mode, sizeof(old_agc) - 1);
+            old_agc[15] = '\0';
             strncpy(state->agc_mode, cmd->value.agc.mode, sizeof(state->agc_mode) - 1);
             hw_err = apply_config_to_hardware(state);
             if (hw_err != TCP_OK) {
+                strncpy(state->agc_mode, old_agc, sizeof(state->agc_mode) - 1);  /* Restore */
                 tcp_response_error(response, hw_err, "hardware update failed");
                 return hw_err;
             }
             tcp_response_ok(response, NULL);
             break;
+        }
 
         case CMD_GET_AGC:
             tcp_response_ok(response, state->agc_mode);
             break;
 
         /* ----- Sample Rate / Bandwidth ----- */
-        case CMD_SET_SRATE:
+        case CMD_SET_SRATE: {
             if (state->streaming) {
                 tcp_response_error(response, TCP_ERR_STATE, "stop streaming first");
                 return TCP_ERR_STATE;
             }
+            int old_srate = state->sample_rate;
             state->sample_rate = cmd->value.sample_rate;
             hw_err = apply_config_to_hardware(state);
             if (hw_err != TCP_OK) {
+                state->sample_rate = old_srate;  /* Restore */
                 tcp_response_error(response, hw_err, "hardware update failed");
                 return hw_err;
             }
             tcp_response_ok(response, NULL);
             break;
+        }
 
         case CMD_GET_SRATE:
             /* Return actual sample rate from hardware if available */
@@ -579,19 +606,22 @@ tcp_error_t tcp_execute_command(
             tcp_response_ok(response, buf);
             break;
 
-        case CMD_SET_BW:
+        case CMD_SET_BW: {
             if (state->streaming) {
                 tcp_response_error(response, TCP_ERR_STATE, "stop streaming first");
                 return TCP_ERR_STATE;
             }
+            int old_bw = state->bandwidth_khz;
             state->bandwidth_khz = cmd->value.bandwidth_khz;
             hw_err = apply_config_to_hardware(state);
             if (hw_err != TCP_OK) {
+                state->bandwidth_khz = old_bw;  /* Restore */
                 tcp_response_error(response, hw_err, "hardware update failed");
                 return hw_err;
             }
             tcp_response_ok(response, NULL);
             break;
+        }
 
         case CMD_GET_BW:
             snprintf(buf, sizeof(buf), "%d", state->bandwidth_khz);
@@ -599,25 +629,38 @@ tcp_error_t tcp_execute_command(
             break;
 
         /* ----- Hardware ----- */
-        case CMD_SET_ANTENNA:
+        case CMD_SET_ANTENNA: {
             if (state->streaming) {
                 tcp_response_error(response, TCP_ERR_STATE, "stop streaming first");
                 return TCP_ERR_STATE;
             }
+            char old_antenna[8];
+            strncpy(old_antenna, state->antenna, sizeof(old_antenna) - 1);
+            old_antenna[7] = '\0';
             strncpy(state->antenna, cmd->value.antenna.port, sizeof(state->antenna) - 1);
+            
+            /* If switching to Hi-Z, clamp LNA state to valid range (0-4) */
+            int old_lna = state->lna_state;
+            if (strcmp(state->antenna, "HIZ") == 0 && state->lna_state > 4) {
+                state->lna_state = 4;
+            }
+            
             hw_err = apply_config_to_hardware(state);
             if (hw_err != TCP_OK) {
+                strncpy(state->antenna, old_antenna, sizeof(state->antenna) - 1);  /* Restore */
+                state->lna_state = old_lna;
                 tcp_response_error(response, hw_err, "hardware update failed");
                 return hw_err;
             }
             tcp_response_ok(response, NULL);
             break;
+        }
 
         case CMD_GET_ANTENNA:
             tcp_response_ok(response, state->antenna);
             break;
 
-        case CMD_SET_BIAST:
+        case CMD_SET_BIAST: {
             if (cmd->value.on_off) {
                 /* Require CONFIRM for safety */
                 if (cmd->argc < 2 || strcasecmp_local(cmd->argv[1], "CONFIRM") != 0) {
@@ -626,24 +669,30 @@ tcp_error_t tcp_execute_command(
                     return TCP_ERR_PARAM;
                 }
             }
+            bool old_biast = state->bias_t;
             state->bias_t = cmd->value.on_off;
             hw_err = apply_config_to_hardware(state);
             if (hw_err != TCP_OK) {
+                state->bias_t = old_biast;  /* Restore */
                 tcp_response_error(response, hw_err, "hardware update failed");
                 return hw_err;
             }
             tcp_response_ok(response, NULL);
             break;
+        }
 
-        case CMD_SET_NOTCH:
+        case CMD_SET_NOTCH: {
+            bool old_notch = state->notch;
             state->notch = cmd->value.on_off;
             hw_err = apply_config_to_hardware(state);
             if (hw_err != TCP_OK) {
+                state->notch = old_notch;  /* Restore */
                 tcp_response_error(response, hw_err, "hardware update failed");
                 return hw_err;
             }
             tcp_response_ok(response, NULL);
             break;
+        }
 
         /* ----- Advanced Hardware Settings ----- */
         case CMD_SET_DECIM:

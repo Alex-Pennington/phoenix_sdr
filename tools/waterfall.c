@@ -1192,7 +1192,7 @@ int main(int argc, char *argv[]) {
                 /* freq_hz maps to pixel: x = (freq_hz / ZOOM_MAX_HZ) * (WATERFALL_WIDTH/2) + WATERFALL_WIDTH/2 */
                 float freq_hz = center_bin * ((float)SAMPLE_RATE / FFT_SIZE);
                 float bw_hz = (float)TICK_BW[f];  /* ± bandwidth in Hz */
-                
+
                 /* Convert Hz to pixels */
                 float pixels_per_hz = (WATERFALL_WIDTH / 2.0f) / ZOOM_MAX_HZ;
                 int center_x_offset = (int)(freq_hz * pixels_per_hz);

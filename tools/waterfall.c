@@ -628,19 +628,19 @@ static void magnitude_to_rgb(float mag, float peak_db, float floor_db, uint8_t *
  */
 static void scale_fft_to_display(const float *fft_mags, float *display_mags) {
     float scale = (float)FFT_SIZE / (float)g_waterfall_width;
-    
+
     for (int x = 0; x < g_waterfall_width; x++) {
         /* Map display pixel to FFT bin (floating point) */
         float fft_pos = x * scale;
         int bin_low = (int)fft_pos;
         int bin_high = bin_low + 1;
         float frac = fft_pos - bin_low;
-        
+
         /* Clamp to valid range */
         if (bin_low < 0) bin_low = 0;
         if (bin_high >= FFT_SIZE) bin_high = FFT_SIZE - 1;
         if (bin_low >= FFT_SIZE) bin_low = FFT_SIZE - 1;
-        
+
         /* Linear interpolation between adjacent bins */
         display_mags[x] = fft_mags[bin_low] * (1.0f - frac) + fft_mags[bin_high] * frac;
     }
@@ -868,13 +868,13 @@ int main(int argc, char *argv[]) {
                 if (event.window.event == SDL_WINDOWEVENT_RESIZED) {
                     int new_width = event.window.data1;
                     int new_height = event.window.data2;
-                    
+
                     /* Update runtime dimensions */
                     g_window_width = new_width;
                     g_window_height = new_height;
                     g_waterfall_width = new_width - g_bucket_width;
                     if (g_waterfall_width < 100) g_waterfall_width = 100;  /* Minimum waterfall width */
-                    
+
                     /* Recreate texture */
                     SDL_DestroyTexture(texture);
                     texture = SDL_CreateTexture(
@@ -883,17 +883,17 @@ int main(int argc, char *argv[]) {
                         SDL_TEXTUREACCESS_STREAMING,
                         g_window_width, g_window_height
                     );
-                    
+
                     /* Reallocate pixel buffer */
                     free(pixels);
                     pixels = (uint8_t *)malloc(g_window_width * g_window_height * 3);
                     memset(pixels, 0, g_window_width * g_window_height * 3);
-                    
+
                     /* Reallocate display magnitudes buffer */
                     free(display_magnitudes);
                     display_magnitudes = (float *)malloc(g_waterfall_width * sizeof(float));
-                    
-                    printf("Window resized to %dx%d (waterfall: %d)\n", 
+
+                    printf("Window resized to %dx%d (waterfall: %d)\n",
                            g_window_width, g_window_height, g_waterfall_width);
                 }
             } else if (event.type == SDL_KEYDOWN) {

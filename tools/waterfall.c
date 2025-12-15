@@ -185,6 +185,15 @@ static bool g_display_dsp_initialized = false;
 
 #define IQ_FILTER_CUTOFF    3000.0f     /* 3 kHz lowpass on I/Q before magnitude */
 
+/* Buffer for decimated I/Q samples (for complex FFT) */
+typedef struct {
+    float i;
+    float q;
+} iq_sample_t;
+
+static iq_sample_t *g_iq_buffer = NULL;      /* Circular buffer for decimated I/Q */
+static int g_iq_buffer_idx = 0;               /* Write index */
+
 /*============================================================================
  * Configuration
  *============================================================================*/
@@ -193,9 +202,11 @@ static bool g_display_dsp_initialized = false;
 #define BUCKET_WIDTH    200     /* Right panel: bucket bars */
 #define WINDOW_WIDTH    (WATERFALL_WIDTH + BUCKET_WIDTH)  /* Total width */
 #define WINDOW_HEIGHT   800     /* Scrolling history */
+#define RF_HEIGHT       (WINDOW_HEIGHT / 2)   /* Top half: RF spectrum (complex FFT) */
+#define AUDIO_HEIGHT    (WINDOW_HEIGHT / 2)   /* Bottom half: Audio spectrum (real FFT) */
 #define FFT_SIZE        1024    /* FFT size (512 usable bins) */
 #define SAMPLE_RATE     48000   /* Expected input sample rate */
-#define ZOOM_MAX_HZ     5000.0f /* Display range: ±5000 Hz centered on DC */
+#define ZOOM_MAX_HZ     5000.0f /* Display range: ±5000 Hz for RF, 0-5000 Hz for Audio */
 
 /* Frequency bins to monitor for WWV tick detection
  * Each has a center frequency and bandwidth based on signal characteristics:
@@ -814,7 +825,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    /* Initialize KissFFT */
+    /* Initialize KissFFT - one config for both FFTs (same size) */
     kiss_fft_cfg fft_cfg = kiss_fft_alloc(FFT_SIZE, 0, NULL, NULL);
     if (!fft_cfg) {
         fprintf(stderr, "kiss_fft_alloc failed\n");
@@ -826,16 +837,27 @@ int main(int argc, char *argv[]) {
     }
 
     /* Allocate buffers */
-    int16_t *pcm_buffer = (int16_t *)malloc(FFT_SIZE * sizeof(int16_t));
+    int16_t *pcm_buffer = (int16_t *)malloc(FFT_SIZE * sizeof(int16_t));  /* For audio (envelope) samples */
     kiss_fft_cpx *fft_in = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
     kiss_fft_cpx *fft_out = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
     uint8_t *pixels = (uint8_t *)malloc(WINDOW_WIDTH * WINDOW_HEIGHT * 3);
-    float *magnitudes = (float *)malloc(WATERFALL_WIDTH * sizeof(float));
+    float *magnitudes = (float *)malloc(WATERFALL_WIDTH * sizeof(float));       /* Audio spectrum magnitudes */
 
-    if (!pcm_buffer || !fft_in || !fft_out || !pixels || !magnitudes) {
+    /* Additional buffers for RF spectrum (complex FFT) */
+    kiss_fft_cpx *rf_fft_in = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
+    kiss_fft_cpx *rf_fft_out = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
+    float *rf_magnitudes = (float *)malloc(WATERFALL_WIDTH * sizeof(float));    /* RF spectrum magnitudes */
+    g_iq_buffer = (iq_sample_t *)malloc(FFT_SIZE * sizeof(iq_sample_t));        /* Decimated I/Q buffer */
+
+    if (!pcm_buffer || !fft_in || !fft_out || !pixels || !magnitudes ||
+        !rf_fft_in || !rf_fft_out || !rf_magnitudes || !g_iq_buffer) {
         fprintf(stderr, "Memory allocation failed\n");
         return 1;
     }
+
+    /* Clear I/Q buffer */
+    memset(g_iq_buffer, 0, FFT_SIZE * sizeof(iq_sample_t));
+    g_iq_buffer_idx = 0;
 
     /* Clear pixel buffer */
     memset(pixels, 0, WINDOW_WIDTH * WINDOW_HEIGHT * 3);
@@ -1043,21 +1065,31 @@ int main(int argc, char *argv[]) {
                     }
 
                     /* ===== DISPLAY PATH ===== */
+                    /* Step 1: Lowpass filter I and Q (runs on EVERY sample) */
                     float display_i_filt = lowpass_process(&g_display_lowpass_i, i_raw);
                     float display_q_filt = lowpass_process(&g_display_lowpass_q, q_raw);
 
-                    /* Simple decimation: keep every Nth sample */
+                    /* Step 2: Envelope detection (runs on EVERY filtered sample) */
+                    float display_mag = sqrtf(display_i_filt * display_i_filt + display_q_filt * display_q_filt);
+
+                    /* Step 3: Decimation - keep every Nth sample */
                     g_decim_counter++;
                     if (g_decim_counter >= g_decimation_factor) {
+                        g_decim_counter = 0;
 
-                        float display_mag = sqrtf(display_i_filt * display_i_filt + display_q_filt * display_q_filt);
+                        /* Store decimated I/Q for RF spectrum (complex FFT) */
+                        g_iq_buffer[g_iq_buffer_idx].i = display_i_filt;
+                        g_iq_buffer[g_iq_buffer_idx].q = display_q_filt;
+                        g_iq_buffer_idx = (g_iq_buffer_idx + 1) % FFT_SIZE;
+
+                        /* Step 4: DC removal on envelope (for audio spectrum) */
                         float display_ac = dc_block_process(&g_display_dc_block, display_mag);
+
+                        /* Step 5: Scale and clip for audio spectrum */
                         float display_sample = display_ac * 50.0f;
                         if (display_sample > 32767.0f) display_sample = 32767.0f;
                         if (display_sample < -32767.0f) display_sample = -32767.0f;
                         pcm_buffer[pcm_idx++] = (int16_t)display_sample;
-
-                        g_decim_counter = 0;
                     }
                 }
             }
@@ -1083,16 +1115,18 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        /* Convert to complex and apply window */
+        /* ===== RF SPECTRUM: Complex FFT of I/Q data ===== */
+        /* This shows the actual RF spectrum around the tuned frequency */
+        /* DC = carrier, ±frequencies = sidebands */
         for (int i = 0; i < FFT_SIZE; i++) {
-            fft_in[i].r = (pcm_buffer[i] / 32768.0f) * window_func[i];
-            fft_in[i].i = 0.0f;
+            /* Read from I/Q buffer (circular, starting from oldest sample) */
+            int buf_idx = (g_iq_buffer_idx + i) % FFT_SIZE;
+            rf_fft_in[i].r = g_iq_buffer[buf_idx].i * window_func[i];  /* I = real */
+            rf_fft_in[i].i = g_iq_buffer[buf_idx].q * window_func[i];  /* Q = imaginary */
         }
+        kiss_fft(fft_cfg, rf_fft_in, rf_fft_out);
 
-        /* Run FFT */
-        kiss_fft(fft_cfg, fft_in, fft_out);
-
-        /* Calculate magnitudes with FFT shift (DC in center), zoomed to ±ZOOM_MAX_HZ */
+        /* Calculate RF magnitudes with FFT shift (DC in center) */
         float bin_hz = (float)SAMPLE_RATE / FFT_SIZE;  /* Hz per FFT bin (~46.875 Hz) */
         for (int i = 0; i < WATERFALL_WIDTH; i++) {
             /* Map pixel to frequency: pixel 0 = -ZOOM_MAX_HZ, pixel center = 0, pixel end = +ZOOM_MAX_HZ */
@@ -1110,16 +1144,43 @@ int main(int argc, char *argv[]) {
             if (bin < 0) bin = 0;
             if (bin >= FFT_SIZE) bin = FFT_SIZE - 1;
 
+            float re = rf_fft_out[bin].r;
+            float im = rf_fft_out[bin].i;
+            rf_magnitudes[i] = sqrtf(re * re + im * im) / FFT_SIZE;
+        }
+
+        /* ===== AUDIO SPECTRUM: Real FFT of envelope (demodulated audio) ===== */
+        /* This shows what you'd hear after AM demodulation */
+        /* 0 Hz = DC (left edge), increasing to Nyquist */
+        for (int i = 0; i < FFT_SIZE; i++) {
+            fft_in[i].r = (pcm_buffer[i] / 32768.0f) * window_func[i];
+            fft_in[i].i = 0.0f;  /* Real signal: imaginary = 0 */
+        }
+        kiss_fft(fft_cfg, fft_in, fft_out);
+
+        /* Calculate Audio magnitudes (0 to +ZOOM_MAX_HZ, no negative frequencies) */
+        for (int i = 0; i < WATERFALL_WIDTH; i++) {
+            /* Map pixel to frequency: pixel 0 = 0 Hz, pixel end = ZOOM_MAX_HZ */
+            float freq = ((float)i / WATERFALL_WIDTH) * ZOOM_MAX_HZ;
+
+            /* Convert frequency to FFT bin (only positive frequencies) */
+            int bin = (int)(freq / bin_hz + 0.5f);
+            if (bin < 0) bin = 0;
+            if (bin >= FFT_SIZE / 2) bin = FFT_SIZE / 2 - 1;  /* Only use first half */
+
             float re = fft_out[bin].r;
             float im = fft_out[bin].i;
             magnitudes[i] = sqrtf(re * re + im * im) / FFT_SIZE;
         }
 
-        /* Auto-gain: track peak and floor */
+        /* Auto-gain: track peak and floor across both spectrums */
         float frame_max = -200.0f;
         float frame_min = 200.0f;
         for (int i = 0; i < WATERFALL_WIDTH; i++) {
-            float db = 20.0f * log10f(magnitudes[i] + 1e-10f);
+            float db = 20.0f * log10f(rf_magnitudes[i] + 1e-10f);
+            if (db > frame_max) frame_max = db;
+            if (db < frame_min) frame_min = db;
+            db = 20.0f * log10f(magnitudes[i] + 1e-10f);
             if (db > frame_max) frame_max = db;
             if (db < frame_min) frame_min = db;
         }
@@ -1135,21 +1196,38 @@ int main(int argc, char *argv[]) {
             g_floor_db = g_floor_db + AGC_DECAY * (frame_min - g_floor_db);
         }
 
-        /* Scroll pixels down by 1 row */
+        /* ===== SCROLL AND DRAW DUAL WATERFALLS ===== */
+
+        /* Scroll RF waterfall (top half) down by 1 row */
         memmove(pixels + WINDOW_WIDTH * 3,  /* dest: row 1 */
                 pixels,                      /* src: row 0 */
-                WINDOW_WIDTH * (WINDOW_HEIGHT - 1) * 3);
+                WINDOW_WIDTH * (RF_HEIGHT - 1) * 3);
 
-        /* Draw new row at top (row 0) - WATERFALL ONLY */
+        /* Scroll Audio waterfall (bottom half) down by 1 row */
+        uint8_t *audio_start = pixels + RF_HEIGHT * WINDOW_WIDTH * 3;
+        memmove(audio_start + WINDOW_WIDTH * 3,  /* dest: audio row 1 */
+                audio_start,                      /* src: audio row 0 */
+                WINDOW_WIDTH * (AUDIO_HEIGHT - 1) * 3);
+
+        /* Draw new RF row at top (row 0) */
         for (int x = 0; x < WATERFALL_WIDTH; x++) {
             uint8_t r, g, b;
-            magnitude_to_rgb(magnitudes[x], g_peak_db, g_floor_db, &r, &g, &b);
+            magnitude_to_rgb(rf_magnitudes[x], g_peak_db, g_floor_db, &r, &g, &b);
             pixels[x * 3 + 0] = r;
             pixels[x * 3 + 1] = g;
             pixels[x * 3 + 2] = b;
         }
 
-        /* Tick detection: check each frequency and mark with colored dot if above threshold */
+        /* Draw new Audio row at top of bottom half (row RF_HEIGHT) */
+        for (int x = 0; x < WATERFALL_WIDTH; x++) {
+            uint8_t r, g, b;
+            magnitude_to_rgb(magnitudes[x], g_peak_db, g_floor_db, &r, &g, &b);
+            audio_start[x * 3 + 0] = r;
+            audio_start[x * 3 + 1] = g;
+            audio_start[x * 3 + 2] = b;
+        }
+
+        /* Tick detection: use RF FFT output for proper sideband energy calculation */
         float hz_per_bin = (float)SAMPLE_RATE / FFT_SIZE;
         for (int f = 0; f < NUM_TICK_FREQS; f++) {
             int freq = TICK_FREQS[f];
@@ -1160,20 +1238,20 @@ int main(int argc, char *argv[]) {
             int bin_span = (int)(bandwidth / hz_per_bin + 0.5f);
             if (bin_span < 1) bin_span = 1;
 
-            /* Sum energy across bandwidth for both sidebands */
+            /* Sum energy across bandwidth for both sidebands using RF FFT output */
             float pos_energy = 0.0f, neg_energy = 0.0f;
             for (int b = -bin_span; b <= bin_span; b++) {
                 int pos_bin = center_bin + b;
                 int neg_bin = FFT_SIZE - center_bin + b;
 
                 if (pos_bin >= 0 && pos_bin < FFT_SIZE) {
-                    float re = fft_out[pos_bin].r;
-                    float im = fft_out[pos_bin].i;
+                    float re = rf_fft_out[pos_bin].r;  /* Use RF FFT output */
+                    float im = rf_fft_out[pos_bin].i;
                     pos_energy += sqrtf(re * re + im * im) / FFT_SIZE;
                 }
                 if (neg_bin >= 0 && neg_bin < FFT_SIZE) {
-                    float re = fft_out[neg_bin].r;
-                    float im = fft_out[neg_bin].i;
+                    float re = rf_fft_out[neg_bin].r;  /* Use RF FFT output */
+                    float im = rf_fft_out[neg_bin].i;
                     neg_energy += sqrtf(re * re + im * im) / FFT_SIZE;
                 }
             }
@@ -1186,20 +1264,20 @@ int main(int argc, char *argv[]) {
                 tick_detector_update(&g_tick_detector, combined_energy, frame_num);
             }
 
-            /* If above threshold, draw marker line spanning the bandwidth at the frequency position */
+            /* If above threshold, draw marker on BOTH waterfalls */
             if (combined_energy > g_tick_thresholds[f]) {
                 /* Calculate x position and width for zoomed display */
-                /* freq_hz maps to pixel: x = (freq_hz / ZOOM_MAX_HZ) * (WATERFALL_WIDTH/2) + WATERFALL_WIDTH/2 */
                 float freq_hz = center_bin * ((float)SAMPLE_RATE / FFT_SIZE);
                 float bw_hz = (float)TICK_BW[f];  /* ± bandwidth in Hz */
 
-                /* Convert Hz to pixels */
+                /* Convert Hz to pixels (for RF waterfall: DC centered) */
                 float pixels_per_hz = (WATERFALL_WIDTH / 2.0f) / ZOOM_MAX_HZ;
                 int center_x_offset = (int)(freq_hz * pixels_per_hz);
                 int bw_pixels = (int)(bw_hz * pixels_per_hz);
                 if (bw_pixels < 1) bw_pixels = 1;  /* At least 1 pixel wide */
 
-                /* Positive sideband: draw line from (center - bw) to (center + bw) */
+                /* === RF Waterfall: Draw at ± sideband positions === */
+                /* Positive sideband */
                 int x_pos_start = WATERFALL_WIDTH / 2 + center_x_offset - bw_pixels;
                 int x_pos_end = WATERFALL_WIDTH / 2 + center_x_offset + bw_pixels;
                 for (int x = x_pos_start; x <= x_pos_end; x++) {
@@ -1210,7 +1288,7 @@ int main(int argc, char *argv[]) {
                     }
                 }
 
-                /* Negative sideband: draw line from (center - bw) to (center + bw) */
+                /* Negative sideband */
                 int x_neg_start = WATERFALL_WIDTH / 2 - center_x_offset - bw_pixels;
                 int x_neg_end = WATERFALL_WIDTH / 2 - center_x_offset + bw_pixels;
                 for (int x = x_neg_start; x <= x_neg_end; x++) {
@@ -1220,11 +1298,27 @@ int main(int argc, char *argv[]) {
                         pixels[x * 3 + 2] = 0;    /* B */
                     }
                 }
+
+                /* === Audio Waterfall: Draw at single frequency position (0 to Nyquist) === */
+                /* Audio waterfall shows 0 Hz at left, ZOOM_MAX_HZ at right */
+                float audio_pixels_per_hz = (float)WATERFALL_WIDTH / ZOOM_MAX_HZ;
+                int audio_center_x = (int)(freq_hz * audio_pixels_per_hz);
+                int audio_bw_pixels = (int)(bw_hz * audio_pixels_per_hz);
+                if (audio_bw_pixels < 1) audio_bw_pixels = 1;
+
+                int audio_x_start = audio_center_x - audio_bw_pixels;
+                int audio_x_end = audio_center_x + audio_bw_pixels;
+                for (int x = audio_x_start; x <= audio_x_end; x++) {
+                    if (x >= 0 && x < WATERFALL_WIDTH) {
+                        audio_start[x * 3 + 0] = 255;  /* R */
+                        audio_start[x * 3 + 1] = 0;    /* G */
+                        audio_start[x * 3 + 2] = 0;    /* B */
+                    }
+                }
             }
         }
 
-        /* Draw selection indicator at bottom of first row */
-        /* Small colored tick at the selected parameter position */
+        /* Draw selection indicator on RF waterfall row */
         {
             int indicator_x = 10 + g_selected_param * 20;
             if (indicator_x < WATERFALL_WIDTH) {
@@ -1380,9 +1474,13 @@ int main(int argc, char *argv[]) {
     /* Cleanup */
     free(window_func);
     free(magnitudes);
+    free(rf_magnitudes);
     free(pixels);
     free(fft_out);
     free(fft_in);
+    free(rf_fft_out);
+    free(rf_fft_in);
+    free(g_iq_buffer);
     free(pcm_buffer);
     kiss_fft_free(fft_cfg);
 

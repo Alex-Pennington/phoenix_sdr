@@ -1195,7 +1195,7 @@ int main(int argc, char *argv[]) {
                     /* Simple decimation: keep every Nth sample */
                     g_decim_counter++;
                     if (g_decim_counter >= g_decimation_factor) {
-                        
+
                         /* ===== DISPLAY PATH OUTPUT ===== */
                         float display_mag = sqrtf(display_i_filt * display_i_filt + display_q_filt * display_q_filt);
                         float display_ac = dc_block_process(&g_display_dc_block, display_mag);

@@ -29,7 +29,7 @@ If WWV works, we're ready for the real modem work.
 
 For those wondering why a MARS project cares about WWV:
 
-**MARS funds WWV.** The Military Auxiliary Radio System has a vested interest in WWV remaining on the air. Beyond advocacy, there's a practical application here.
+The Military Auxiliary Radio System has a vested interest in WWV remaining on the air. Beyond advocacy, there's a practical application here.
 
 **Timing discipline.** The eventual goal is half-second timing accuracy using WWV as an NTP fallback. When you're in the field and internet time servers aren't available, WWV provides a reliable timing reference. Every MARS station with an HF receiver can sync to WWV.
 

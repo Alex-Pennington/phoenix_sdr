@@ -6,7 +6,7 @@
 /**
  * @file waterfall_dsp.h
  * @brief DSP processing functions for waterfall display and audio
- * 
+ *
  * Pure DSP functions - no globals, no side effects.
  * Display and audio paths use separate instances of these structs.
  */

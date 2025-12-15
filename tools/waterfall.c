@@ -1,7 +1,7 @@
 /*******************************************************************************
  * FROZEN FILE - DO NOT MODIFY (except to integrate modules)
  * See .github/copilot-instructions.md P1 section
- * 
+ *
  * DSP processing is in waterfall_dsp.c (FROZEN)
  * Audio output is in waterfall_audio.c (can modify)
  ******************************************************************************/

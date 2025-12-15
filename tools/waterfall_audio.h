@@ -1,7 +1,7 @@
 /**
  * @file waterfall_audio.h
  * @brief Audio output module for waterfall application
- * 
+ *
  * Handles Windows waveOut audio output with volume and mute control.
  * This file CAN be modified - it's part of the audio path, not the frozen DSP.
  */

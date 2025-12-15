@@ -1,7 +1,7 @@
 /**
  * @file waterfall_audio.c
  * @brief Audio output module for waterfall application
- * 
+ *
  * Handles Windows waveOut audio output with volume and mute control.
  * This file CAN be modified - it's part of the audio path, not the frozen DSP.
  */
@@ -109,14 +109,14 @@ void wf_audio_write(const int16_t *samples, uint32_t count) {
 void wf_audio_process_sample(float sample) {
     /* Apply volume scaling */
     float scaled = sample * g_volume;
-    
+
     /* Hard clamp to int16 range */
     if (scaled > 32767.0f) scaled = 32767.0f;
     if (scaled < -32767.0f) scaled = -32767.0f;
-    
+
     /* Accumulate in output buffer */
     g_audio_out[g_audio_out_count++] = (int16_t)scaled;
-    
+
     /* Write when buffer is full */
     if (g_audio_out_count >= WF_AUDIO_BUFFER_SIZE) {
         wf_audio_write(g_audio_out, g_audio_out_count);

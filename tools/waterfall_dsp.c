@@ -6,7 +6,7 @@
 /**
  * @file waterfall_dsp.c
  * @brief DSP processing functions for waterfall display and audio
- * 
+ *
  * Pure DSP functions - no globals, no side effects.
  * Display and audio paths use separate instances of these structs.
  */
@@ -75,12 +75,12 @@ float wf_dsp_path_process(wf_dsp_path_t *path, float i_raw, float q_raw) {
     /* Lowpass filter I and Q */
     float i_filt = wf_lowpass_process(&path->lowpass_i, i_raw);
     float q_filt = wf_lowpass_process(&path->lowpass_q, q_raw);
-    
+
     /* Compute magnitude (envelope) */
     float mag = sqrtf(i_filt * i_filt + q_filt * q_filt);
-    
+
     /* DC block to remove carrier, keep modulation */
     float ac = wf_dc_block_process(&path->dc_block, mag);
-    
+
     return ac;
 }

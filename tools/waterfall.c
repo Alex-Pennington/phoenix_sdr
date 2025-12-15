@@ -55,9 +55,9 @@ typedef int socket_t;
 
 /* TCP recv result codes */
 typedef enum {
-    RECV_OK = 0,        /* Data received successfully */
-    RECV_TIMEOUT,       /* No data available (timeout) */
-    RECV_ERROR          /* Connection error or closed */
+    RECV_OK = 0,
+    RECV_TIMEOUT,
+    RECV_ERROR
 } recv_result_t;
 
 /*============================================================================
@@ -66,46 +66,44 @@ typedef enum {
 
 #define DEFAULT_IQ_PORT         4536
 
-/* Binary protocol magic numbers */
-#define MAGIC_PHXI  0x50485849  /* "PHXI" - Phoenix IQ header */
-#define MAGIC_IQDQ  0x49514451  /* "IQDQ" - I/Q data frame */
-#define MAGIC_META  0x4D455441  /* "META" - Metadata update */
+#define MAGIC_PHXI  0x50485849
+#define MAGIC_IQDQ  0x49514451
+#define MAGIC_META  0x4D455441
 
-/* Sample format codes */
-#define IQ_FORMAT_S16   1       /* Interleaved int16 I, int16 Q */
-#define IQ_FORMAT_F32   2       /* Interleaved float32 I, float32 Q */
-#define IQ_FORMAT_U8    3       /* Interleaved uint8 I, uint8 Q */
+#define IQ_FORMAT_S16   1
+#define IQ_FORMAT_F32   2
+#define IQ_FORMAT_U8    3
 
 #pragma pack(push, 1)
 typedef struct {
-    uint32_t magic;             /* MAGIC_PHXI */
-    uint32_t version;           /* Protocol version (1) */
-    uint32_t sample_rate;       /* Sample rate in Hz */
-    uint32_t sample_format;     /* IQ_FORMAT_xxx */
-    uint32_t center_freq_lo;    /* Center frequency low 32 bits */
-    uint32_t center_freq_hi;    /* Center frequency high 32 bits */
-    uint32_t reserved[2];       /* Future use */
-} iq_stream_header_t;           /* 32 bytes */
+    uint32_t magic;
+    uint32_t version;
+    uint32_t sample_rate;
+    uint32_t sample_format;
+    uint32_t center_freq_lo;
+    uint32_t center_freq_hi;
+    uint32_t reserved[2];
+} iq_stream_header_t;
 
 typedef struct {
-    uint32_t magic;             /* MAGIC_IQDQ */
-    uint32_t sequence;          /* Frame sequence number */
-    uint32_t num_samples;       /* Number of I/Q pairs */
-    uint32_t flags;             /* Bit flags */
-} iq_data_frame_t;              /* 16 bytes header */
+    uint32_t magic;
+    uint32_t sequence;
+    uint32_t num_samples;
+    uint32_t flags;
+} iq_data_frame_t;
 
 typedef struct {
-    uint32_t magic;             /* MAGIC_META */
-    uint32_t sample_rate;       /* New sample rate */
-    uint32_t sample_format;     /* New format */
-    uint32_t center_freq_lo;    /* New freq low */
-    uint32_t center_freq_hi;    /* New freq high */
-    uint32_t reserved[3];       /* Future use */
-} iq_metadata_update_t;         /* 32 bytes */
+    uint32_t magic;
+    uint32_t sample_rate;
+    uint32_t sample_format;
+    uint32_t center_freq_lo;
+    uint32_t center_freq_hi;
+    uint32_t reserved[3];
+} iq_metadata_update_t;
 #pragma pack(pop)
 
 /* TCP state */
-static bool g_tcp_mode = true;  /* Default to TCP mode */
+static bool g_tcp_mode = true;
 static bool g_stdin_mode = false;
 static char g_tcp_host[256] = "localhost";
 static int g_iq_port = DEFAULT_IQ_PORT;
@@ -115,24 +113,22 @@ static uint32_t g_tcp_sample_format = IQ_FORMAT_S16;
 static uint64_t g_tcp_center_freq = 15000000;
 static bool g_tcp_streaming = false;
 
-/* Decimation for high sample rate I/Q to display rate */
 static int g_decimation_factor = 1;
 static int g_decim_counter = 0;
 
 /*============================================================================
- * Lowpass Filter (verbatim from simple_am_receiver.c)
+ * Lowpass Filter
  *============================================================================*/
 
 typedef struct {
-    float x1, x2;   /* Input history */
-    float y1, y2;   /* Output history */
-    float b0, b1, b2, a1, a2;  /* Coefficients */
+    float x1, x2;
+    float y1, y2;
+    float b0, b1, b2, a1, a2;
 } lowpass_t;
 
 static void lowpass_init(lowpass_t *lp, float cutoff_hz, float sample_rate) {
-    /* 2nd order Butterworth lowpass */
     float w0 = 2.0f * 3.14159265f * cutoff_hz / sample_rate;
-    float alpha = sinf(w0) / (2.0f * 0.7071f);  /* Q = 0.7071 for Butterworth */
+    float alpha = sinf(w0) / (2.0f * 0.7071f);
     float cos_w0 = cosf(w0);
 
     float a0 = 1.0f + alpha;
@@ -156,87 +152,54 @@ static float lowpass_process(lowpass_t *lp, float x) {
     return y;
 }
 
-/*============================================================================
- * DC Removal (verbatim from simple_am_receiver.c)
- *============================================================================*/
-
-typedef struct {
-    float x_prev;
-    float y_prev;
-} dc_block_t;
-
-static void dc_block_init(dc_block_t *dc) {
-    dc->x_prev = 0.0f;
-    dc->y_prev = 0.0f;
-}
-
-static float dc_block_process(dc_block_t *dc, float x) {
-    float y = x - dc->x_prev + 0.995f * dc->y_prev;
-    dc->x_prev = x;
-    dc->y_prev = y;
-    return y;
-}
-
-/* DSP filter instances - DISPLAY PATH */
+/* DSP filter instances */
 static lowpass_t g_display_lowpass_i;
 static lowpass_t g_display_lowpass_q;
-static dc_block_t g_display_dc_block;
 static bool g_display_dsp_initialized = false;
 
-#define IQ_FILTER_CUTOFF    3000.0f     /* 3 kHz lowpass on I/Q before magnitude */
+#define IQ_FILTER_CUTOFF    5000.0f     /* 5 kHz lowpass on I/Q */
 
-/* Buffer for decimated I/Q samples (for complex FFT) */
+/* Buffer for decimated I/Q samples */
 typedef struct {
     float i;
     float q;
 } iq_sample_t;
 
-static iq_sample_t *g_iq_buffer = NULL;      /* Circular buffer for decimated I/Q */
-static int g_iq_buffer_idx = 0;               /* Write index */
+static iq_sample_t *g_iq_buffer = NULL;
+static int g_iq_buffer_idx = 0;
 
 /*============================================================================
- * Configuration
+ * Configuration - SIMPLIFIED SINGLE WATERFALL
  *============================================================================*/
 
-#define WATERFALL_WIDTH 1024    /* Left panel: waterfall display */
-#define BUCKET_WIDTH    200     /* Right panel: bucket bars */
-#define WINDOW_WIDTH    (WATERFALL_WIDTH + BUCKET_WIDTH)  /* Total width */
-#define WINDOW_HEIGHT   800     /* Scrolling history */
-#define RF_HEIGHT       (WINDOW_HEIGHT / 2)   /* Top half: RF spectrum (complex FFT) */
-#define AUDIO_HEIGHT    (WINDOW_HEIGHT / 2)   /* Bottom half: Audio spectrum (real FFT) */
-#define FFT_SIZE        1024    /* FFT size (512 usable bins) */
-#define SAMPLE_RATE     48000   /* Expected input sample rate */
-#define ZOOM_MAX_HZ     5000.0f /* Display range: ±5000 Hz for RF, 0-5000 Hz for Audio */
+#define WATERFALL_WIDTH 1024
+#define BUCKET_WIDTH    200
+#define WINDOW_WIDTH    (WATERFALL_WIDTH + BUCKET_WIDTH)
+#define WINDOW_HEIGHT   600     /* Single waterfall, not split */
+#define FFT_SIZE        1024
+#define SAMPLE_RATE     48000
+#define ZOOM_MAX_HZ     5000.0f /* Display ±5000 Hz around DC */
 
-/* Frequency bins to monitor for WWV tick detection
- * Each has a center frequency and bandwidth based on signal characteristics:
- * - Pure tones (440, 500, 600 Hz): narrow bandwidth
- * - Short pulses (1000, 1200 Hz): wide bandwidth (energy spreads due to 5ms pulse)
- * - Subcarrier (100 Hz): tight to avoid DC noise
- * - Longer pulse (1500 Hz): moderate bandwidth (800ms pulse)
- */
+/* Frequency buckets for WWV detection */
 #define NUM_TICK_FREQS  7
 static const int   TICK_FREQS[NUM_TICK_FREQS] = { 100,   440,  500,  600,  1000, 1200, 1500 };
-static const int   TICK_BW[NUM_TICK_FREQS]    = { 10,    5,    5,    5,    100,  100,  20   };  /* ± bandwidth in Hz */
-static const char *TICK_NAMES[NUM_TICK_FREQS] = { "100Hz BCD", "440Hz Cal", "500Hz Min", "600Hz ID", "1000Hz Tick", "1200Hz WWVH", "1500Hz Tone" };
+static const int   TICK_BW[NUM_TICK_FREQS]    = { 10,    5,    5,    5,    100,  100,  20   };
+static const char *TICK_NAMES[NUM_TICK_FREQS] = { "100Hz", "440Hz", "500Hz", "600Hz", "1000Hz", "1200Hz", "1500Hz" };
 
 /*============================================================================
- * Color Mapping (magnitude to RGB) with auto-gain
+ * Display State
  *============================================================================*/
 
-/* Auto-gain state */
-static float g_peak_db = -60.0f;      /* Tracked peak in dB */
-static float g_floor_db = -60.0f;     /* Tracked noise floor in dB */
-static float g_gain_offset = 0.0f;    /* Manual gain adjustment (+/- keys) */
-#define AGC_ATTACK  0.1f              /* Fast attack for peaks */
-#define AGC_DECAY   0.001f            /* Slow decay */
+static float g_peak_db = -40.0f;
+static float g_floor_db = -80.0f;
+static float g_gain_offset = 0.0f;
+#define AGC_ATTACK  0.05f
+#define AGC_DECAY   0.002f
 
-/* Tick detection state */
-static float g_tick_thresholds[NUM_TICK_FREQS] = { 0.001f, 0.001f, 0.001f, 0.001f, 0.001f, 0.001f, 0.001f };
-static float g_bucket_energy[NUM_TICK_FREQS];  /* Current energy in each bucket */
-static int g_selected_param = 0;      /* 0 = gain, 1-6 = tick thresholds */
+/* Bucket energy and thresholds - initialized to reasonable values */
+static float g_bucket_energy[NUM_TICK_FREQS];
+static int g_selected_param = 0;
 
-/* Effective sample rate (may differ in TCP mode) */
 static int g_effective_sample_rate = SAMPLE_RATE;
 
 /*============================================================================
@@ -279,7 +242,7 @@ static socket_t tcp_connect(const char *host, int port) {
         if (sock == SOCKET_INVALID) continue;
 
         if (connect(sock, rp->ai_addr, (int)rp->ai_addrlen) == 0) {
-            break;  /* Success */
+            break;
         }
 
         socket_close(sock);
@@ -290,8 +253,6 @@ static socket_t tcp_connect(const char *host, int port) {
     return sock;
 }
 
-
-/* Read exactly n bytes from socket - returns result code */
 static recv_result_t tcp_recv_exact_ex(socket_t sock, void *buf, int n) {
     char *ptr = (char *)buf;
     int remaining = n;
@@ -302,10 +263,8 @@ static recv_result_t tcp_recv_exact_ex(socket_t sock, void *buf, int n) {
             ptr += received;
             remaining -= received;
         } else if (received == 0) {
-            /* Connection closed by peer */
             return RECV_ERROR;
         } else {
-            /* Error - check if timeout */
             int err = socket_errno;
             if (err == EWOULDBLOCK_VAL || err == ETIMEDOUT_VAL) {
                 return RECV_TIMEOUT;
@@ -316,14 +275,11 @@ static recv_result_t tcp_recv_exact_ex(socket_t sock, void *buf, int n) {
     return RECV_OK;
 }
 
-/* Read exactly n bytes from socket (legacy bool version for header) */
 static bool tcp_recv_exact(socket_t sock, void *buf, int n) {
     return tcp_recv_exact_ex(sock, buf, n) == RECV_OK;
 }
 
-/* Parse --tcp host:port argument */
 static bool parse_tcp_arg(const char *arg) {
-    /* Format: host:port or just host (use default port) */
     char *colon = strchr(arg, ':');
     if (colon) {
         int host_len = (int)(colon - arg);
@@ -338,24 +294,17 @@ static bool parse_tcp_arg(const char *arg) {
     return true;
 }
 
-/**
- * Attempt to reconnect to the server and re-read the stream header.
- * Returns true if successful, false if user should quit.
- */
 static bool tcp_reconnect(void) {
-    /* Close existing socket if any */
     if (g_iq_sock != SOCKET_INVALID) {
         socket_close(g_iq_sock);
         g_iq_sock = SOCKET_INVALID;
     }
 
-    /* Reset DSP state for fresh start after reconnection */
     g_display_dsp_initialized = false;
     g_decim_counter = 0;
 
     printf("\n*** CONNECTION LOST - Reconnecting to %s:%d ***\n", g_tcp_host, g_iq_port);
 
-    /* Retry connection until successful */
     int retry_count = 0;
     while (g_iq_sock == SOCKET_INVALID) {
         g_iq_sock = tcp_connect(g_tcp_host, g_iq_port);
@@ -366,9 +315,8 @@ static bool tcp_reconnect(void) {
             } else if (retry_count % 10 == 0) {
                 printf("Still waiting... (%d attempts)\n", retry_count);
             }
-            Sleep(1000);  /* Wait 1 second before retry */
+            Sleep(1000);
 
-            /* Check for SDL quit events during reconnect */
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
                 if (event.type == SDL_QUIT ||
@@ -382,7 +330,6 @@ static bool tcp_reconnect(void) {
 
     printf("*** RECONNECTED to %s:%d ***\n", g_tcp_host, g_iq_port);
 
-    /* Set socket timeout for header read (5s) */
 #ifdef _WIN32
     DWORD timeout_ms = 5000;
     setsockopt(g_iq_sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout_ms, sizeof(timeout_ms));
@@ -391,20 +338,19 @@ static bool tcp_reconnect(void) {
     setsockopt(g_iq_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
 
-    /* Read stream header */
     iq_stream_header_t header;
     if (!tcp_recv_exact(g_iq_sock, &header, sizeof(header))) {
         fprintf(stderr, "Failed to read I/Q stream header after reconnect\n");
         socket_close(g_iq_sock);
         g_iq_sock = SOCKET_INVALID;
-        return tcp_reconnect();  /* Try again */
+        return tcp_reconnect();
     }
 
     if (header.magic != MAGIC_PHXI) {
         fprintf(stderr, "Invalid header magic after reconnect: 0x%08X\n", header.magic);
         socket_close(g_iq_sock);
         g_iq_sock = SOCKET_INVALID;
-        return tcp_reconnect();  /* Try again */
+        return tcp_reconnect();
     }
 
     g_tcp_sample_rate = header.sample_rate;
@@ -414,11 +360,9 @@ static bool tcp_reconnect(void) {
     printf("Stream header: rate=%u Hz, format=%u, freq=%llu Hz\n",
            g_tcp_sample_rate, g_tcp_sample_format, (unsigned long long)g_tcp_center_freq);
 
-    /* Recalculate decimation */
     g_decimation_factor = g_tcp_sample_rate / SAMPLE_RATE;
     if (g_decimation_factor < 1) g_decimation_factor = 1;
 
-    /* Switch to short timeout for data streaming (100ms) */
 #ifdef _WIN32
     timeout_ms = 100;
     setsockopt(g_iq_sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout_ms, sizeof(timeout_ms));
@@ -437,24 +381,13 @@ static void print_usage(const char *progname) {
     printf("  --tcp HOST[:PORT]   Connect to SDR server I/Q port (default localhost:%d)\n", DEFAULT_IQ_PORT);
     printf("  --stdin             Read from stdin instead of TCP\n");
     printf("  -h, --help          Show this help\n");
-    printf("\nDefault: Connects to localhost:%d and retries until connected.\n", DEFAULT_IQ_PORT);
-    printf("Start streaming via control port (4535) first.\n");
-    printf("\nStdin mode: simple_am_receiver.exe -f 10 -i -o | %s --stdin\n", progname);
-    printf("\nKeyboard Controls:\n");
-    printf("  M            Mute/unmute audio\n");
-    printf("  Up/Down      Volume up/down\n");
-    printf("  +/-          Adjust gain (waterfall display)\n");
-    printf("  0-7          Select parameter to adjust\n");
-    printf("  D            Toggle tick detection\n");
-    printf("  S            Print tick statistics\n");
-    printf("  Q/ESC        Quit\n");
 }
 
 /*============================================================================
- * Tick Detector State Machine (watches 1000 Hz bucket)
+ * Tick Detector State Machine
  *============================================================================*/
 
-#define FRAME_DURATION_MS ((float)FFT_SIZE * 1000.0f / SAMPLE_RATE)  /* ~21.3ms */
+#define FRAME_DURATION_MS ((float)FFT_SIZE * 1000.0f / SAMPLE_RATE)
 #define TICK_MIN_DURATION_MS    2
 #define TICK_MAX_DURATION_MS    50
 #define TICK_COOLDOWN_MS        500
@@ -462,9 +395,9 @@ static void print_usage(const char *progname) {
 #define TICK_WARMUP_ADAPT_RATE  0.05f
 #define TICK_HYSTERESIS_RATIO   0.7f
 #define TICK_WARMUP_FRAMES      50
-#define TICK_FLASH_FRAMES       3       /* How long to show purple flash */
-#define TICK_HISTORY_SIZE       30      /* Store last N tick timestamps for averaging */
-#define TICK_AVG_WINDOW_MS      15000.0f /* 15 second averaging window */
+#define TICK_FLASH_FRAMES       5
+#define TICK_HISTORY_SIZE       30
+#define TICK_AVG_WINDOW_MS      15000.0f
 
 #define MS_TO_FRAMES(ms) ((int)((ms) / FRAME_DURATION_MS + 0.5f))
 
@@ -485,12 +418,11 @@ typedef struct {
     int cooldown_frames;
     bool warmup_complete;
     bool detection_enabled;
-    int flash_frames_remaining;  /* For purple flash */
+    int flash_frames_remaining;
     FILE *csv_file;
-    /* Interval history for averaging */
-    float tick_timestamps_ms[TICK_HISTORY_SIZE];  /* Circular buffer of tick times */
-    int tick_history_idx;                          /* Next write position */
-    int tick_history_count;                        /* Number of valid entries */
+    float tick_timestamps_ms[TICK_HISTORY_SIZE];
+    int tick_history_idx;
+    int tick_history_count;
 } tick_detector_t;
 
 static tick_detector_t g_tick_detector;
@@ -498,8 +430,8 @@ static tick_detector_t g_tick_detector;
 static void tick_detector_init(tick_detector_t *td) {
     memset(td, 0, sizeof(*td));
     td->state = TICK_IDLE;
-    td->noise_floor = 0.001f;
-    td->threshold_high = td->noise_floor * 2.0f;
+    td->noise_floor = 0.01f;  /* Start with reasonable estimate */
+    td->threshold_high = td->noise_floor * 3.0f;
     td->threshold_low = td->threshold_high * TICK_HYSTERESIS_RATIO;
     td->detection_enabled = true;
     td->flash_frames_remaining = 0;
@@ -516,7 +448,6 @@ static void tick_detector_close(tick_detector_t *td) {
     if (td->csv_file) { fclose(td->csv_file); td->csv_file = NULL; }
 }
 
-/* Calculate average interval from ticks within the last 15 seconds */
 static float tick_detector_avg_interval(tick_detector_t *td, float current_time_ms) {
     if (td->tick_history_count < 2) return 0.0f;
 
@@ -525,7 +456,6 @@ static float tick_detector_avg_interval(tick_detector_t *td, float current_time_
     int count = 0;
     float prev_time = -1.0f;
 
-    /* Scan through history to find ticks within window */
     for (int i = 0; i < td->tick_history_count; i++) {
         int idx = (td->tick_history_idx - td->tick_history_count + i + TICK_HISTORY_SIZE) % TICK_HISTORY_SIZE;
         float t = td->tick_timestamps_ms[idx];
@@ -545,24 +475,22 @@ static bool tick_detector_update(tick_detector_t *td, float energy, uint64_t fra
     if (!td->detection_enabled) return false;
     bool tick_detected = false;
 
-    /* Warmup */
     if (!td->warmup_complete) {
         td->noise_floor += TICK_WARMUP_ADAPT_RATE * (energy - td->noise_floor);
         if (td->noise_floor < 0.0001f) td->noise_floor = 0.0001f;
-        td->threshold_high = td->noise_floor * 2.0f;
+        td->threshold_high = td->noise_floor * 3.0f;
         td->threshold_low = td->threshold_high * TICK_HYSTERESIS_RATIO;
         if (frame_num >= td->start_frame + TICK_WARMUP_FRAMES) {
             td->warmup_complete = true;
-            printf("[WARMUP] Complete. Noise=%.6f, Thresh=%.6f\n", td->noise_floor, td->threshold_high);
+            printf("[WARMUP] Complete. Noise=%.4f, Thresh=%.4f\n", td->noise_floor, td->threshold_high);
         }
         return false;
     }
 
-    /* Adapt noise floor during idle */
     if (td->state == TICK_IDLE && energy < td->threshold_high) {
         td->noise_floor += TICK_NOISE_ADAPT_RATE * (energy - td->noise_floor);
         if (td->noise_floor < 0.0001f) td->noise_floor = 0.0001f;
-        td->threshold_high = td->noise_floor * 2.0f;
+        td->threshold_high = td->noise_floor * 3.0f;
         td->threshold_low = td->threshold_high * TICK_HYSTERESIS_RATIO;
     }
 
@@ -588,12 +516,10 @@ static bool tick_detector_update(tick_detector_t *td, float energy, uint64_t fra
                     float interval_ms = (td->last_tick_frame > 0) ?
                         (td->tick_start_frame - td->last_tick_frame) * FRAME_DURATION_MS : 0.0f;
 
-                    /* Store timestamp in history buffer */
                     td->tick_timestamps_ms[td->tick_history_idx] = timestamp_ms;
                     td->tick_history_idx = (td->tick_history_idx + 1) % TICK_HISTORY_SIZE;
                     if (td->tick_history_count < TICK_HISTORY_SIZE) td->tick_history_count++;
 
-                    /* Calculate average interval over last 15 seconds */
                     float avg_interval_ms = tick_detector_avg_interval(td, timestamp_ms);
 
                     char ind = (interval_ms > 950.0f && interval_ms < 1050.0f) ? ' ' : '!';
@@ -630,43 +556,38 @@ static void tick_detector_print_stats(tick_detector_t *td, uint64_t frame) {
     float avg_interval = tick_detector_avg_interval(td, current_time_ms);
     printf("\n=== TICK STATS ===\n");
     printf("Elapsed: %.1fs  Detected: %d  Expected: %d  Rate: %.1f%%\n", elapsed, td->ticks_detected, expected, rate);
-    printf("Avg interval (15s): %.0fms  Rejected: %d  Noise: %.6f\n", avg_interval, td->ticks_rejected, td->noise_floor);
+    printf("Avg interval (15s): %.0fms  Rejected: %d  Noise: %.4f\n", avg_interval, td->ticks_rejected, td->noise_floor);
     printf("==================\n\n");
 }
 
-static void magnitude_to_rgb(float mag, float peak_db, float floor_db, uint8_t *r, uint8_t *g, uint8_t *b) {
-    /* Log scale for better visibility */
-    float db = 20.0f * log10f(mag + 1e-10f);
+/*============================================================================
+ * Color Mapping
+ *============================================================================*/
 
-    /* Apply manual gain offset */
+static void magnitude_to_rgb(float mag, float peak_db, float floor_db, uint8_t *r, uint8_t *g, uint8_t *b) {
+    float db = 20.0f * log10f(mag + 1e-10f);
     db += g_gain_offset;
 
-    /* Map dB to 0-1 range using tracked peak and floor */
     float range = peak_db - floor_db;
-    if (range < 20.0f) range = 20.0f;  /* Minimum 20 dB range */
+    if (range < 20.0f) range = 20.0f;
 
     float norm = (db - floor_db) / range;
     if (norm < 0.0f) norm = 0.0f;
     if (norm > 1.0f) norm = 1.0f;
 
-    /* Blue -> Cyan -> Green -> Yellow -> Red */
     if (norm < 0.25f) {
-        /* Black to Blue */
         *r = 0;
         *g = 0;
         *b = (uint8_t)(norm * 4.0f * 255.0f);
     } else if (norm < 0.5f) {
-        /* Blue to Cyan */
         *r = 0;
         *g = (uint8_t)((norm - 0.25f) * 4.0f * 255.0f);
         *b = 255;
     } else if (norm < 0.75f) {
-        /* Cyan to Yellow */
         *r = (uint8_t)((norm - 0.5f) * 4.0f * 255.0f);
         *g = 255;
         *b = (uint8_t)((0.75f - norm) * 4.0f * 255.0f);
     } else {
-        /* Yellow to Red */
         *r = 255;
         *g = (uint8_t)((1.0f - norm) * 4.0f * 255.0f);
         *b = 0;
@@ -678,7 +599,6 @@ static void magnitude_to_rgb(float mag, float peak_db, float floor_db, uint8_t *
  *============================================================================*/
 
 int main(int argc, char *argv[]) {
-    /* Parse command line */
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--tcp") == 0 && i + 1 < argc) {
             g_tcp_mode = true;
@@ -695,17 +615,14 @@ int main(int argc, char *argv[]) {
 
     print_version("Phoenix SDR - Waterfall");
 
-    /* TCP mode initialization */
     if (g_tcp_mode) {
-        printf("TCP Mode: Connecting to %s:%d (I/Q data)\n",
-               g_tcp_host, g_iq_port);
+        printf("TCP Mode: Connecting to %s:%d\n", g_tcp_host, g_iq_port);
 
         if (!tcp_init()) {
             fprintf(stderr, "Failed to initialize networking\n");
             return 1;
         }
 
-        /* Retry connection until successful */
         int retry_count = 0;
         while (g_iq_sock == SOCKET_INVALID) {
             g_iq_sock = tcp_connect(g_tcp_host, g_iq_port);
@@ -716,12 +633,11 @@ int main(int argc, char *argv[]) {
                 } else if (retry_count % 10 == 0) {
                     printf("Still waiting... (%d attempts)\n", retry_count);
                 }
-                Sleep(1000);  /* Wait 1 second before retry */
+                Sleep(1000);
             }
         }
         printf("\n*** CONNECTED to %s:%d ***\n\n", g_tcp_host, g_iq_port);
 
-        /* Set socket timeout for header read (5s) */
 #ifdef _WIN32
         DWORD timeout_ms = 5000;
         setsockopt(g_iq_sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout_ms, sizeof(timeout_ms));
@@ -730,8 +646,7 @@ int main(int argc, char *argv[]) {
         setsockopt(g_iq_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
 
-        /* Read stream header */
-        printf("Waiting for stream header (5s timeout)...\n");
+        printf("Waiting for stream header...\n");
         iq_stream_header_t header;
         if (!tcp_recv_exact(g_iq_sock, &header, sizeof(header))) {
             fprintf(stderr, "Failed to read I/Q stream header\n");
@@ -741,7 +656,7 @@ int main(int argc, char *argv[]) {
         }
 
         if (header.magic != MAGIC_PHXI) {
-            fprintf(stderr, "Invalid header magic: 0x%08X (expected PHXI)\n", header.magic);
+            fprintf(stderr, "Invalid header magic: 0x%08X\n", header.magic);
             socket_close(g_iq_sock);
             tcp_cleanup();
             return 1;
@@ -751,11 +666,9 @@ int main(int argc, char *argv[]) {
         g_tcp_sample_format = header.sample_format;
         g_tcp_center_freq = ((uint64_t)header.center_freq_hi << 32) | header.center_freq_lo;
 
-        printf("Stream header: rate=%u Hz, format=%u, freq=%llu Hz\n",
+        printf("Stream: rate=%u Hz, format=%u, freq=%llu Hz\n",
                g_tcp_sample_rate, g_tcp_sample_format, (unsigned long long)g_tcp_center_freq);
 
-        /* Switch to short timeout for data streaming (100ms) */
-        /* This allows the main loop to stay responsive when no data is flowing */
 #ifdef _WIN32
         timeout_ms = 100;
         setsockopt(g_iq_sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout_ms, sizeof(timeout_ms));
@@ -764,28 +677,22 @@ int main(int argc, char *argv[]) {
         tv.tv_usec = 100000;
         setsockopt(g_iq_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
-        printf("Waiting for I/Q data (use control port %d to START streaming)...\n", g_iq_port - 1);
 
-        /* Calculate decimation factor to get to display rate (~48kHz) */
         g_decimation_factor = g_tcp_sample_rate / SAMPLE_RATE;
         if (g_decimation_factor < 1) g_decimation_factor = 1;
         g_effective_sample_rate = g_tcp_sample_rate / g_decimation_factor;
         printf("Decimation: %d:1 -> %d Hz effective\n", g_decimation_factor, g_effective_sample_rate);
 
-        /* Note: Streaming should be started externally via control port */
-        /* Waterfall is a passive I/Q data consumer only */
         g_tcp_streaming = true;
     }
 
     if (g_stdin_mode) {
 #ifdef _WIN32
-        /* Set stdin to binary mode */
         _setmode(_fileno(stdin), _O_BINARY);
 #endif
         printf("Stdin mode: Waiting for PCM data...\n");
     }
 
-    /* Initialize SDL */
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
@@ -825,7 +732,6 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    /* Initialize KissFFT - one config for both FFTs (same size) */
     kiss_fft_cfg fft_cfg = kiss_fft_alloc(FFT_SIZE, 0, NULL, NULL);
     if (!fft_cfg) {
         fprintf(stderr, "kiss_fft_alloc failed\n");
@@ -837,113 +743,50 @@ int main(int argc, char *argv[]) {
     }
 
     /* Allocate buffers */
-    int16_t *pcm_buffer = (int16_t *)malloc(FFT_SIZE * sizeof(int16_t));  /* For audio (envelope) samples */
     kiss_fft_cpx *fft_in = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
     kiss_fft_cpx *fft_out = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
     uint8_t *pixels = (uint8_t *)malloc(WINDOW_WIDTH * WINDOW_HEIGHT * 3);
-    float *magnitudes = (float *)malloc(WATERFALL_WIDTH * sizeof(float));       /* Audio spectrum magnitudes */
+    float *magnitudes = (float *)malloc(WATERFALL_WIDTH * sizeof(float));
+    g_iq_buffer = (iq_sample_t *)malloc(FFT_SIZE * sizeof(iq_sample_t));
 
-    /* Additional buffers for RF spectrum (complex FFT) */
-    kiss_fft_cpx *rf_fft_in = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
-    kiss_fft_cpx *rf_fft_out = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
-    float *rf_magnitudes = (float *)malloc(WATERFALL_WIDTH * sizeof(float));    /* RF spectrum magnitudes */
-    g_iq_buffer = (iq_sample_t *)malloc(FFT_SIZE * sizeof(iq_sample_t));        /* Decimated I/Q buffer */
-
-    if (!pcm_buffer || !fft_in || !fft_out || !pixels || !magnitudes ||
-        !rf_fft_in || !rf_fft_out || !rf_magnitudes || !g_iq_buffer) {
+    if (!fft_in || !fft_out || !pixels || !magnitudes || !g_iq_buffer) {
         fprintf(stderr, "Memory allocation failed\n");
         return 1;
     }
 
-    /* Clear I/Q buffer */
     memset(g_iq_buffer, 0, FFT_SIZE * sizeof(iq_sample_t));
     g_iq_buffer_idx = 0;
-
-    /* Clear pixel buffer */
     memset(pixels, 0, WINDOW_WIDTH * WINDOW_HEIGHT * 3);
 
-    /* Hanning window */
     float *window_func = (float *)malloc(FFT_SIZE * sizeof(float));
     for (int i = 0; i < FFT_SIZE; i++) {
         window_func[i] = 0.5f * (1.0f - cosf(2.0f * 3.14159265f * i / (FFT_SIZE - 1)));
     }
 
-    printf("Waterfall display ready.\n");
-    if (g_tcp_mode) {
-        printf("Mode: TCP I/Q (rate=%u Hz, decim=%d:1 -> %d Hz)\n",
-               g_tcp_sample_rate, g_decimation_factor, g_effective_sample_rate);
-    } else {
-        printf("Mode: Stdin PCM (rate=%d Hz)\n", SAMPLE_RATE);
-    }
-    printf("Window: %dx%d, FFT: %d bins (%.1f Hz/bin)\n",
-           WINDOW_WIDTH, WINDOW_HEIGHT, FFT_SIZE / 2, (float)g_effective_sample_rate / FFT_SIZE);
-    printf("Keys: 0=gain, 1-7=tick thresholds, +/- adjust, D=detect, S=stats, Q/Esc quit\n");
-    printf("1:100Hz(±10) 2:440Hz(±5) 3:500Hz(±5) 4:600Hz(±5) 5:1000Hz(±100) 6:1200Hz(±100) 7:1500Hz(±20)\n");
+    printf("\nWaterfall ready. Window: %dx%d, FFT: %d bins\n", WINDOW_WIDTH, WINDOW_HEIGHT, FFT_SIZE);
+    printf("Keys: +/- gain, D=detect toggle, S=stats, Q/Esc quit\n\n");
 
-    /* Initialize tick detector */
     tick_detector_init(&g_tick_detector);
     uint64_t frame_num = 0;
-    printf("\nTick detection ENABLED - watching 1000 Hz bucket\n");
+    printf("Tick detection ENABLED - watching 1000 Hz bucket\n");
     printf("Logging to wwv_ticks.csv\n\n");
 
     bool running = true;
 
     while (running) {
-        /* Handle SDL events */
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 running = false;
             } else if (event.type == SDL_KEYDOWN) {
-                if (event.key.keysym.sym == SDLK_ESCAPE ||
-                    event.key.keysym.sym == SDLK_q) {
+                if (event.key.keysym.sym == SDLK_ESCAPE || event.key.keysym.sym == SDLK_q) {
                     running = false;
-                } else if (event.key.keysym.sym == SDLK_PLUS ||
-                           event.key.keysym.sym == SDLK_EQUALS ||
-                           event.key.keysym.sym == SDLK_KP_PLUS) {
-                    if (g_selected_param == 0) {
-                        g_gain_offset += 3.0f;
-                        printf("Gain: %+.0f dB\n", g_gain_offset);
-                    } else {
-                        int idx = g_selected_param - 1;
-                        g_tick_thresholds[idx] *= 1.5f;
-                        printf("%s threshold: %.4f\n", TICK_NAMES[idx], g_tick_thresholds[idx]);
-                    }
-                } else if (event.key.keysym.sym == SDLK_MINUS ||
-                           event.key.keysym.sym == SDLK_KP_MINUS) {
-                    if (g_selected_param == 0) {
-                        g_gain_offset -= 3.0f;
-                        printf("Gain: %+.0f dB\n", g_gain_offset);
-                    } else {
-                        int idx = g_selected_param - 1;
-                        g_tick_thresholds[idx] /= 1.5f;
-                        if (g_tick_thresholds[idx] < 0.0001f) g_tick_thresholds[idx] = 0.0001f;
-                        printf("%s threshold: %.4f\n", TICK_NAMES[idx], g_tick_thresholds[idx]);
-                    }
-                } else if (event.key.keysym.sym == SDLK_0 || event.key.keysym.sym == SDLK_KP_0) {
-                    g_selected_param = 0;
-                    printf("Selected: Gain (%+.0f dB)\n", g_gain_offset);
-                } else if (event.key.keysym.sym == SDLK_1 || event.key.keysym.sym == SDLK_KP_1) {
-                    g_selected_param = 1;
-                    printf("Selected: %s (threshold: %.4f)\n", TICK_NAMES[0], g_tick_thresholds[0]);
-                } else if (event.key.keysym.sym == SDLK_2 || event.key.keysym.sym == SDLK_KP_2) {
-                    g_selected_param = 2;
-                    printf("Selected: %s (threshold: %.4f)\n", TICK_NAMES[1], g_tick_thresholds[1]);
-                } else if (event.key.keysym.sym == SDLK_3 || event.key.keysym.sym == SDLK_KP_3) {
-                    g_selected_param = 3;
-                    printf("Selected: %s (threshold: %.4f)\n", TICK_NAMES[2], g_tick_thresholds[2]);
-                } else if (event.key.keysym.sym == SDLK_4 || event.key.keysym.sym == SDLK_KP_4) {
-                    g_selected_param = 4;
-                    printf("Selected: %s (threshold: %.4f)\n", TICK_NAMES[3], g_tick_thresholds[3]);
-                } else if (event.key.keysym.sym == SDLK_5 || event.key.keysym.sym == SDLK_KP_5) {
-                    g_selected_param = 5;
-                    printf("Selected: %s (threshold: %.4f)\n", TICK_NAMES[4], g_tick_thresholds[4]);
-                } else if (event.key.keysym.sym == SDLK_6 || event.key.keysym.sym == SDLK_KP_6) {
-                    g_selected_param = 6;
-                    printf("Selected: %s (threshold: %.4f)\n", TICK_NAMES[5], g_tick_thresholds[5]);
-                } else if (event.key.keysym.sym == SDLK_7 || event.key.keysym.sym == SDLK_KP_7) {
-                    g_selected_param = 7;
-                    printf("Selected: %s (threshold: %.4f)\n", TICK_NAMES[6], g_tick_thresholds[6]);
+                } else if (event.key.keysym.sym == SDLK_PLUS || event.key.keysym.sym == SDLK_EQUALS || event.key.keysym.sym == SDLK_KP_PLUS) {
+                    g_gain_offset += 3.0f;
+                    printf("Gain: %+.0f dB\n", g_gain_offset);
+                } else if (event.key.keysym.sym == SDLK_MINUS || event.key.keysym.sym == SDLK_KP_MINUS) {
+                    g_gain_offset -= 3.0f;
+                    printf("Gain: %+.0f dB\n", g_gain_offset);
                 } else if (event.key.keysym.sym == SDLK_d) {
                     g_tick_detector.detection_enabled = !g_tick_detector.detection_enabled;
                     printf("Tick detection: %s\n", g_tick_detector.detection_enabled ? "ENABLED" : "DISABLED");
@@ -953,36 +796,27 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        /* Read samples - either from stdin (PCM) or TCP (I/Q) */
         bool got_samples = false;
+        int samples_collected = 0;
 
         if (g_tcp_mode) {
-            /* TCP mode: read I/Q data frames */
-            int samples_needed = FFT_SIZE;
-            int pcm_idx = 0;
-
-            while (pcm_idx < samples_needed && running) {
-                /* Check for metadata or data frame */
+            while (samples_collected < FFT_SIZE && running) {
                 uint32_t magic;
                 recv_result_t result = tcp_recv_exact_ex(g_iq_sock, &magic, 4);
                 if (result == RECV_TIMEOUT) {
-                    /* No data yet - break out to update display, will retry next frame */
                     break;
                 }
                 if (result == RECV_ERROR) {
-                    /* Connection lost - attempt to reconnect */
                     if (!tcp_reconnect()) {
-                        running = false;  /* User quit during reconnect */
+                        running = false;
                     }
-                    break;  /* Break out to main loop, will retry with new connection */
+                    break;
                 }
 
                 if (magic == MAGIC_META) {
-                    /* Metadata update - read rest of struct */
                     iq_metadata_update_t meta;
                     meta.magic = magic;
                     if (tcp_recv_exact_ex(g_iq_sock, ((char*)&meta) + 4, sizeof(meta) - 4) != RECV_OK) {
-                        /* Connection error reading metadata - reconnect */
                         if (!tcp_reconnect()) {
                             running = false;
                         }
@@ -1002,23 +836,19 @@ int main(int argc, char *argv[]) {
                     continue;
                 }
 
-                /* Read data frame header */
                 iq_data_frame_t frame;
                 frame.magic = magic;
                 if (tcp_recv_exact_ex(g_iq_sock, ((char*)&frame) + 4, sizeof(frame) - 4) != RECV_OK) {
-                    /* Connection error reading frame header - reconnect */
                     if (!tcp_reconnect()) {
                         running = false;
                     }
                     break;
                 }
 
-                /* Read I/Q samples based on format */
                 int bytes_per_sample = (g_tcp_sample_format == IQ_FORMAT_S16) ? 4 :
                                        (g_tcp_sample_format == IQ_FORMAT_F32) ? 8 : 2;
                 int data_bytes = frame.num_samples * bytes_per_sample;
 
-                /* Allocate temp buffer for raw I/Q data */
                 static uint8_t *iq_buffer = NULL;
                 static int iq_buffer_size = 0;
                 if (data_bytes > iq_buffer_size) {
@@ -1027,31 +857,24 @@ int main(int argc, char *argv[]) {
                 }
 
                 if (tcp_recv_exact_ex(g_iq_sock, iq_buffer, data_bytes) != RECV_OK) {
-                    /* Connection error reading I/Q data - reconnect */
                     if (!tcp_reconnect()) {
                         running = false;
                     }
                     break;
                 }
 
-                /* Convert I/Q to magnitude and decimate - verbatim from simple_am_receiver.c */
-
-                /* Initialize DSP filters on first sample (after we know sample rate) */
                 if (!g_display_dsp_initialized) {
                     lowpass_init(&g_display_lowpass_i, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
                     lowpass_init(&g_display_lowpass_q, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
-                    dc_block_init(&g_display_dc_block);
                     g_display_dsp_initialized = true;
-                    printf("Display DSP initialized: lowpass @ %.0f Hz, sample rate = %u\n",
-                           IQ_FILTER_CUTOFF, g_tcp_sample_rate);
+                    printf("DSP initialized: lowpass @ %.0f Hz\n", IQ_FILTER_CUTOFF);
                 }
 
-                for (uint32_t s = 0; s < frame.num_samples && pcm_idx < samples_needed; s++) {
+                for (uint32_t s = 0; s < frame.num_samples && samples_collected < FFT_SIZE; s++) {
                     float i_raw, q_raw;
 
                     if (g_tcp_sample_format == IQ_FORMAT_S16) {
                         int16_t *samples = (int16_t *)iq_buffer;
-                        /* NO normalization - keep raw int16 values as float */
                         i_raw = (float)samples[s * 2];
                         q_raw = (float)samples[s * 2 + 1];
                     } else if (g_tcp_sample_format == IQ_FORMAT_F32) {
@@ -1059,55 +882,32 @@ int main(int argc, char *argv[]) {
                         i_raw = samples[s * 2];
                         q_raw = samples[s * 2 + 1];
                     } else {
-                        /* U8 format */
                         i_raw = (float)(iq_buffer[s * 2] - 128);
                         q_raw = (float)(iq_buffer[s * 2 + 1] - 128);
                     }
 
-                    /* ===== DISPLAY PATH ===== */
-                    /* Step 1: Lowpass filter I and Q (runs on EVERY sample) */
-                    float display_i_filt = lowpass_process(&g_display_lowpass_i, i_raw);
-                    float display_q_filt = lowpass_process(&g_display_lowpass_q, q_raw);
+                    /* Lowpass filter I and Q */
+                    float i_filt = lowpass_process(&g_display_lowpass_i, i_raw);
+                    float q_filt = lowpass_process(&g_display_lowpass_q, q_raw);
 
-                    /* Step 2: Envelope detection (runs on EVERY filtered sample) */
-                    float display_mag = sqrtf(display_i_filt * display_i_filt + display_q_filt * display_q_filt);
-
-                    /* Step 3: Decimation - keep every Nth sample */
+                    /* Decimate */
                     g_decim_counter++;
                     if (g_decim_counter >= g_decimation_factor) {
                         g_decim_counter = 0;
 
-                        /* Store decimated I/Q for RF spectrum (complex FFT) */
-                        g_iq_buffer[g_iq_buffer_idx].i = display_i_filt;
-                        g_iq_buffer[g_iq_buffer_idx].q = display_q_filt;
+                        /* Store filtered I/Q for complex FFT */
+                        g_iq_buffer[g_iq_buffer_idx].i = i_filt;
+                        g_iq_buffer[g_iq_buffer_idx].q = q_filt;
                         g_iq_buffer_idx = (g_iq_buffer_idx + 1) % FFT_SIZE;
-
-                        /* Step 4: DC removal on envelope (for audio spectrum) */
-                        float display_ac = dc_block_process(&g_display_dc_block, display_mag);
-
-                        /* Step 5: Scale and clip for audio spectrum */
-                        float display_sample = display_ac * 50.0f;
-                        if (display_sample > 32767.0f) display_sample = 32767.0f;
-                        if (display_sample < -32767.0f) display_sample = -32767.0f;
-                        pcm_buffer[pcm_idx++] = (int16_t)display_sample;
+                        samples_collected++;
                     }
                 }
             }
-            got_samples = (pcm_idx >= samples_needed);
+            got_samples = (samples_collected >= FFT_SIZE);
         } else {
-            /* Stdin mode: Read PCM samples */
-            size_t read_count = fread(pcm_buffer, sizeof(int16_t), FFT_SIZE, stdin);
-            if (read_count < (size_t)FFT_SIZE) {
-                if (feof(stdin)) {
-                    printf("End of input\n");
-                    /* Keep window open but stop reading */
-                    SDL_Delay(100);
-                    continue;
-                }
-                /* Pad with zeros if partial read */
-                memset(pcm_buffer + read_count, 0, (FFT_SIZE - read_count) * sizeof(int16_t));
-            }
-            got_samples = true;
+            /* Stdin mode - not used in TCP mode */
+            SDL_Delay(10);
+            continue;
         }
 
         if (!got_samples) {
@@ -1115,355 +915,235 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        /* ===== RF SPECTRUM: Complex FFT of I/Q data ===== */
-        /* This shows the actual RF spectrum around the tuned frequency */
-        /* DC = carrier, ±frequencies = sidebands */
+        /* Complex FFT of I/Q data - shows RF spectrum centered on DC */
         for (int i = 0; i < FFT_SIZE; i++) {
-            /* Read from I/Q buffer (circular, starting from oldest sample) */
             int buf_idx = (g_iq_buffer_idx + i) % FFT_SIZE;
-            rf_fft_in[i].r = g_iq_buffer[buf_idx].i * window_func[i];  /* I = real */
-            rf_fft_in[i].i = g_iq_buffer[buf_idx].q * window_func[i];  /* Q = imaginary */
-        }
-        kiss_fft(fft_cfg, rf_fft_in, rf_fft_out);
-
-        /* Calculate RF magnitudes with FFT shift (DC in center) */
-        float bin_hz = (float)SAMPLE_RATE / FFT_SIZE;  /* Hz per FFT bin (~46.875 Hz) */
-        for (int i = 0; i < WATERFALL_WIDTH; i++) {
-            /* Map pixel to frequency: pixel 0 = -ZOOM_MAX_HZ, pixel center = 0, pixel end = +ZOOM_MAX_HZ */
-            float freq = ((float)i / WATERFALL_WIDTH - 0.5f) * 2.0f * ZOOM_MAX_HZ;
-
-            /* Convert frequency to FFT bin */
-            int bin;
-            if (freq >= 0) {
-                bin = (int)(freq / bin_hz + 0.5f);  /* Positive frequencies: bins 0-511 */
-            } else {
-                bin = FFT_SIZE + (int)(freq / bin_hz - 0.5f);  /* Negative frequencies: bins 513-1023 */
-            }
-
-            /* Clamp to valid range */
-            if (bin < 0) bin = 0;
-            if (bin >= FFT_SIZE) bin = FFT_SIZE - 1;
-
-            float re = rf_fft_out[bin].r;
-            float im = rf_fft_out[bin].i;
-            rf_magnitudes[i] = sqrtf(re * re + im * im) / FFT_SIZE;
-        }
-
-        /* ===== AUDIO SPECTRUM: Real FFT of envelope (demodulated audio) ===== */
-        /* This shows what you'd hear after AM demodulation */
-        /* 0 Hz = DC (left edge), increasing to Nyquist */
-        for (int i = 0; i < FFT_SIZE; i++) {
-            fft_in[i].r = (pcm_buffer[i] / 32768.0f) * window_func[i];
-            fft_in[i].i = 0.0f;  /* Real signal: imaginary = 0 */
+            fft_in[i].r = g_iq_buffer[buf_idx].i * window_func[i];
+            fft_in[i].i = g_iq_buffer[buf_idx].q * window_func[i];
         }
         kiss_fft(fft_cfg, fft_in, fft_out);
 
-        /* Calculate Audio magnitudes (0 to +ZOOM_MAX_HZ, no negative frequencies) */
+        /* Calculate magnitudes with FFT shift (DC in center) */
+        float bin_hz = (float)SAMPLE_RATE / FFT_SIZE;
         for (int i = 0; i < WATERFALL_WIDTH; i++) {
-            /* Map pixel to frequency: pixel 0 = 0 Hz, pixel end = ZOOM_MAX_HZ */
-            float freq = ((float)i / WATERFALL_WIDTH) * ZOOM_MAX_HZ;
+            /* Map pixel to frequency: left = -ZOOM_MAX_HZ, center = 0 (DC), right = +ZOOM_MAX_HZ */
+            float freq = ((float)i / WATERFALL_WIDTH - 0.5f) * 2.0f * ZOOM_MAX_HZ;
 
-            /* Convert frequency to FFT bin (only positive frequencies) */
-            int bin = (int)(freq / bin_hz + 0.5f);
+            int bin;
+            if (freq >= 0) {
+                bin = (int)(freq / bin_hz + 0.5f);
+            } else {
+                bin = FFT_SIZE + (int)(freq / bin_hz - 0.5f);
+            }
+
             if (bin < 0) bin = 0;
-            if (bin >= FFT_SIZE / 2) bin = FFT_SIZE / 2 - 1;  /* Only use first half */
+            if (bin >= FFT_SIZE) bin = FFT_SIZE - 1;
 
             float re = fft_out[bin].r;
             float im = fft_out[bin].i;
             magnitudes[i] = sqrtf(re * re + im * im) / FFT_SIZE;
         }
 
-        /* Auto-gain: track peak and floor across both spectrums */
+        /* Auto-gain tracking */
         float frame_max = -200.0f;
         float frame_min = 200.0f;
         for (int i = 0; i < WATERFALL_WIDTH; i++) {
-            float db = 20.0f * log10f(rf_magnitudes[i] + 1e-10f);
-            if (db > frame_max) frame_max = db;
-            if (db < frame_min) frame_min = db;
-            db = 20.0f * log10f(magnitudes[i] + 1e-10f);
+            float db = 20.0f * log10f(magnitudes[i] + 1e-10f);
             if (db > frame_max) frame_max = db;
             if (db < frame_min) frame_min = db;
         }
-        /* Update tracked values with attack/decay */
+
         if (frame_max > g_peak_db) {
-            g_peak_db = g_peak_db + AGC_ATTACK * (frame_max - g_peak_db);
+            g_peak_db += AGC_ATTACK * (frame_max - g_peak_db);
         } else {
-            g_peak_db = g_peak_db + AGC_DECAY * (frame_max - g_peak_db);
+            g_peak_db += AGC_DECAY * (frame_max - g_peak_db);
         }
         if (frame_min < g_floor_db) {
-            g_floor_db = g_floor_db + AGC_ATTACK * (frame_min - g_floor_db);
+            g_floor_db += AGC_ATTACK * (frame_min - g_floor_db);
         } else {
-            g_floor_db = g_floor_db + AGC_DECAY * (frame_min - g_floor_db);
+            g_floor_db += AGC_DECAY * (frame_min - g_floor_db);
         }
 
-        /* ===== SCROLL AND DRAW DUAL WATERFALLS ===== */
+        /* Scroll waterfall down by 1 row */
+        memmove(pixels + WINDOW_WIDTH * 3,
+                pixels,
+                WINDOW_WIDTH * (WINDOW_HEIGHT - 1) * 3);
 
-        /* Scroll RF waterfall (top half) down by 1 row */
-        memmove(pixels + WINDOW_WIDTH * 3,  /* dest: row 1 */
-                pixels,                      /* src: row 0 */
-                WINDOW_WIDTH * (RF_HEIGHT - 1) * 3);
-
-        /* Scroll Audio waterfall (bottom half) down by 1 row */
-        uint8_t *audio_start = pixels + RF_HEIGHT * WINDOW_WIDTH * 3;
-        memmove(audio_start + WINDOW_WIDTH * 3,  /* dest: audio row 1 */
-                audio_start,                      /* src: audio row 0 */
-                WINDOW_WIDTH * (AUDIO_HEIGHT - 1) * 3);
-
-        /* Draw new RF row at top (row 0) */
+        /* Draw new row at top */
         for (int x = 0; x < WATERFALL_WIDTH; x++) {
             uint8_t r, g, b;
-            magnitude_to_rgb(rf_magnitudes[x], g_peak_db, g_floor_db, &r, &g, &b);
+            magnitude_to_rgb(magnitudes[x], g_peak_db, g_floor_db, &r, &g, &b);
             pixels[x * 3 + 0] = r;
             pixels[x * 3 + 1] = g;
             pixels[x * 3 + 2] = b;
         }
 
-        /* Draw new Audio row at top of bottom half (row RF_HEIGHT) */
-        for (int x = 0; x < WATERFALL_WIDTH; x++) {
-            uint8_t r, g, b;
-            magnitude_to_rgb(magnitudes[x], g_peak_db, g_floor_db, &r, &g, &b);
-            audio_start[x * 3 + 0] = r;
-            audio_start[x * 3 + 1] = g;
-            audio_start[x * 3 + 2] = b;
-        }
-
-        /* Tick detection: use RF FFT output for proper sideband energy calculation */
+        /* Calculate bucket energies and feed tick detector */
         float hz_per_bin = (float)SAMPLE_RATE / FFT_SIZE;
         for (int f = 0; f < NUM_TICK_FREQS; f++) {
             int freq = TICK_FREQS[f];
             int bandwidth = TICK_BW[f];
 
-            /* Calculate center bin and how many bins to sum based on bandwidth */
             int center_bin = (int)(freq / hz_per_bin + 0.5f);
             int bin_span = (int)(bandwidth / hz_per_bin + 0.5f);
             if (bin_span < 1) bin_span = 1;
 
-            /* Sum energy across bandwidth for both sidebands using RF FFT output */
             float pos_energy = 0.0f, neg_energy = 0.0f;
             for (int b = -bin_span; b <= bin_span; b++) {
                 int pos_bin = center_bin + b;
                 int neg_bin = FFT_SIZE - center_bin + b;
 
                 if (pos_bin >= 0 && pos_bin < FFT_SIZE) {
-                    float re = rf_fft_out[pos_bin].r;  /* Use RF FFT output */
-                    float im = rf_fft_out[pos_bin].i;
+                    float re = fft_out[pos_bin].r;
+                    float im = fft_out[pos_bin].i;
                     pos_energy += sqrtf(re * re + im * im) / FFT_SIZE;
                 }
                 if (neg_bin >= 0 && neg_bin < FFT_SIZE) {
-                    float re = rf_fft_out[neg_bin].r;  /* Use RF FFT output */
-                    float im = rf_fft_out[neg_bin].i;
+                    float re = fft_out[neg_bin].r;
+                    float im = fft_out[neg_bin].i;
                     neg_energy += sqrtf(re * re + im * im) / FFT_SIZE;
                 }
             }
 
-            float combined_energy = pos_energy + neg_energy;
-            g_bucket_energy[f] = combined_energy;  /* Store for right panel display */
+            g_bucket_energy[f] = pos_energy + neg_energy;
 
             /* Feed 1000 Hz bucket (index 4) to tick detector */
             if (f == 4) {
-                tick_detector_update(&g_tick_detector, combined_energy, frame_num);
-            }
-
-            /* If above threshold, draw marker on BOTH waterfalls */
-            if (combined_energy > g_tick_thresholds[f]) {
-                /* Calculate x position and width for zoomed display */
-                float freq_hz = center_bin * ((float)SAMPLE_RATE / FFT_SIZE);
-                float bw_hz = (float)TICK_BW[f];  /* ± bandwidth in Hz */
-
-                /* Convert Hz to pixels (for RF waterfall: DC centered) */
-                float pixels_per_hz = (WATERFALL_WIDTH / 2.0f) / ZOOM_MAX_HZ;
-                int center_x_offset = (int)(freq_hz * pixels_per_hz);
-                int bw_pixels = (int)(bw_hz * pixels_per_hz);
-                if (bw_pixels < 1) bw_pixels = 1;  /* At least 1 pixel wide */
-
-                /* === RF Waterfall: Draw at ± sideband positions === */
-                /* Positive sideband */
-                int x_pos_start = WATERFALL_WIDTH / 2 + center_x_offset - bw_pixels;
-                int x_pos_end = WATERFALL_WIDTH / 2 + center_x_offset + bw_pixels;
-                for (int x = x_pos_start; x <= x_pos_end; x++) {
-                    if (x >= 0 && x < WATERFALL_WIDTH) {
-                        pixels[x * 3 + 0] = 255;  /* R */
-                        pixels[x * 3 + 1] = 0;    /* G */
-                        pixels[x * 3 + 2] = 0;    /* B */
-                    }
-                }
-
-                /* Negative sideband */
-                int x_neg_start = WATERFALL_WIDTH / 2 - center_x_offset - bw_pixels;
-                int x_neg_end = WATERFALL_WIDTH / 2 - center_x_offset + bw_pixels;
-                for (int x = x_neg_start; x <= x_neg_end; x++) {
-                    if (x >= 0 && x < WATERFALL_WIDTH) {
-                        pixels[x * 3 + 0] = 255;  /* R */
-                        pixels[x * 3 + 1] = 0;    /* G */
-                        pixels[x * 3 + 2] = 0;    /* B */
-                    }
-                }
-
-                /* === Audio Waterfall: Draw at single frequency position (0 to Nyquist) === */
-                /* Audio waterfall shows 0 Hz at left, ZOOM_MAX_HZ at right */
-                float audio_pixels_per_hz = (float)WATERFALL_WIDTH / ZOOM_MAX_HZ;
-                int audio_center_x = (int)(freq_hz * audio_pixels_per_hz);
-                int audio_bw_pixels = (int)(bw_hz * audio_pixels_per_hz);
-                if (audio_bw_pixels < 1) audio_bw_pixels = 1;
-
-                int audio_x_start = audio_center_x - audio_bw_pixels;
-                int audio_x_end = audio_center_x + audio_bw_pixels;
-                for (int x = audio_x_start; x <= audio_x_end; x++) {
-                    if (x >= 0 && x < WATERFALL_WIDTH) {
-                        audio_start[x * 3 + 0] = 255;  /* R */
-                        audio_start[x * 3 + 1] = 0;    /* G */
-                        audio_start[x * 3 + 2] = 0;    /* B */
-                    }
-                }
+                tick_detector_update(&g_tick_detector, g_bucket_energy[f], frame_num);
             }
         }
 
-        /* Draw selection indicator on RF waterfall row */
-        {
-            int indicator_x = 10 + g_selected_param * 20;
-            if (indicator_x < WATERFALL_WIDTH) {
-                pixels[indicator_x * 3 + 0] = 255;  /* Cyan indicator */
-                pixels[indicator_x * 3 + 1] = 255;
-                pixels[indicator_x * 3 + 2] = 0;
+        /* Draw tick flash on waterfall when detected (purple band) */
+        if (g_tick_detector.flash_frames_remaining > 0) {
+            /* Draw purple markers at ±1000 Hz positions */
+            float pixels_per_hz = (WATERFALL_WIDTH / 2.0f) / ZOOM_MAX_HZ;
+            int center_x = WATERFALL_WIDTH / 2;
+            int offset_1000 = (int)(1000.0f * pixels_per_hz);
+
+            /* Mark at +1000 Hz */
+            for (int dx = -3; dx <= 3; dx++) {
+                int x = center_x + offset_1000 + dx;
+                if (x >= 0 && x < WATERFALL_WIDTH) {
+                    pixels[x * 3 + 0] = 180;  /* Purple */
+                    pixels[x * 3 + 1] = 0;
+                    pixels[x * 3 + 2] = 255;
+                }
+            }
+            /* Mark at -1000 Hz */
+            for (int dx = -3; dx <= 3; dx++) {
+                int x = center_x - offset_1000 + dx;
+                if (x >= 0 && x < WATERFALL_WIDTH) {
+                    pixels[x * 3 + 0] = 180;  /* Purple */
+                    pixels[x * 3 + 1] = 0;
+                    pixels[x * 3 + 2] = 255;
+                }
             }
         }
 
         /* === RIGHT PANEL: Bucket energy bars === */
-        {
-            int bar_width = BUCKET_WIDTH / NUM_TICK_FREQS;  /* ~28 pixels per bar */
-            int bar_gap = 2;  /* Gap between bars */
+        int bar_width = BUCKET_WIDTH / NUM_TICK_FREQS;
+        int bar_gap = 2;
 
-            /* Clear right panel (black background) */
-            for (int y = 0; y < WINDOW_HEIGHT; y++) {
-                for (int x = WATERFALL_WIDTH; x < WINDOW_WIDTH; x++) {
+        /* Clear right panel */
+        for (int y = 0; y < WINDOW_HEIGHT; y++) {
+            for (int x = WATERFALL_WIDTH; x < WINDOW_WIDTH; x++) {
+                int idx = (y * WINDOW_WIDTH + x) * 3;
+                pixels[idx + 0] = 20;  /* Dark gray background */
+                pixels[idx + 1] = 20;
+                pixels[idx + 2] = 20;
+            }
+        }
+
+        /* Draw each bucket bar */
+        for (int f = 0; f < NUM_TICK_FREQS; f++) {
+            int bar_x = WATERFALL_WIDTH + f * bar_width + bar_gap;
+            int bar_w = bar_width - bar_gap * 2;
+
+            /* Fixed dB scale: -80 to -20 dB */
+            float db = 20.0f * log10f(g_bucket_energy[f] + 1e-10f);
+            float norm = (db - (-80.0f)) / ((-20.0f) - (-80.0f));
+            if (norm < 0.0f) norm = 0.0f;
+            if (norm > 1.0f) norm = 1.0f;
+
+            int bar_height = (int)(norm * WINDOW_HEIGHT);
+
+            uint8_t r, g, b;
+
+            /* Flash purple for 1000 Hz bar when tick detected */
+            if (f == 4 && g_tick_detector.flash_frames_remaining > 0) {
+                r = 180; g = 0; b = 255;
+                bar_height = WINDOW_HEIGHT;
+            } else {
+                /* Color based on energy level */
+                magnitude_to_rgb(g_bucket_energy[f], -20.0f, -80.0f, &r, &g, &b);
+            }
+
+            /* Draw bar from bottom up */
+            for (int y = WINDOW_HEIGHT - bar_height; y < WINDOW_HEIGHT; y++) {
+                for (int x = bar_x; x < bar_x + bar_w && x < WINDOW_WIDTH; x++) {
                     int idx = (y * WINDOW_WIDTH + x) * 3;
-                    pixels[idx + 0] = 0;
-                    pixels[idx + 1] = 0;
-                    pixels[idx + 2] = 0;
+                    pixels[idx + 0] = r;
+                    pixels[idx + 1] = g;
+                    pixels[idx + 2] = b;
                 }
             }
 
-            /* Draw each bucket bar */
-            for (int f = 0; f < NUM_TICK_FREQS; f++) {
-                int bar_x = WATERFALL_WIDTH + f * bar_width + bar_gap;
-                int bar_w = bar_width - bar_gap * 2;
-
-                /* Convert energy to height using FIXED dB scale (no auto-gain) */
-                float db = 20.0f * log10f(g_bucket_energy[f] + 1e-10f);
-                /* Fixed range: -80 dB to -20 dB */
-                float norm = (db - (-80.0f)) / ((-20.0f) - (-80.0f));
-                if (norm < 0.0f) norm = 0.0f;
-                if (norm > 1.0f) norm = 1.0f;
-
-                int bar_height = (int)(norm * WINDOW_HEIGHT);
-
-                /* Get color based on magnitude */
-                uint8_t r, g, b;
-
-                /* Check if this is the 1000Hz bar (index 4) and tick was just detected */
-                if (f == 4 && g_tick_detector.flash_frames_remaining > 0) {
-                    /* Purple flash for tick detection - full height bar */
-                    r = 180;
-                    g = 0;
-                    b = 255;
-                    bar_height = WINDOW_HEIGHT;  /* Full height when detected */
-                } else {
-                    magnitude_to_rgb(g_bucket_energy[f], g_peak_db, g_floor_db, &r, &g, &b);
-                }
-
-                /* Draw bar from bottom up */
-                for (int y = WINDOW_HEIGHT - bar_height; y < WINDOW_HEIGHT; y++) {
-                    for (int x = bar_x; x < bar_x + bar_w && x < WINDOW_WIDTH; x++) {
-                        int idx = (y * WINDOW_WIDTH + x) * 3;
-                        pixels[idx + 0] = r;
-                        pixels[idx + 1] = g;
-                        pixels[idx + 2] = b;
-                    }
-                }
-
-                /* Draw threshold indicator line (yellow horizontal line) */
-                float thresh_db = 20.0f * log10f(g_tick_thresholds[f] + 1e-10f);
-                float thresh_norm = (thresh_db - (-80.0f)) / ((-20.0f) - (-80.0f));
+            /* For 1000 Hz bar: show adaptive threshold (cyan) and noise floor (green) */
+            if (f == 4) {
+                /* Cyan = threshold */
+                float thresh_db = 20.0f * log10f(g_tick_detector.threshold_high + 1e-10f);
+                float thresh_norm = (thresh_db - (-80.0f)) / 60.0f;
                 if (thresh_norm < 0.0f) thresh_norm = 0.0f;
                 if (thresh_norm > 1.0f) thresh_norm = 1.0f;
                 int thresh_y = WINDOW_HEIGHT - (int)(thresh_norm * WINDOW_HEIGHT);
-                /* Draw 3-pixel thick yellow line */
                 for (int dy = -1; dy <= 1; dy++) {
                     int y = thresh_y + dy;
                     if (y >= 0 && y < WINDOW_HEIGHT) {
                         for (int x = bar_x; x < bar_x + bar_w && x < WINDOW_WIDTH; x++) {
                             int idx = (y * WINDOW_WIDTH + x) * 3;
-                            pixels[idx + 0] = 255;  /* Yellow */
+                            pixels[idx + 0] = 0;
                             pixels[idx + 1] = 255;
-                            pixels[idx + 2] = 0;
+                            pixels[idx + 2] = 255;
                         }
                     }
                 }
 
-                /* For 1000 Hz bar only (f==4): show tick detector's auto-threshold (cyan) and noise floor (green) */
-                if (f == 4) {
-                    /* Cyan line = tick detector's auto-adapting threshold */
-                    float auto_thresh_db = 20.0f * log10f(g_tick_detector.threshold_high + 1e-10f);
-                    float auto_thresh_norm = (auto_thresh_db - (-80.0f)) / ((-20.0f) - (-80.0f));
-                    if (auto_thresh_norm < 0.0f) auto_thresh_norm = 0.0f;
-                    if (auto_thresh_norm > 1.0f) auto_thresh_norm = 1.0f;
-                    int auto_thresh_y = WINDOW_HEIGHT - (int)(auto_thresh_norm * WINDOW_HEIGHT);
-                    for (int dy = -1; dy <= 1; dy++) {
-                        int y = auto_thresh_y + dy;
-                        if (y >= 0 && y < WINDOW_HEIGHT) {
-                            for (int x = bar_x; x < bar_x + bar_w && x < WINDOW_WIDTH; x++) {
-                                int idx = (y * WINDOW_WIDTH + x) * 3;
-                                pixels[idx + 0] = 0;    /* Cyan */
-                                pixels[idx + 1] = 255;
-                                pixels[idx + 2] = 255;
-                            }
-                        }
-                    }
-
-                    /* Green line = tick detector's noise floor estimate */
-                    float noise_db = 20.0f * log10f(g_tick_detector.noise_floor + 1e-10f);
-                    float noise_norm = (noise_db - (-80.0f)) / ((-20.0f) - (-80.0f));
-                    if (noise_norm < 0.0f) noise_norm = 0.0f;
-                    if (noise_norm > 1.0f) noise_norm = 1.0f;
-                    int noise_y = WINDOW_HEIGHT - (int)(noise_norm * WINDOW_HEIGHT);
-                    for (int dy = -1; dy <= 1; dy++) {
-                        int y = noise_y + dy;
-                        if (y >= 0 && y < WINDOW_HEIGHT) {
-                            for (int x = bar_x; x < bar_x + bar_w && x < WINDOW_WIDTH; x++) {
-                                int idx = (y * WINDOW_WIDTH + x) * 3;
-                                pixels[idx + 0] = 0;    /* Green */
-                                pixels[idx + 1] = 255;
-                                pixels[idx + 2] = 0;
-                            }
+                /* Green = noise floor */
+                float noise_db = 20.0f * log10f(g_tick_detector.noise_floor + 1e-10f);
+                float noise_norm = (noise_db - (-80.0f)) / 60.0f;
+                if (noise_norm < 0.0f) noise_norm = 0.0f;
+                if (noise_norm > 1.0f) noise_norm = 1.0f;
+                int noise_y = WINDOW_HEIGHT - (int)(noise_norm * WINDOW_HEIGHT);
+                for (int dy = -1; dy <= 1; dy++) {
+                    int y = noise_y + dy;
+                    if (y >= 0 && y < WINDOW_HEIGHT) {
+                        for (int x = bar_x; x < bar_x + bar_w && x < WINDOW_WIDTH; x++) {
+                            int idx = (y * WINDOW_WIDTH + x) * 3;
+                            pixels[idx + 0] = 0;
+                            pixels[idx + 1] = 255;
+                            pixels[idx + 2] = 0;
                         }
                     }
                 }
             }
         }
 
-        /* Decrement flash counter */
         if (g_tick_detector.flash_frames_remaining > 0) {
             g_tick_detector.flash_frames_remaining--;
         }
 
-        /* Update texture */
         SDL_UpdateTexture(texture, NULL, pixels, WINDOW_WIDTH * 3);
-
-        /* Render */
         SDL_RenderClear(renderer);
         SDL_RenderCopy(renderer, texture, NULL, NULL);
-
         SDL_RenderPresent(renderer);
 
         frame_num++;
     }
 
-    /* Print final tick stats and cleanup */
     printf("\n");
     tick_detector_print_stats(&g_tick_detector, frame_num);
     tick_detector_close(&g_tick_detector);
 
-    /* TCP cleanup */
     if (g_tcp_mode) {
         if (g_iq_sock != SOCKET_INVALID) {
             socket_close(g_iq_sock);
@@ -1471,17 +1151,12 @@ int main(int argc, char *argv[]) {
         tcp_cleanup();
     }
 
-    /* Cleanup */
     free(window_func);
     free(magnitudes);
-    free(rf_magnitudes);
     free(pixels);
     free(fft_out);
     free(fft_in);
-    free(rf_fft_out);
-    free(rf_fft_in);
     free(g_iq_buffer);
-    free(pcm_buffer);
     kiss_fft_free(fft_cfg);
 
     SDL_DestroyTexture(texture);

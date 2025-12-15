@@ -266,8 +266,8 @@ for (int x = 0; x < display_width; x++) {
     float freq = (float)x / display_width * (sample_rate / 2.0f);  // 0 to Nyquist
     int bin = (int)(freq / bin_hz);
     if (bin >= FFT_SIZE / 2) bin = FFT_SIZE / 2 - 1;
-    
-    float mag = sqrtf(fft_out[bin].r * fft_out[bin].r + 
+
+    float mag = sqrtf(fft_out[bin].r * fft_out[bin].r +
                       fft_out[bin].i * fft_out[bin].i);
     // ... display
 }
@@ -353,13 +353,13 @@ float envelope = sqrtf(i_filt*i_filt + q_filt*q_filt);
 // 2. Decimate to audio rate
 if (++counter >= decim_factor) {
     counter = 0;
-    
+
     // 3. DC block
     float audio = dc_block_process(&dc_block, envelope);
-    
+
     // 4. Bandpass around 1000 Hz
     float tick_signal = bandpass_1000hz_process(&bp, audio);
-    
+
     // 5. Energy detection
     tick_energy += tick_signal * tick_signal;
 }

@@ -1177,20 +1177,19 @@ int main(int argc, char *argv[]) {
                         /* DC block (from simple_am_receiver) */
                         float ac = dc_block_process(&g_dc_block, mag);
 
-                        /* Apply volume scaling for audio (matching simple_am_receiver) */
-                        float audio_sample = ac * g_volume;
+                        /* Fixed scaling for FFT/waterfall display (volume-independent) */
+                        float display_sample = ac * 50.0f;
+                        if (display_sample > 32767.0f) display_sample = 32767.0f;
+                        if (display_sample < -32767.0f) display_sample = -32767.0f;
+                        pcm_buffer[pcm_idx++] = (int16_t)display_sample;
 
-                        /* Clamp to int16 range */
+                        /* Apply volume scaling for audio output only */
+                        float audio_sample = ac * g_volume;
                         if (audio_sample > 32767.0f) audio_sample = 32767.0f;
                         if (audio_sample < -32767.0f) audio_sample = -32767.0f;
 
-                        int16_t sample_out = (int16_t)audio_sample;
-
-                        /* Store in display buffer (for FFT/waterfall) */
-                        pcm_buffer[pcm_idx++] = sample_out;
-
-                        /* Also accumulate in audio output buffer */
-                        g_audio_out[g_audio_out_count++] = sample_out;
+                        /* Accumulate in audio output buffer */
+                        g_audio_out[g_audio_out_count++] = (int16_t)audio_sample;
                         if (g_audio_out_count >= AUDIO_BUFFER_SIZE) {
                             audio_write(g_audio_out, g_audio_out_count);
                             g_audio_out_count = 0;

@@ -548,20 +548,20 @@ static void on_samples(const int16_t *xi, const int16_t *xq,
     }
 }
 
-static void on_gain_change(double gain_db, int lna_db, void *user_ctx) {
+static void on_gain_change(double gain_db, int lna_gr_db, void *user_ctx) {
     tcp_sdr_state_t *state = (tcp_sdr_state_t*)user_ctx;
     if (state) {
         int old_gain = state->gain_reduction;
-        int old_lna = state->lna_state;
 
         state->gain_reduction = (int)gain_db;
-        state->lna_state = lna_db;
+        /* Note: lna_gr_db is LNA gain reduction in dB (0-24), NOT state index (0-8) */
+        /* We keep lna_state as what was SET, not what AGC reports */
 
-        /* Only notify if values actually changed */
-        if (old_gain != (int)gain_db || old_lna != lna_db) {
-            printf("[SDR] Gain changed: GR=%.0f dB, LNA=%d\n", gain_db, lna_db);
-            tcp_send_notification(state, "! GAIN_CHANGE GAIN=%d LNA=%d",
-                                  (int)gain_db, lna_db);
+        /* Only notify if gain reduction actually changed */
+        if (old_gain != (int)gain_db) {
+            printf("[SDR] Gain changed: GR=%.0f dB, LNA_GR=%d dB\n", gain_db, lna_gr_db);
+            tcp_send_notification(state, "! GAIN_CHANGE GAIN=%d LNA_GR=%d",
+                                  (int)gain_db, lna_gr_db);
         }
     }
 }

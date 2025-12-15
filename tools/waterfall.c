@@ -195,6 +195,7 @@ static bool g_display_dsp_initialized = false;
 #define WINDOW_HEIGHT   800     /* Scrolling history */
 #define FFT_SIZE        1024    /* FFT size (512 usable bins) */
 #define SAMPLE_RATE     48000   /* Expected input sample rate */
+#define ZOOM_MAX_HZ     5000.0f /* Display range: ±5000 Hz centered on DC */
 
 /* Frequency bins to monitor for WWV tick detection
  * Each has a center frequency and bandwidth based on signal characteristics:
@@ -1091,28 +1092,27 @@ int main(int argc, char *argv[]) {
         /* Run FFT */
         kiss_fft(fft_cfg, fft_in, fft_out);
 
-        /* Calculate magnitudes with FFT shift (DC in center) */
+        /* Calculate magnitudes with FFT shift (DC in center), zoomed to ±ZOOM_MAX_HZ */
+        float bin_hz = (float)SAMPLE_RATE / FFT_SIZE;  /* Hz per FFT bin (~46.875 Hz) */
         for (int i = 0; i < WATERFALL_WIDTH; i++) {
+            /* Map pixel to frequency: pixel 0 = -ZOOM_MAX_HZ, pixel center = 0, pixel end = +ZOOM_MAX_HZ */
+            float freq = ((float)i / WATERFALL_WIDTH - 0.5f) * 2.0f * ZOOM_MAX_HZ;
+            
+            /* Convert frequency to FFT bin */
             int bin;
-            if (i < WATERFALL_WIDTH / 2) {
-                /* Left half: negative frequencies */
-                bin = FFT_SIZE / 2 + i;
+            if (freq >= 0) {
+                bin = (int)(freq / bin_hz + 0.5f);  /* Positive frequencies: bins 0-511 */
             } else {
-                /* Right half: positive frequencies */
-                bin = i - WATERFALL_WIDTH / 2;
+                bin = FFT_SIZE + (int)(freq / bin_hz - 0.5f);  /* Negative frequencies: bins 513-1023 */
             }
-            /* Wrap around */
-            if (bin < 0) bin += FFT_SIZE;
-            if (bin >= FFT_SIZE) bin -= FFT_SIZE;
+            
+            /* Clamp to valid range */
+            if (bin < 0) bin = 0;
+            if (bin >= FFT_SIZE) bin = FFT_SIZE - 1;
 
-            /* Bounds check */
-            if (bin >= 0 && bin < FFT_SIZE) {
-                float re = fft_out[bin].r;
-                float im = fft_out[bin].i;
-                magnitudes[i] = sqrtf(re * re + im * im) / FFT_SIZE;
-            } else {
-                magnitudes[i] = 0.0f;
-            }
+            float re = fft_out[bin].r;
+            float im = fft_out[bin].i;
+            magnitudes[i] = sqrtf(re * re + im * im) / FFT_SIZE;
         }
 
         /* Auto-gain: track peak and floor */
@@ -1188,10 +1188,12 @@ int main(int argc, char *argv[]) {
 
             /* If above threshold, draw marker dot at the frequency position */
             if (combined_energy > g_tick_thresholds[f]) {
-                /* Calculate x position in FFT-shifted display */
-                /* Positive freq: x = WATERFALL_WIDTH/2 + center_bin */
-                int x_pos = WATERFALL_WIDTH / 2 + center_bin;
-                int x_neg = WATERFALL_WIDTH / 2 - center_bin;
+                /* Calculate x position for zoomed display */
+                /* freq_hz maps to pixel: x = (freq_hz / ZOOM_MAX_HZ) * (WATERFALL_WIDTH/2) + WATERFALL_WIDTH/2 */
+                float freq_hz = center_bin * ((float)SAMPLE_RATE / FFT_SIZE);
+                int x_offset = (int)(freq_hz * (WATERFALL_WIDTH / 2) / ZOOM_MAX_HZ);
+                int x_pos = WATERFALL_WIDTH / 2 + x_offset;
+                int x_neg = WATERFALL_WIDTH / 2 - x_offset;
 
                 /* Draw red dot at positive frequency */
                 if (x_pos >= 0 && x_pos < WATERFALL_WIDTH) {
@@ -1239,9 +1241,10 @@ int main(int argc, char *argv[]) {
                 int bar_x = WATERFALL_WIDTH + f * bar_width + bar_gap;
                 int bar_w = bar_width - bar_gap * 2;
 
-                /* Convert energy to height using log scale */
+                /* Convert energy to height using FIXED dB scale (no auto-gain) */
                 float db = 20.0f * log10f(g_bucket_energy[f] + 1e-10f);
-                float norm = (db - g_floor_db) / (g_peak_db - g_floor_db + 0.1f);
+                /* Fixed range: -80 dB to -20 dB */
+                float norm = (db - (-80.0f)) / ((-20.0f) - (-80.0f));
                 if (norm < 0.0f) norm = 0.0f;
                 if (norm > 1.0f) norm = 1.0f;
 
@@ -1268,6 +1271,64 @@ int main(int argc, char *argv[]) {
                         pixels[idx + 0] = r;
                         pixels[idx + 1] = g;
                         pixels[idx + 2] = b;
+                    }
+                }
+
+                /* Draw threshold indicator line (yellow horizontal line) */
+                float thresh_db = 20.0f * log10f(g_tick_thresholds[f] + 1e-10f);
+                float thresh_norm = (thresh_db - (-80.0f)) / ((-20.0f) - (-80.0f));
+                if (thresh_norm < 0.0f) thresh_norm = 0.0f;
+                if (thresh_norm > 1.0f) thresh_norm = 1.0f;
+                int thresh_y = WINDOW_HEIGHT - (int)(thresh_norm * WINDOW_HEIGHT);
+                /* Draw 3-pixel thick yellow line */
+                for (int dy = -1; dy <= 1; dy++) {
+                    int y = thresh_y + dy;
+                    if (y >= 0 && y < WINDOW_HEIGHT) {
+                        for (int x = bar_x; x < bar_x + bar_w && x < WINDOW_WIDTH; x++) {
+                            int idx = (y * WINDOW_WIDTH + x) * 3;
+                            pixels[idx + 0] = 255;  /* Yellow */
+                            pixels[idx + 1] = 255;
+                            pixels[idx + 2] = 0;
+                        }
+                    }
+                }
+
+                /* For 1000 Hz bar only (f==4): show tick detector's auto-threshold (cyan) and noise floor (green) */
+                if (f == 4) {
+                    /* Cyan line = tick detector's auto-adapting threshold */
+                    float auto_thresh_db = 20.0f * log10f(g_tick_detector.threshold_high + 1e-10f);
+                    float auto_thresh_norm = (auto_thresh_db - (-80.0f)) / ((-20.0f) - (-80.0f));
+                    if (auto_thresh_norm < 0.0f) auto_thresh_norm = 0.0f;
+                    if (auto_thresh_norm > 1.0f) auto_thresh_norm = 1.0f;
+                    int auto_thresh_y = WINDOW_HEIGHT - (int)(auto_thresh_norm * WINDOW_HEIGHT);
+                    for (int dy = -1; dy <= 1; dy++) {
+                        int y = auto_thresh_y + dy;
+                        if (y >= 0 && y < WINDOW_HEIGHT) {
+                            for (int x = bar_x; x < bar_x + bar_w && x < WINDOW_WIDTH; x++) {
+                                int idx = (y * WINDOW_WIDTH + x) * 3;
+                                pixels[idx + 0] = 0;    /* Cyan */
+                                pixels[idx + 1] = 255;
+                                pixels[idx + 2] = 255;
+                            }
+                        }
+                    }
+
+                    /* Green line = tick detector's noise floor estimate */
+                    float noise_db = 20.0f * log10f(g_tick_detector.noise_floor + 1e-10f);
+                    float noise_norm = (noise_db - (-80.0f)) / ((-20.0f) - (-80.0f));
+                    if (noise_norm < 0.0f) noise_norm = 0.0f;
+                    if (noise_norm > 1.0f) noise_norm = 1.0f;
+                    int noise_y = WINDOW_HEIGHT - (int)(noise_norm * WINDOW_HEIGHT);
+                    for (int dy = -1; dy <= 1; dy++) {
+                        int y = noise_y + dy;
+                        if (y >= 0 && y < WINDOW_HEIGHT) {
+                            for (int x = bar_x; x < bar_x + bar_w && x < WINDOW_WIDTH; x++) {
+                                int idx = (y * WINDOW_WIDTH + x) * 3;
+                                pixels[idx + 0] = 0;    /* Green */
+                                pixels[idx + 1] = 255;
+                                pixels[idx + 2] = 0;
+                            }
+                        }
                     }
                 }
             }

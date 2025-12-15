@@ -1,0 +1,127 @@
+name: "Bug Report"
+description: "File a bug report that includes the necessary data for the dev team to take action."
+title: "BUG: [Summarize the issue clearly and concisely]"
+labels: ["bug", "needs triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # Operational Bug Report (SOP)
+        Thank you for following protocol and submitting your issue here. To action this request efficiently, all fields below are mandatory. **Incomplete reports will be closed immediately.**
+
+  - type: markdown
+    attributes:
+      value: "## 1. The 3 W's: Required Information"
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: "What Happened? (Actual Result)"
+      description: "Provide a clear and concise description of the bug or issue observed. What exactly occurred that was incorrect?"
+      placeholder: "EXAMPLE: The application crashed when I clicked 'Save'."
+    validations:
+      required: true
+
+  - type: textarea
+    id: where-happened
+    attributes:
+      label: "Where Did It Happen? (Location/Context)"
+      description: "Specify the exact location (Screen, Menu, Module) where the issue occurred."
+      placeholder: "EXAMPLE: Main Configuration Screen, within the 'System Settings' module."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-result
+    attributes:
+      label: "What Did You Expect? (Expected Result)"
+      description: "Describe what you anticipated would happen based on the documentation or standard operation."
+      placeholder: "EXAMPLE: I expected the configuration to save successfully and return to the main dashboard without crashing."
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: "## 2. Steps to Reproduce"
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: "Reproduction Steps"
+      description: "List the exact, numbered steps required to recreate the issue. If we cannot follow these steps and reproduce the bug, we cannot fix it."
+      placeholder: |
+        1. Open the application
+        2. Navigate to Settings
+        3. Click 'Save'
+        4. Observe the crash
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: "## 3. Environment Details"
+
+  - type: dropdown
+    id: version
+    attributes:
+      label: "Software Version"
+      description: "Select the version you are running (found in Releases tab or application About screen)."
+      options:
+        - "v1.0.0"
+        - "v1.0.1"
+        - "v1.0.2"
+        - "Development Branch (specify in additional context)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: "Operating System"
+      description: "Select your operating system."
+      options:
+        - "Windows 10"
+        - "Windows 11"
+        - "Ubuntu Linux 22.04"
+        - "Ubuntu Linux 24.04"
+        - "Debian Linux"
+        - "Raspberry Pi OS"
+        - "Other Linux (specify in additional context)"
+        - "macOS"
+    validations:
+      required: true
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: "System Hardware"
+      description: "SDR model, audio interface, and any relevant PC specs."
+      placeholder: |
+        SDR: RTL-SDR V3
+        Audio Interface: DigiRig Mobile
+        CPU: Intel i5-10400
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: "## 4. Attachments & Additional Context"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Logs/Screenshots"
+      description: "Paste any relevant error logs here, or drag-and-drop screenshots below."
+      placeholder: "Paste log output or error messages here..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: "Additional Context"
+      description: "Any other information that might help diagnose the issue."
+      placeholder: "Any additional details, workarounds attempted, etc."
+    validations:
+      required: false

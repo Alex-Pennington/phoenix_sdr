@@ -1,0 +1,76 @@
+name: "Documentation Update"
+description: "Report missing, incorrect, or unclear documentation."
+title: "DOCS: [Brief description of the documentation issue]"
+labels: ["documentation", "needs triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # Documentation Update Request
+        Help us improve the documentation. Clear docs benefit everyone.
+
+  - type: dropdown
+    id: doc-type
+    attributes:
+      label: "Type of Documentation Issue"
+      description: "What kind of documentation problem is this?"
+      options:
+        - "Missing - documentation doesn't exist for this topic"
+        - "Incorrect - documentation contains errors or outdated info"
+        - "Unclear - documentation exists but is confusing or incomplete"
+        - "Typo/Grammar - minor text corrections needed"
+    validations:
+      required: true
+
+  - type: textarea
+    id: location
+    attributes:
+      label: "Documentation Location"
+      description: "Where is the documentation located (or where should it be)? Provide file path, URL, or section name."
+      placeholder: "EXAMPLE: README.md, Section 3 'Installation Instructions'"
+    validations:
+      required: true
+
+  - type: textarea
+    id: current-state
+    attributes:
+      label: "Current State"
+      description: "What does the documentation currently say (if applicable)? Quote the relevant text."
+      placeholder: "EXAMPLE: The README says 'Run install.sh' but this file doesn't exist in the repo."
+    validations:
+      required: false
+
+  - type: textarea
+    id: suggested-change
+    attributes:
+      label: "Suggested Change"
+      description: "What should the documentation say instead? Be specific."
+      placeholder: "EXAMPLE: Should reference 'setup.py' instead of 'install.sh' and include the required Python version."
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: "Component Area"
+      description: "Which part of the system does this documentation relate to?"
+      options:
+        - "Installation / Setup"
+        - "Configuration"
+        - "Usage / Operation"
+        - "API / Technical Reference"
+        - "Troubleshooting"
+        - "Contributing / Development"
+        - "General / Overview"
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: "Additional Context"
+      description: "Any other information that might help."
+      placeholder: "Related issues, external references, etc."
+    validations:
+      required: false

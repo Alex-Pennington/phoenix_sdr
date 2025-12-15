@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Beta Operations Plan & Tester Requirements
+    url: https://github.com/PhoenixNestLLC/mars-suite/blob/main/docs/BETA_OPS_PLAN.md
+    about: Review the SOP before submitting issues. Incomplete reports will be closed.

@@ -1,9 +1,6 @@
 /*******************************************************************************
- * FROZEN FILE - DO NOT MODIFY (except to integrate modules)
+ * FROZEN FILE - DO NOT MODIFY
  * See .github/copilot-instructions.md P1 section
- *
- * DSP processing is in waterfall_dsp.c (FROZEN)
- * Audio output is in waterfall_audio.c (can modify)
  ******************************************************************************/
 
 /**
@@ -25,8 +22,6 @@
 #include <SDL.h>
 #include "kiss_fft.h"
 #include "version.h"
-#include "waterfall_dsp.h"
-#include "waterfall_audio.h"
 
 #ifdef _WIN32
 #include <io.h>
@@ -124,30 +119,194 @@ static bool g_tcp_streaming = false;
 static int g_decimation_factor = 1;
 static int g_decim_counter = 0;
 
-/* DSP path instances - DISPLAY and AUDIO are separate (see P2 in copilot-instructions.md) */
-static wf_dsp_path_t g_display_dsp;
-static wf_dsp_path_t g_audio_dsp;
+/*============================================================================
+ * Lowpass Filter (verbatim from simple_am_receiver.c)
+ *============================================================================*/
+
+typedef struct {
+    float x1, x2;   /* Input history */
+    float y1, y2;   /* Output history */
+    float b0, b1, b2, a1, a2;  /* Coefficients */
+} lowpass_t;
+
+static void lowpass_init(lowpass_t *lp, float cutoff_hz, float sample_rate) {
+    /* 2nd order Butterworth lowpass */
+    float w0 = 2.0f * 3.14159265f * cutoff_hz / sample_rate;
+    float alpha = sinf(w0) / (2.0f * 0.7071f);  /* Q = 0.7071 for Butterworth */
+    float cos_w0 = cosf(w0);
+
+    float a0 = 1.0f + alpha;
+    lp->b0 = (1.0f - cos_w0) / 2.0f / a0;
+    lp->b1 = (1.0f - cos_w0) / a0;
+    lp->b2 = (1.0f - cos_w0) / 2.0f / a0;
+    lp->a1 = -2.0f * cos_w0 / a0;
+    lp->a2 = (1.0f - alpha) / a0;
+
+    lp->x1 = lp->x2 = 0.0f;
+    lp->y1 = lp->y2 = 0.0f;
+}
+
+static float lowpass_process(lowpass_t *lp, float x) {
+    float y = lp->b0 * x + lp->b1 * lp->x1 + lp->b2 * lp->x2
+            - lp->a1 * lp->y1 - lp->a2 * lp->y2;
+    lp->x2 = lp->x1;
+    lp->x1 = x;
+    lp->y2 = lp->y1;
+    lp->y1 = y;
+    return y;
+}
+
+/*============================================================================
+ * DC Removal (verbatim from simple_am_receiver.c)
+ *============================================================================*/
+
+typedef struct {
+    float x_prev;
+    float y_prev;
+} dc_block_t;
+
+static void dc_block_init(dc_block_t *dc) {
+    dc->x_prev = 0.0f;
+    dc->y_prev = 0.0f;
+}
+
+static float dc_block_process(dc_block_t *dc, float x) {
+    float y = x - dc->x_prev + 0.995f * dc->y_prev;
+    dc->x_prev = x;
+    dc->y_prev = y;
+    return y;
+}
+
+/* DSP filter instances - DISPLAY PATH (see P2 in copilot-instructions.md) */
+static lowpass_t g_display_lowpass_i;
+static lowpass_t g_display_lowpass_q;
+static dc_block_t g_display_dc_block;
+static bool g_display_dsp_initialized = false;
+
+/* DSP filter instances - AUDIO PATH (see P2 in copilot-instructions.md) */
+static lowpass_t g_audio_lowpass_i;
+static lowpass_t g_audio_lowpass_q;
+static dc_block_t g_audio_dc_block;
+static bool g_audio_dsp_initialized = false;
 
 #define IQ_FILTER_CUTOFF    3000.0f     /* 3 kHz lowpass on I/Q before magnitude */
+
+/*============================================================================
+ * Audio Output (Windows waveOut) - verbatim from simple_am_receiver.c
+ *============================================================================*/
+
+#define AUDIO_SAMPLE_RATE   48000       /* Must match SAMPLE_RATE */
+#define AUDIO_BUFFERS       8           /* More buffers = smoother playback */
+#define AUDIO_BUFFER_SIZE   1024        /* Smaller buffers = lower latency (~21ms) */
+
+#ifdef _WIN32
+#include <mmsystem.h>
+
+static HWAVEOUT g_waveOut = NULL;
+static WAVEHDR g_waveHeaders[AUDIO_BUFFERS];
+static int16_t *g_audio_buffers[AUDIO_BUFFERS];
+static int g_current_audio_buffer = 0;
+static CRITICAL_SECTION g_audio_cs;
+static bool g_audio_running = false;
+static bool g_audio_enabled = true;     /* Audio output enabled by default */
+static float g_volume = 50.0f;          /* Volume scaling */
+
+static bool audio_init(void) {
+    InitializeCriticalSection(&g_audio_cs);
+
+    for (int i = 0; i < AUDIO_BUFFERS; i++) {
+        g_audio_buffers[i] = (int16_t *)malloc(AUDIO_BUFFER_SIZE * sizeof(int16_t));
+        if (!g_audio_buffers[i]) return false;
+        memset(g_audio_buffers[i], 0, AUDIO_BUFFER_SIZE * sizeof(int16_t));
+    }
+
+    WAVEFORMATEX wfx = {0};
+    wfx.wFormatTag = WAVE_FORMAT_PCM;
+    wfx.nChannels = 1;
+    wfx.nSamplesPerSec = (DWORD)AUDIO_SAMPLE_RATE;
+    wfx.wBitsPerSample = 16;
+    wfx.nBlockAlign = 2;
+    wfx.nAvgBytesPerSec = wfx.nSamplesPerSec * 2;
+
+    if (waveOutOpen(&g_waveOut, WAVE_MAPPER, &wfx, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR) {
+        fprintf(stderr, "Failed to open audio output\n");
+        return false;
+    }
+
+    for (int i = 0; i < AUDIO_BUFFERS; i++) {
+        g_waveHeaders[i].lpData = (LPSTR)g_audio_buffers[i];
+        g_waveHeaders[i].dwBufferLength = AUDIO_BUFFER_SIZE * sizeof(int16_t);
+        waveOutPrepareHeader(g_waveOut, &g_waveHeaders[i], sizeof(WAVEHDR));
+    }
+
+    g_audio_running = true;
+    printf("Audio output initialized at %d Hz\n", AUDIO_SAMPLE_RATE);
+    return true;
+}
+
+static void audio_write(const int16_t *samples, uint32_t count) {
+    if (!g_audio_running || !g_audio_enabled || count == 0) return;
+
+    EnterCriticalSection(&g_audio_cs);
+
+    WAVEHDR *hdr = &g_waveHeaders[g_current_audio_buffer];
+
+    /* Wait if buffer busy */
+    while (hdr->dwFlags & WHDR_INQUEUE) {
+        LeaveCriticalSection(&g_audio_cs);
+        Sleep(1);
+        EnterCriticalSection(&g_audio_cs);
+    }
+
+    uint32_t to_copy = (count > AUDIO_BUFFER_SIZE) ? AUDIO_BUFFER_SIZE : count;
+    memcpy(g_audio_buffers[g_current_audio_buffer], samples, to_copy * sizeof(int16_t));
+    hdr->dwBufferLength = to_copy * sizeof(int16_t);
+
+    waveOutWrite(g_waveOut, hdr, sizeof(WAVEHDR));
+    g_current_audio_buffer = (g_current_audio_buffer + 1) % AUDIO_BUFFERS;
+
+    LeaveCriticalSection(&g_audio_cs);
+}
+
+static void audio_close(void) {
+    if (!g_audio_running) return;
+    g_audio_running = false;
+
+    if (g_waveOut) {
+        waveOutReset(g_waveOut);
+        for (int i = 0; i < AUDIO_BUFFERS; i++) {
+            waveOutUnprepareHeader(g_waveOut, &g_waveHeaders[i], sizeof(WAVEHDR));
+            free(g_audio_buffers[i]);
+        }
+        waveOutClose(g_waveOut);
+        g_waveOut = NULL;
+    }
+    DeleteCriticalSection(&g_audio_cs);
+    printf("Audio output closed\n");
+}
+#else
+/* Non-Windows stub */
+static bool g_audio_enabled = false;
+static float g_volume = 50.0f;
+static bool audio_init(void) { return false; }
+static void audio_write(const int16_t *samples, uint32_t count) { (void)samples; (void)count; }
+static void audio_close(void) { }
+#endif
+
+/* Audio output buffer for accumulating samples before writing */
+static int16_t g_audio_out[AUDIO_BUFFER_SIZE];
+static int g_audio_out_count = 0;
 
 /*============================================================================
  * Configuration
  *============================================================================*/
 
-/* Fixed signal processing parameters */
-#define FFT_SIZE        1024    /* FFT size (512 usable bins) - FIXED */
+#define WATERFALL_WIDTH 1024    /* Left panel: waterfall display */
+#define BUCKET_WIDTH    200     /* Right panel: bucket bars */
+#define WINDOW_WIDTH    (WATERFALL_WIDTH + BUCKET_WIDTH)  /* Total width */
+#define WINDOW_HEIGHT   800     /* Scrolling history */
+#define FFT_SIZE        1024    /* FFT size (512 usable bins) */
 #define SAMPLE_RATE     48000   /* Expected input sample rate */
-
-/* Default window dimensions (runtime adjustable) */
-#define DEFAULT_WATERFALL_WIDTH 800
-#define DEFAULT_BUCKET_WIDTH    200
-#define DEFAULT_WINDOW_HEIGHT   600
-
-/* Runtime display dimensions */
-static int g_waterfall_width = DEFAULT_WATERFALL_WIDTH;
-static int g_bucket_width = DEFAULT_BUCKET_WIDTH;
-static int g_window_width = DEFAULT_WATERFALL_WIDTH + DEFAULT_BUCKET_WIDTH;
-static int g_window_height = DEFAULT_WINDOW_HEIGHT;
 
 /* Frequency bins to monitor for WWV tick detection
  * Each has a center frequency and bandwidth based on signal characteristics:
@@ -291,8 +450,8 @@ static bool tcp_reconnect(void) {
     }
 
     /* Reset DSP state for fresh start after reconnection */
-    g_display_dsp.initialized = false;
-    g_audio_dsp.initialized = false;
+    g_display_dsp_initialized = false;
+    g_audio_dsp_initialized = false;
     g_decim_counter = 0;
 
     printf("\n*** CONNECTION LOST - Reconnecting to %s:%d ***\n", g_tcp_host, g_iq_port);
@@ -616,37 +775,6 @@ static void magnitude_to_rgb(float mag, float peak_db, float floor_db, uint8_t *
 }
 
 /*============================================================================
- * FFT to Display Scaling
- *============================================================================*/
-
-/**
- * Scale FFT magnitudes (FFT_SIZE bins, DC-centered) to display width.
- * Uses linear interpolation when display is smaller or larger than FFT.
- *
- * @param fft_mags      Input: FFT_SIZE magnitude values (DC at center)
- * @param display_mags  Output: g_waterfall_width magnitude values
- */
-static void scale_fft_to_display(const float *fft_mags, float *display_mags) {
-    float scale = (float)FFT_SIZE / (float)g_waterfall_width;
-
-    for (int x = 0; x < g_waterfall_width; x++) {
-        /* Map display pixel to FFT bin (floating point) */
-        float fft_pos = x * scale;
-        int bin_low = (int)fft_pos;
-        int bin_high = bin_low + 1;
-        float frac = fft_pos - bin_low;
-
-        /* Clamp to valid range */
-        if (bin_low < 0) bin_low = 0;
-        if (bin_high >= FFT_SIZE) bin_high = FFT_SIZE - 1;
-        if (bin_low >= FFT_SIZE) bin_low = FFT_SIZE - 1;
-
-        /* Linear interpolation between adjacent bins */
-        display_mags[x] = fft_mags[bin_low] * (1.0f - frac) + fft_mags[bin_high] * frac;
-    }
-}
-
-/*============================================================================
  * Main
  *============================================================================*/
 
@@ -759,9 +887,10 @@ int main(int argc, char *argv[]) {
     }
 
     /* Initialize audio output */
-    if (wf_audio_is_enabled()) {
-        if (!wf_audio_init()) {
+    if (g_audio_enabled) {
+        if (!audio_init()) {
             fprintf(stderr, "Warning: Audio output unavailable\n");
+            g_audio_enabled = false;
         }
     }
 
@@ -774,8 +903,8 @@ int main(int argc, char *argv[]) {
     SDL_Window *window = SDL_CreateWindow(
         g_tcp_mode ? "Waterfall (TCP)" : "Waterfall",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        g_window_width, g_window_height,
-        SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
+        WINDOW_WIDTH, WINDOW_HEIGHT,
+        SDL_WINDOW_SHOWN
     );
     if (!window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
@@ -795,7 +924,7 @@ int main(int argc, char *argv[]) {
         renderer,
         SDL_PIXELFORMAT_RGB24,
         SDL_TEXTUREACCESS_STREAMING,
-        g_window_width, g_window_height
+        WINDOW_WIDTH, WINDOW_HEIGHT
     );
     if (!texture) {
         fprintf(stderr, "SDL_CreateTexture failed: %s\n", SDL_GetError());
@@ -820,17 +949,16 @@ int main(int argc, char *argv[]) {
     int16_t *pcm_buffer = (int16_t *)malloc(FFT_SIZE * sizeof(int16_t));
     kiss_fft_cpx *fft_in = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
     kiss_fft_cpx *fft_out = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
-    uint8_t *pixels = (uint8_t *)malloc(g_window_width * g_window_height * 3);
-    float *fft_magnitudes = (float *)malloc(FFT_SIZE * sizeof(float));        /* Full FFT resolution */
-    float *display_magnitudes = (float *)malloc(g_waterfall_width * sizeof(float)); /* Scaled for display */
+    uint8_t *pixels = (uint8_t *)malloc(WINDOW_WIDTH * WINDOW_HEIGHT * 3);
+    float *magnitudes = (float *)malloc(WATERFALL_WIDTH * sizeof(float));
 
-    if (!pcm_buffer || !fft_in || !fft_out || !pixels || !fft_magnitudes || !display_magnitudes) {
+    if (!pcm_buffer || !fft_in || !fft_out || !pixels || !magnitudes) {
         fprintf(stderr, "Memory allocation failed\n");
         return 1;
     }
 
     /* Clear pixel buffer */
-    memset(pixels, 0, g_window_width * g_window_height * 3);
+    memset(pixels, 0, WINDOW_WIDTH * WINDOW_HEIGHT * 3);
 
     /* Hanning window */
     float *window_func = (float *)malloc(FFT_SIZE * sizeof(float));
@@ -846,7 +974,7 @@ int main(int argc, char *argv[]) {
         printf("Mode: Stdin PCM (rate=%d Hz)\n", SAMPLE_RATE);
     }
     printf("Window: %dx%d, FFT: %d bins (%.1f Hz/bin)\n",
-           g_window_width, g_window_height, FFT_SIZE / 2, (float)g_effective_sample_rate / FFT_SIZE);
+           WINDOW_WIDTH, WINDOW_HEIGHT, FFT_SIZE / 2, (float)g_effective_sample_rate / FFT_SIZE);
     printf("Keys: 0=gain, 1-7=tick thresholds, +/- adjust, D=detect, S=stats, Q/Esc quit\n");
     printf("1:100Hz(±10) 2:440Hz(±5) 3:500Hz(±5) 4:600Hz(±5) 5:1000Hz(±100) 6:1200Hz(±100) 7:1500Hz(±20)\n");
 
@@ -864,38 +992,6 @@ int main(int argc, char *argv[]) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 running = false;
-            } else if (event.type == SDL_WINDOWEVENT) {
-                if (event.window.event == SDL_WINDOWEVENT_RESIZED) {
-                    int new_width = event.window.data1;
-                    int new_height = event.window.data2;
-
-                    /* Update runtime dimensions */
-                    g_window_width = new_width;
-                    g_window_height = new_height;
-                    g_waterfall_width = new_width - g_bucket_width;
-                    if (g_waterfall_width < 100) g_waterfall_width = 100;  /* Minimum waterfall width */
-
-                    /* Recreate texture */
-                    SDL_DestroyTexture(texture);
-                    texture = SDL_CreateTexture(
-                        renderer,
-                        SDL_PIXELFORMAT_RGB24,
-                        SDL_TEXTUREACCESS_STREAMING,
-                        g_window_width, g_window_height
-                    );
-
-                    /* Reallocate pixel buffer */
-                    free(pixels);
-                    pixels = (uint8_t *)malloc(g_window_width * g_window_height * 3);
-                    memset(pixels, 0, g_window_width * g_window_height * 3);
-
-                    /* Reallocate display magnitudes buffer */
-                    free(display_magnitudes);
-                    display_magnitudes = (float *)malloc(g_waterfall_width * sizeof(float));
-
-                    printf("Window resized to %dx%d (waterfall: %d)\n",
-                           g_window_width, g_window_height, g_waterfall_width);
-                }
             } else if (event.type == SDL_KEYDOWN) {
                 if (event.key.keysym.sym == SDLK_ESCAPE ||
                     event.key.keysym.sym == SDLK_q) {
@@ -953,14 +1049,18 @@ int main(int argc, char *argv[]) {
                     tick_detector_print_stats(&g_tick_detector, frame_num);
                 } else if (event.key.keysym.sym == SDLK_m) {
                     /* Mute/unmute audio */
-                    wf_audio_toggle_mute();
-                    printf("Audio: %s\n", wf_audio_is_enabled() ? "ON" : "MUTED");
+                    g_audio_enabled = !g_audio_enabled;
+                    printf("Audio: %s\n", g_audio_enabled ? "ON" : "MUTED");
                 } else if (event.key.keysym.sym == SDLK_UP) {
                     /* Volume up */
-                    wf_audio_volume_up();
+                    g_volume *= 1.5f;
+                    if (g_volume > 500.0f) g_volume = 500.0f;
+                    printf("Volume: %.0f\n", g_volume);
                 } else if (event.key.keysym.sym == SDLK_DOWN) {
                     /* Volume down */
-                    wf_audio_volume_down();
+                    g_volume /= 1.5f;
+                    if (g_volume < 1.0f) g_volume = 1.0f;
+                    printf("Volume: %.0f\n", g_volume);
                 }
             }
         }
@@ -1049,13 +1149,19 @@ int main(int argc, char *argv[]) {
                 /* Convert I/Q to magnitude and decimate - verbatim from simple_am_receiver.c */
 
                 /* Initialize DSP filters on first sample (after we know sample rate) */
-                if (!g_display_dsp.initialized) {
-                    wf_dsp_path_init(&g_display_dsp, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                if (!g_display_dsp_initialized) {
+                    lowpass_init(&g_display_lowpass_i, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                    lowpass_init(&g_display_lowpass_q, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                    dc_block_init(&g_display_dc_block);
+                    g_display_dsp_initialized = true;
                     printf("Display DSP initialized: lowpass @ %.0f Hz, sample rate = %u\n",
                            IQ_FILTER_CUTOFF, g_tcp_sample_rate);
                 }
-                if (!g_audio_dsp.initialized) {
-                    wf_dsp_path_init(&g_audio_dsp, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                if (!g_audio_dsp_initialized) {
+                    lowpass_init(&g_audio_lowpass_i, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                    lowpass_init(&g_audio_lowpass_q, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                    dc_block_init(&g_audio_dc_block);
+                    g_audio_dsp_initialized = true;
                     printf("Audio DSP initialized: lowpass @ %.0f Hz, sample rate = %u\n",
                            IQ_FILTER_CUTOFF, g_tcp_sample_rate);
                 }
@@ -1078,20 +1184,39 @@ int main(int argc, char *argv[]) {
                         q_raw = (float)(iq_buffer[s * 2 + 1] - 128);
                     }
 
+                    /* ===== DISPLAY PATH (frozen logic - see P2) ===== */
+                    float display_i_filt = lowpass_process(&g_display_lowpass_i, i_raw);
+                    float display_q_filt = lowpass_process(&g_display_lowpass_q, q_raw);
+
+                    /* ===== AUDIO PATH (can be modified - see P2) ===== */
+                    float audio_i_filt = lowpass_process(&g_audio_lowpass_i, i_raw);
+                    float audio_q_filt = lowpass_process(&g_audio_lowpass_q, q_raw);
+
                     /* Simple decimation: keep every Nth sample */
                     g_decim_counter++;
                     if (g_decim_counter >= g_decimation_factor) {
 
-                        /* ===== DISPLAY PATH (frozen logic - see P2) ===== */
-                        float display_ac = wf_dsp_path_process(&g_display_dsp, i_raw, q_raw);
+                        /* ===== DISPLAY PATH OUTPUT ===== */
+                        float display_mag = sqrtf(display_i_filt * display_i_filt + display_q_filt * display_q_filt);
+                        float display_ac = dc_block_process(&g_display_dc_block, display_mag);
                         float display_sample = display_ac * 50.0f;
                         if (display_sample > 32767.0f) display_sample = 32767.0f;
                         if (display_sample < -32767.0f) display_sample = -32767.0f;
                         pcm_buffer[pcm_idx++] = (int16_t)display_sample;
 
-                        /* ===== AUDIO PATH (can be modified - see P2) ===== */
-                        float audio_ac = wf_dsp_path_process(&g_audio_dsp, i_raw, q_raw);
-                        wf_audio_process_sample(audio_ac);
+                        /* ===== AUDIO PATH OUTPUT ===== */
+                        float audio_mag = sqrtf(audio_i_filt * audio_i_filt + audio_q_filt * audio_q_filt);
+                        float audio_ac = dc_block_process(&g_audio_dc_block, audio_mag);
+                        float audio_sample = audio_ac * g_volume;
+                        if (audio_sample > 32767.0f) audio_sample = 32767.0f;
+                        if (audio_sample < -32767.0f) audio_sample = -32767.0f;
+
+                        /* Accumulate in audio output buffer */
+                        g_audio_out[g_audio_out_count++] = (int16_t)audio_sample;
+                        if (g_audio_out_count >= AUDIO_BUFFER_SIZE) {
+                            audio_write(g_audio_out, g_audio_out_count);
+                            g_audio_out_count = 0;
+                        }
 
                         g_decim_counter = 0;
                     }
@@ -1128,15 +1253,15 @@ int main(int argc, char *argv[]) {
         /* Run FFT */
         kiss_fft(fft_cfg, fft_in, fft_out);
 
-        /* Calculate magnitudes with FFT shift (DC in center) - full FFT resolution */
-        for (int i = 0; i < FFT_SIZE; i++) {
+        /* Calculate magnitudes with FFT shift (DC in center) */
+        for (int i = 0; i < WATERFALL_WIDTH; i++) {
             int bin;
-            if (i < FFT_SIZE / 2) {
+            if (i < WATERFALL_WIDTH / 2) {
                 /* Left half: negative frequencies */
                 bin = FFT_SIZE / 2 + i;
             } else {
                 /* Right half: positive frequencies */
-                bin = i - FFT_SIZE / 2;
+                bin = i - WATERFALL_WIDTH / 2;
             }
             /* Wrap around */
             if (bin < 0) bin += FFT_SIZE;
@@ -1146,20 +1271,17 @@ int main(int argc, char *argv[]) {
             if (bin >= 0 && bin < FFT_SIZE) {
                 float re = fft_out[bin].r;
                 float im = fft_out[bin].i;
-                fft_magnitudes[i] = sqrtf(re * re + im * im) / FFT_SIZE;
+                magnitudes[i] = sqrtf(re * re + im * im) / FFT_SIZE;
             } else {
-                fft_magnitudes[i] = 0.0f;
+                magnitudes[i] = 0.0f;
             }
         }
-
-        /* Scale FFT magnitudes to display width */
-        scale_fft_to_display(fft_magnitudes, display_magnitudes);
 
         /* Auto-gain: track peak and floor */
         float frame_max = -200.0f;
         float frame_min = 200.0f;
-        for (int i = 0; i < g_waterfall_width; i++) {
-            float db = 20.0f * log10f(display_magnitudes[i] + 1e-10f);
+        for (int i = 0; i < WATERFALL_WIDTH; i++) {
+            float db = 20.0f * log10f(magnitudes[i] + 1e-10f);
             if (db > frame_max) frame_max = db;
             if (db < frame_min) frame_min = db;
         }
@@ -1176,14 +1298,14 @@ int main(int argc, char *argv[]) {
         }
 
         /* Scroll pixels down by 1 row */
-        memmove(pixels + g_window_width * 3,  /* dest: row 1 */
-                pixels,                        /* src: row 0 */
-                g_window_width * (g_window_height - 1) * 3);
+        memmove(pixels + WINDOW_WIDTH * 3,  /* dest: row 1 */
+                pixels,                      /* src: row 0 */
+                WINDOW_WIDTH * (WINDOW_HEIGHT - 1) * 3);
 
         /* Draw new row at top (row 0) - WATERFALL ONLY */
-        for (int x = 0; x < g_waterfall_width; x++) {
+        for (int x = 0; x < WATERFALL_WIDTH; x++) {
             uint8_t r, g, b;
-            magnitude_to_rgb(display_magnitudes[x], g_peak_db, g_floor_db, &r, &g, &b);
+            magnitude_to_rgb(magnitudes[x], g_peak_db, g_floor_db, &r, &g, &b);
             pixels[x * 3 + 0] = r;
             pixels[x * 3 + 1] = g;
             pixels[x * 3 + 2] = b;
@@ -1228,19 +1350,19 @@ int main(int argc, char *argv[]) {
 
             /* If above threshold, draw marker dot at the frequency position */
             if (combined_energy > g_tick_thresholds[f]) {
-                /* Calculate x position in FFT-shifted display, scaled to display width */
-                float scale = (float)g_waterfall_width / (float)FFT_SIZE;
-                int x_pos = (int)((FFT_SIZE / 2 + center_bin) * scale);
-                int x_neg = (int)((FFT_SIZE / 2 - center_bin) * scale);
+                /* Calculate x position in FFT-shifted display */
+                /* Positive freq: x = WATERFALL_WIDTH/2 + center_bin */
+                int x_pos = WATERFALL_WIDTH / 2 + center_bin;
+                int x_neg = WATERFALL_WIDTH / 2 - center_bin;
 
                 /* Draw red dot at positive frequency */
-                if (x_pos >= 0 && x_pos < g_waterfall_width) {
+                if (x_pos >= 0 && x_pos < WATERFALL_WIDTH) {
                     pixels[x_pos * 3 + 0] = 255;  /* R */
                     pixels[x_pos * 3 + 1] = 0;    /* G */
                     pixels[x_pos * 3 + 2] = 0;    /* B */
                 }
                 /* Draw red dot at negative frequency */
-                if (x_neg >= 0 && x_neg < g_waterfall_width) {
+                if (x_neg >= 0 && x_neg < WATERFALL_WIDTH) {
                     pixels[x_neg * 3 + 0] = 255;  /* R */
                     pixels[x_neg * 3 + 1] = 0;    /* G */
                     pixels[x_neg * 3 + 2] = 0;    /* B */
@@ -1252,7 +1374,7 @@ int main(int argc, char *argv[]) {
         /* Small colored tick at the selected parameter position */
         {
             int indicator_x = 10 + g_selected_param * 20;
-            if (indicator_x < g_waterfall_width) {
+            if (indicator_x < WATERFALL_WIDTH) {
                 pixels[indicator_x * 3 + 0] = 255;  /* Cyan indicator */
                 pixels[indicator_x * 3 + 1] = 255;
                 pixels[indicator_x * 3 + 2] = 0;
@@ -1261,13 +1383,13 @@ int main(int argc, char *argv[]) {
 
         /* === RIGHT PANEL: Bucket energy bars === */
         {
-            int bar_width = g_bucket_width / NUM_TICK_FREQS;  /* ~28 pixels per bar */
+            int bar_width = BUCKET_WIDTH / NUM_TICK_FREQS;  /* ~28 pixels per bar */
             int bar_gap = 2;  /* Gap between bars */
 
             /* Clear right panel (black background) */
-            for (int y = 0; y < g_window_height; y++) {
-                for (int x = g_waterfall_width; x < g_window_width; x++) {
-                    int idx = (y * g_window_width + x) * 3;
+            for (int y = 0; y < WINDOW_HEIGHT; y++) {
+                for (int x = WATERFALL_WIDTH; x < WINDOW_WIDTH; x++) {
+                    int idx = (y * WINDOW_WIDTH + x) * 3;
                     pixels[idx + 0] = 0;
                     pixels[idx + 1] = 0;
                     pixels[idx + 2] = 0;
@@ -1276,7 +1398,7 @@ int main(int argc, char *argv[]) {
 
             /* Draw each bucket bar */
             for (int f = 0; f < NUM_TICK_FREQS; f++) {
-                int bar_x = g_waterfall_width + f * bar_width + bar_gap;
+                int bar_x = WATERFALL_WIDTH + f * bar_width + bar_gap;
                 int bar_w = bar_width - bar_gap * 2;
 
                 /* Convert energy to height using log scale */
@@ -1285,7 +1407,7 @@ int main(int argc, char *argv[]) {
                 if (norm < 0.0f) norm = 0.0f;
                 if (norm > 1.0f) norm = 1.0f;
 
-                int bar_height = (int)(norm * g_window_height);
+                int bar_height = (int)(norm * WINDOW_HEIGHT);
 
                 /* Get color based on magnitude */
                 uint8_t r, g, b;
@@ -1296,15 +1418,15 @@ int main(int argc, char *argv[]) {
                     r = 180;
                     g = 0;
                     b = 255;
-                    bar_height = g_window_height;  /* Full height when detected */
+                    bar_height = WINDOW_HEIGHT;  /* Full height when detected */
                 } else {
                     magnitude_to_rgb(g_bucket_energy[f], g_peak_db, g_floor_db, &r, &g, &b);
                 }
 
                 /* Draw bar from bottom up */
-                for (int y = g_window_height - bar_height; y < g_window_height; y++) {
-                    for (int x = bar_x; x < bar_x + bar_w && x < g_window_width; x++) {
-                        int idx = (y * g_window_width + x) * 3;
+                for (int y = WINDOW_HEIGHT - bar_height; y < WINDOW_HEIGHT; y++) {
+                    for (int x = bar_x; x < bar_x + bar_w && x < WINDOW_WIDTH; x++) {
+                        int idx = (y * WINDOW_WIDTH + x) * 3;
                         pixels[idx + 0] = r;
                         pixels[idx + 1] = g;
                         pixels[idx + 2] = b;
@@ -1319,7 +1441,7 @@ int main(int argc, char *argv[]) {
         }
 
         /* Update texture */
-        SDL_UpdateTexture(texture, NULL, pixels, g_window_width * 3);
+        SDL_UpdateTexture(texture, NULL, pixels, WINDOW_WIDTH * 3);
 
         /* Render */
         SDL_RenderClear(renderer);
@@ -1336,7 +1458,7 @@ int main(int argc, char *argv[]) {
     tick_detector_close(&g_tick_detector);
 
     /* Audio cleanup */
-    wf_audio_close();
+    audio_close();
 
     /* TCP cleanup */
     if (g_tcp_mode) {
@@ -1348,8 +1470,7 @@ int main(int argc, char *argv[]) {
 
     /* Cleanup */
     free(window_func);
-    free(display_magnitudes);
-    free(fft_magnitudes);
+    free(magnitudes);
     free(pixels);
     free(fft_out);
     free(fft_in);

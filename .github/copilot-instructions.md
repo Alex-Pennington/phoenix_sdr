@@ -35,8 +35,7 @@
 
 | File | Reason |
 |------|--------|
-| `tools/waterfall_dsp.c` | Frozen DSP module - lowpass filters and DC block |
-| `tools/waterfall_dsp.h` | Frozen DSP header - struct definitions |
+| tools/waterfall.c | Display working, control bar added - freeze while debugging audio |
 
 ---
 

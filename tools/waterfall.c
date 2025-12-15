@@ -177,125 +177,13 @@ static float dc_block_process(dc_block_t *dc, float x) {
     return y;
 }
 
-/* DSP filter instances - DISPLAY PATH (see P2 in copilot-instructions.md) */
+/* DSP filter instances - DISPLAY PATH */
 static lowpass_t g_display_lowpass_i;
 static lowpass_t g_display_lowpass_q;
 static dc_block_t g_display_dc_block;
 static bool g_display_dsp_initialized = false;
 
-/* DSP filter instances - AUDIO PATH (see P2 in copilot-instructions.md) */
-static lowpass_t g_audio_lowpass_i;
-static lowpass_t g_audio_lowpass_q;
-static dc_block_t g_audio_dc_block;
-static bool g_audio_dsp_initialized = false;
-
 #define IQ_FILTER_CUTOFF    3000.0f     /* 3 kHz lowpass on I/Q before magnitude */
-
-/*============================================================================
- * Audio Output (Windows waveOut) - verbatim from simple_am_receiver.c
- *============================================================================*/
-
-#define AUDIO_SAMPLE_RATE   48000       /* Must match SAMPLE_RATE */
-#define AUDIO_BUFFERS       8           /* More buffers = smoother playback */
-#define AUDIO_BUFFER_SIZE   1024        /* Smaller buffers = lower latency (~21ms) */
-
-#ifdef _WIN32
-#include <mmsystem.h>
-
-static HWAVEOUT g_waveOut = NULL;
-static WAVEHDR g_waveHeaders[AUDIO_BUFFERS];
-static int16_t *g_audio_buffers[AUDIO_BUFFERS];
-static int g_current_audio_buffer = 0;
-static CRITICAL_SECTION g_audio_cs;
-static bool g_audio_running = false;
-static bool g_audio_enabled = true;     /* Audio output enabled by default */
-static float g_volume = 50.0f;          /* Volume scaling */
-
-static bool audio_init(void) {
-    InitializeCriticalSection(&g_audio_cs);
-
-    for (int i = 0; i < AUDIO_BUFFERS; i++) {
-        g_audio_buffers[i] = (int16_t *)malloc(AUDIO_BUFFER_SIZE * sizeof(int16_t));
-        if (!g_audio_buffers[i]) return false;
-        memset(g_audio_buffers[i], 0, AUDIO_BUFFER_SIZE * sizeof(int16_t));
-    }
-
-    WAVEFORMATEX wfx = {0};
-    wfx.wFormatTag = WAVE_FORMAT_PCM;
-    wfx.nChannels = 1;
-    wfx.nSamplesPerSec = (DWORD)AUDIO_SAMPLE_RATE;
-    wfx.wBitsPerSample = 16;
-    wfx.nBlockAlign = 2;
-    wfx.nAvgBytesPerSec = wfx.nSamplesPerSec * 2;
-
-    if (waveOutOpen(&g_waveOut, WAVE_MAPPER, &wfx, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR) {
-        fprintf(stderr, "Failed to open audio output\n");
-        return false;
-    }
-
-    for (int i = 0; i < AUDIO_BUFFERS; i++) {
-        g_waveHeaders[i].lpData = (LPSTR)g_audio_buffers[i];
-        g_waveHeaders[i].dwBufferLength = AUDIO_BUFFER_SIZE * sizeof(int16_t);
-        waveOutPrepareHeader(g_waveOut, &g_waveHeaders[i], sizeof(WAVEHDR));
-    }
-
-    g_audio_running = true;
-    printf("Audio output initialized at %d Hz\n", AUDIO_SAMPLE_RATE);
-    return true;
-}
-
-static void audio_write(const int16_t *samples, uint32_t count) {
-    if (!g_audio_running || !g_audio_enabled || count == 0) return;
-
-    EnterCriticalSection(&g_audio_cs);
-
-    WAVEHDR *hdr = &g_waveHeaders[g_current_audio_buffer];
-
-    /* Wait if buffer busy */
-    while (hdr->dwFlags & WHDR_INQUEUE) {
-        LeaveCriticalSection(&g_audio_cs);
-        Sleep(1);
-        EnterCriticalSection(&g_audio_cs);
-    }
-
-    uint32_t to_copy = (count > AUDIO_BUFFER_SIZE) ? AUDIO_BUFFER_SIZE : count;
-    memcpy(g_audio_buffers[g_current_audio_buffer], samples, to_copy * sizeof(int16_t));
-    hdr->dwBufferLength = to_copy * sizeof(int16_t);
-
-    waveOutWrite(g_waveOut, hdr, sizeof(WAVEHDR));
-    g_current_audio_buffer = (g_current_audio_buffer + 1) % AUDIO_BUFFERS;
-
-    LeaveCriticalSection(&g_audio_cs);
-}
-
-static void audio_close(void) {
-    if (!g_audio_running) return;
-    g_audio_running = false;
-
-    if (g_waveOut) {
-        waveOutReset(g_waveOut);
-        for (int i = 0; i < AUDIO_BUFFERS; i++) {
-            waveOutUnprepareHeader(g_waveOut, &g_waveHeaders[i], sizeof(WAVEHDR));
-            free(g_audio_buffers[i]);
-        }
-        waveOutClose(g_waveOut);
-        g_waveOut = NULL;
-    }
-    DeleteCriticalSection(&g_audio_cs);
-    printf("Audio output closed\n");
-}
-#else
-/* Non-Windows stub */
-static bool g_audio_enabled = false;
-static float g_volume = 50.0f;
-static bool audio_init(void) { return false; }
-static void audio_write(const int16_t *samples, uint32_t count) { (void)samples; (void)count; }
-static void audio_close(void) { }
-#endif
-
-/* Audio output buffer for accumulating samples before writing */
-static int16_t g_audio_out[AUDIO_BUFFER_SIZE];
-static int g_audio_out_count = 0;
 
 /*============================================================================
  * Configuration
@@ -451,7 +339,6 @@ static bool tcp_reconnect(void) {
 
     /* Reset DSP state for fresh start after reconnection */
     g_display_dsp_initialized = false;
-    g_audio_dsp_initialized = false;
     g_decim_counter = 0;
 
     printf("\n*** CONNECTION LOST - Reconnecting to %s:%d ***\n", g_tcp_host, g_iq_port);
@@ -886,14 +773,6 @@ int main(int argc, char *argv[]) {
         printf("Stdin mode: Waiting for PCM data...\n");
     }
 
-    /* Initialize audio output */
-    if (g_audio_enabled) {
-        if (!audio_init()) {
-            fprintf(stderr, "Warning: Audio output unavailable\n");
-            g_audio_enabled = false;
-        }
-    }
-
     /* Initialize SDL */
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -1047,20 +926,6 @@ int main(int argc, char *argv[]) {
                     printf("Tick detection: %s\n", g_tick_detector.detection_enabled ? "ENABLED" : "DISABLED");
                 } else if (event.key.keysym.sym == SDLK_s) {
                     tick_detector_print_stats(&g_tick_detector, frame_num);
-                } else if (event.key.keysym.sym == SDLK_m) {
-                    /* Mute/unmute audio */
-                    g_audio_enabled = !g_audio_enabled;
-                    printf("Audio: %s\n", g_audio_enabled ? "ON" : "MUTED");
-                } else if (event.key.keysym.sym == SDLK_UP) {
-                    /* Volume up */
-                    g_volume *= 1.5f;
-                    if (g_volume > 500.0f) g_volume = 500.0f;
-                    printf("Volume: %.0f\n", g_volume);
-                } else if (event.key.keysym.sym == SDLK_DOWN) {
-                    /* Volume down */
-                    g_volume /= 1.5f;
-                    if (g_volume < 1.0f) g_volume = 1.0f;
-                    printf("Volume: %.0f\n", g_volume);
                 }
             }
         }
@@ -1157,14 +1022,6 @@ int main(int argc, char *argv[]) {
                     printf("Display DSP initialized: lowpass @ %.0f Hz, sample rate = %u\n",
                            IQ_FILTER_CUTOFF, g_tcp_sample_rate);
                 }
-                if (!g_audio_dsp_initialized) {
-                    lowpass_init(&g_audio_lowpass_i, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
-                    lowpass_init(&g_audio_lowpass_q, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
-                    dc_block_init(&g_audio_dc_block);
-                    g_audio_dsp_initialized = true;
-                    printf("Audio DSP initialized: lowpass @ %.0f Hz, sample rate = %u\n",
-                           IQ_FILTER_CUTOFF, g_tcp_sample_rate);
-                }
 
                 for (uint32_t s = 0; s < frame.num_samples && pcm_idx < samples_needed; s++) {
                     float i_raw, q_raw;
@@ -1184,39 +1041,20 @@ int main(int argc, char *argv[]) {
                         q_raw = (float)(iq_buffer[s * 2 + 1] - 128);
                     }
 
-                    /* ===== DISPLAY PATH (frozen logic - see P2) ===== */
+                    /* ===== DISPLAY PATH ===== */
                     float display_i_filt = lowpass_process(&g_display_lowpass_i, i_raw);
                     float display_q_filt = lowpass_process(&g_display_lowpass_q, q_raw);
-
-                    /* ===== AUDIO PATH (can be modified - see P2) ===== */
-                    float audio_i_filt = lowpass_process(&g_audio_lowpass_i, i_raw);
-                    float audio_q_filt = lowpass_process(&g_audio_lowpass_q, q_raw);
 
                     /* Simple decimation: keep every Nth sample */
                     g_decim_counter++;
                     if (g_decim_counter >= g_decimation_factor) {
 
-                        /* ===== DISPLAY PATH OUTPUT ===== */
                         float display_mag = sqrtf(display_i_filt * display_i_filt + display_q_filt * display_q_filt);
                         float display_ac = dc_block_process(&g_display_dc_block, display_mag);
                         float display_sample = display_ac * 50.0f;
                         if (display_sample > 32767.0f) display_sample = 32767.0f;
                         if (display_sample < -32767.0f) display_sample = -32767.0f;
                         pcm_buffer[pcm_idx++] = (int16_t)display_sample;
-
-                        /* ===== AUDIO PATH OUTPUT ===== */
-                        float audio_mag = sqrtf(audio_i_filt * audio_i_filt + audio_q_filt * audio_q_filt);
-                        float audio_ac = dc_block_process(&g_audio_dc_block, audio_mag);
-                        float audio_sample = audio_ac * g_volume;
-                        if (audio_sample > 32767.0f) audio_sample = 32767.0f;
-                        if (audio_sample < -32767.0f) audio_sample = -32767.0f;
-
-                        /* Accumulate in audio output buffer */
-                        g_audio_out[g_audio_out_count++] = (int16_t)audio_sample;
-                        if (g_audio_out_count >= AUDIO_BUFFER_SIZE) {
-                            audio_write(g_audio_out, g_audio_out_count);
-                            g_audio_out_count = 0;
-                        }
 
                         g_decim_counter = 0;
                     }
@@ -1456,9 +1294,6 @@ int main(int argc, char *argv[]) {
     printf("\n");
     tick_detector_print_stats(&g_tick_detector, frame_num);
     tick_detector_close(&g_tick_detector);
-
-    /* Audio cleanup */
-    audio_close();
 
     /* TCP cleanup */
     if (g_tcp_mode) {

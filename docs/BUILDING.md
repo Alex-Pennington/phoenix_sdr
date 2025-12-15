@@ -110,7 +110,7 @@ phoenix_sdr/
 ├── tools/                 # Executable tools
 │   ├── sdr_server.c       # SDR server
 │   ├── waterfall.c        # Waterfall display
-│   ├── waterfall_dsp.c    # DSP module (frozen)
+│   ├── waterfall_dsp.c    # DSP module
 │   ├── waterfall_audio.c  # Audio output module
 │   ├── wormhole.c         # Constellation display
 │   └── ...

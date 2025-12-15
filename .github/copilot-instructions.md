@@ -36,6 +36,8 @@
 | File | Reason |
 |------|--------|
 | `tools/waterfall.c` | Waterfall display is working - audio chain moved to separate file |
+| `tools/waterfall_dsp.c` | Frozen DSP module - lowpass filters and DC block |
+| `tools/waterfall_dsp.h` | Frozen DSP header - struct definitions |
 
 ---
 
@@ -43,8 +45,9 @@
 
 In `tools/waterfall.c`, the **display path** and **audio path** must never share variables or filters.
 
-- Display path uses: `g_display_lowpass_i`, `g_display_lowpass_q`, `g_display_dc_block`, `pcm_buffer`
-- Audio path uses: `g_audio_lowpass_i`, `g_audio_lowpass_q`, `g_audio_dc_block`, `g_audio_out`
+- Display path uses: `g_display_dsp` (wf_dsp_path_t instance)
+- Audio path uses: `g_audio_dsp` (wf_dsp_path_t instance)
+- Audio output uses: `tools/waterfall_audio.c` module (modifiable)
 - Both paths receive the same raw `i_raw`, `q_raw` input - that is the ONLY shared data
 - **Never** let audio code touch display variables or vice versa
 

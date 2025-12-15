@@ -247,7 +247,9 @@ try {
         "-lmingw32",
         "-lSDL2main",
         "-lSDL2",
-        "-lm"
+        "-lm",
+        "-lws2_32",
+        "-lwinmm"
     )
     $allArgs = @("-o", "`"$BinDir\waterfall.exe`"", "`"$waterfallObj`"", "`"$kissObj`"") + $waterfallLdflags
     $argString = $allArgs -join " "

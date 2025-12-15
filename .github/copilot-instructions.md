@@ -1,5 +1,19 @@
 # Phoenix SDR - Copilot Instructions
 
+## P0 - CRITICAL RULES (READ BEFORE DOING ANYTHING)
+
+1. **DO NOT add features, flags, modes, or functionality without explicit user instruction.**
+   - No new command-line flags (like `-n`, `--debug`, etc.)
+   - No new operating modes (like "no hardware mode", "test mode", etc.)
+   - No new files unless explicitly requested
+   - If something seems needed but wasn't requested, **ASK FIRST**
+
+2. **When in doubt, ASK.** Do not assume. Do not "improve" things proactively.
+
+3. **Stick to the exact scope of the request.** If asked to fix X, fix X only.
+
+---
+
 ## READ THIS FIRST
 
 You are helping debug a **WWV signal detection problem**. This is part of a larger project (MIL-STD-188-110A HF modem), but right now the ONLY goal is:

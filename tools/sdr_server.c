@@ -4,8 +4,9 @@
  *
  * TCP server for remote control of SDRplay RSP2 Pro.
  * Implements protocol defined in docs/SDR_TCP_CONTROL_INTERFACE.md
+ * I/Q streaming on separate port per docs/SDR_IQ_STREAMING_INTERFACE.md
  *
- * Usage: sdr_server.exe [-p port] [-T addr] [-n (no hardware)]
+ * Usage: sdr_server.exe [-p port] [-i iq_port] [-T addr]
  */
 
 #include <stdio.h>
@@ -13,10 +14,12 @@
 #include <string.h>
 #include <stdbool.h>
 #include <signal.h>
+#include <math.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <process.h>
 #pragma comment(lib, "ws2_32.lib")
 typedef int socklen_t;
 #else
@@ -24,6 +27,7 @@ typedef int socklen_t;
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <pthread.h>
 #define SOCKET int
 #define INVALID_SOCKET (-1)
 #define SOCKET_ERROR (-1)
@@ -36,6 +40,57 @@ typedef int socklen_t;
 #include <stdarg.h>
 
 /*============================================================================
+ * I/Q Streaming Protocol Definitions
+ *============================================================================*/
+
+#define IQ_DEFAULT_PORT 4536
+#define IQ_RING_BUFFER_SIZE (4 * 1024 * 1024)  /* 4 MB ring buffer */
+#define IQ_FRAME_SAMPLES 8192                   /* Samples per frame */
+
+/* Magic numbers */
+#define IQ_MAGIC_HEADER 0x50485849  /* "PHXI" */
+#define IQ_MAGIC_DATA   0x49514451  /* "IQDQ" */
+#define IQ_MAGIC_META   0x4D455441  /* "META" */
+
+/* Sample format codes */
+#define IQ_FORMAT_S16 1
+#define IQ_FORMAT_F32 2
+#define IQ_FORMAT_U8  3
+
+#pragma pack(push, 1)
+typedef struct {
+    uint32_t magic;           /* 0x50485849 = "PHXI" */
+    uint32_t version;         /* Protocol version (1) */
+    uint32_t sample_rate;     /* Current sample rate in Hz */
+    uint32_t sample_format;   /* Format code */
+    uint32_t center_freq_lo;  /* Center frequency low 32 bits */
+    uint32_t center_freq_hi;  /* Center frequency high 32 bits */
+    uint32_t reserved[2];     /* Future use (0) */
+} iq_stream_header_t;
+
+typedef struct {
+    uint32_t magic;           /* 0x49514451 = "IQDQ" */
+    uint32_t sequence;        /* Frame sequence number */
+    uint32_t num_samples;     /* Number of I/Q pairs in this frame */
+    uint32_t flags;           /* Bit flags */
+} iq_data_frame_t;
+
+typedef struct {
+    uint32_t magic;           /* 0x4D455441 = "META" */
+    uint32_t sample_rate;     /* New sample rate in Hz */
+    uint32_t sample_format;   /* New format code */
+    uint32_t center_freq_lo;  /* New center frequency low 32 bits */
+    uint32_t center_freq_hi;  /* New center frequency high 32 bits */
+    uint32_t reserved[3];     /* Future use (0) */
+} iq_metadata_update_t;
+#pragma pack(pop)
+
+/* I/Q frame flags */
+#define IQ_FLAG_OVERLOAD    (1 << 0)
+#define IQ_FLAG_FREQ_CHANGE (1 << 1)
+#define IQ_FLAG_GAIN_CHANGE (1 << 2)
+
+/*============================================================================
  * Globals
  *============================================================================*/
 
@@ -43,6 +98,36 @@ static volatile bool g_running = true;
 static SOCKET g_listen_socket = INVALID_SOCKET;
 static SOCKET g_client_socket = INVALID_SOCKET;
 static tcp_sdr_state_t g_sdr_state;
+
+/* I/Q streaming globals */
+static SOCKET g_iq_listen_socket = INVALID_SOCKET;
+static SOCKET g_iq_client_socket = INVALID_SOCKET;
+static volatile bool g_iq_connected = false;
+static volatile bool g_iq_streaming = false;
+
+/* Ring buffer for I/Q samples */
+static int16_t *g_iq_ring_buffer = NULL;
+static volatile size_t g_iq_write_pos = 0;
+static volatile size_t g_iq_read_pos = 0;
+static volatile uint32_t g_iq_sequence = 0;
+static volatile uint32_t g_iq_frames_sent = 0;
+static volatile uint32_t g_iq_frames_dropped = 0;
+static volatile uint32_t g_iq_current_flags = 0;
+static volatile bool g_iq_config_changed = false;
+
+/* Rate limiting for notifications */
+static DWORD g_last_overload_notify_time = 0;
+#define OVERLOAD_NOTIFY_COOLDOWN_MS 500  /* Min time between overload notifications */
+
+/* SDR recovery tracking */
+static DWORD g_last_stop_time = 0;
+#define SDR_RESTART_COOLDOWN_MS 200  /* Min time between stop and start */
+
+#ifdef _WIN32
+static CRITICAL_SECTION g_iq_mutex;
+#else
+static pthread_mutex_t g_iq_mutex = PTHREAD_MUTEX_INITIALIZER;
+#endif
 
 /*============================================================================
  * Notification Functions (thread-safe async notifications to client)
@@ -136,14 +221,331 @@ int tcp_send_notification(tcp_sdr_state_t *state, const char *format, ...) {
 }
 
 /*============================================================================
+ * I/Q Ring Buffer Functions
+ *============================================================================*/
+
+static bool iq_buffer_init(void) {
+    g_iq_ring_buffer = (int16_t*)malloc(IQ_RING_BUFFER_SIZE);
+    if (!g_iq_ring_buffer) {
+        fprintf(stderr, "Failed to allocate I/Q ring buffer\n");
+        return false;
+    }
+    g_iq_write_pos = 0;
+    g_iq_read_pos = 0;
+    g_iq_sequence = 0;
+    g_iq_frames_sent = 0;
+    g_iq_frames_dropped = 0;
+#ifdef _WIN32
+    InitializeCriticalSection(&g_iq_mutex);
+#endif
+    printf("I/Q ring buffer: %d KB allocated\n", IQ_RING_BUFFER_SIZE / 1024);
+    return true;
+}
+
+static void iq_buffer_cleanup(void) {
+    if (g_iq_ring_buffer) {
+        free(g_iq_ring_buffer);
+        g_iq_ring_buffer = NULL;
+    }
+#ifdef _WIN32
+    DeleteCriticalSection(&g_iq_mutex);
+#endif
+}
+
+/* Get available space in ring buffer (in samples, I/Q pairs) */
+static size_t iq_buffer_space(void) {
+    size_t max_samples = IQ_RING_BUFFER_SIZE / (2 * sizeof(int16_t));
+    size_t write = g_iq_write_pos;
+    size_t read = g_iq_read_pos;
+    if (write >= read) {
+        return max_samples - (write - read) - 1;
+    } else {
+        return read - write - 1;
+    }
+}
+
+/* Get available data in ring buffer (in samples, I/Q pairs) */
+static size_t iq_buffer_available(void) {
+    size_t max_samples = IQ_RING_BUFFER_SIZE / (2 * sizeof(int16_t));
+    size_t write = g_iq_write_pos;
+    size_t read = g_iq_read_pos;
+    if (write >= read) {
+        return write - read;
+    } else {
+        return max_samples - read + write;
+    }
+}
+
+/* Write interleaved I/Q samples to ring buffer (called from SDR callback) */
+static void iq_buffer_write(const int16_t *xi, const int16_t *xq, uint32_t count) {
+    if (!g_iq_ring_buffer || !g_iq_connected) return;
+
+    size_t max_samples = IQ_RING_BUFFER_SIZE / (2 * sizeof(int16_t));
+    size_t space = iq_buffer_space();
+
+    if (count > space) {
+        /* Buffer overflow - drop oldest data */
+        size_t drop = count - space;
+        g_iq_read_pos = (g_iq_read_pos + drop) % max_samples;
+        g_iq_frames_dropped++;
+    }
+
+    /* Write interleaved I/Q data */
+    for (uint32_t i = 0; i < count; i++) {
+        size_t pos = g_iq_write_pos * 2;
+        g_iq_ring_buffer[pos] = xi[i];
+        g_iq_ring_buffer[pos + 1] = xq[i];
+        g_iq_write_pos = (g_iq_write_pos + 1) % max_samples;
+    }
+}
+
+/* Read interleaved I/Q samples from ring buffer (called from I/Q thread) */
+static size_t iq_buffer_read(int16_t *buffer, size_t max_samples) {
+    if (!g_iq_ring_buffer) return 0;
+
+    size_t available = iq_buffer_available();
+    size_t to_read = (available < max_samples) ? available : max_samples;
+
+    size_t buffer_max = IQ_RING_BUFFER_SIZE / (2 * sizeof(int16_t));
+
+    for (size_t i = 0; i < to_read; i++) {
+        size_t pos = g_iq_read_pos * 2;
+        buffer[i * 2] = g_iq_ring_buffer[pos];
+        buffer[i * 2 + 1] = g_iq_ring_buffer[pos + 1];
+        g_iq_read_pos = (g_iq_read_pos + 1) % buffer_max;
+    }
+
+    return to_read;
+}
+
+/*============================================================================
+ * I/Q Streaming Thread
+ *============================================================================*/
+
+static void send_iq_header(SOCKET sock) {
+    iq_stream_header_t header;
+    memset(&header, 0, sizeof(header));
+    header.magic = IQ_MAGIC_HEADER;
+    header.version = 1;
+    header.sample_rate = (uint32_t)g_sdr_state.sample_rate;
+    header.sample_format = IQ_FORMAT_S16;
+
+    uint64_t freq = (uint64_t)g_sdr_state.freq_hz;
+    header.center_freq_lo = (uint32_t)(freq & 0xFFFFFFFF);
+    header.center_freq_hi = (uint32_t)(freq >> 32);
+
+    send(sock, (const char*)&header, sizeof(header), 0);
+    printf("[IQ] Sent stream header: %u Hz, format S16\n", header.sample_rate);
+}
+
+static void send_iq_metadata(SOCKET sock) {
+    iq_metadata_update_t meta;
+    memset(&meta, 0, sizeof(meta));
+    meta.magic = IQ_MAGIC_META;
+    meta.sample_rate = (uint32_t)g_sdr_state.sample_rate;
+    meta.sample_format = IQ_FORMAT_S16;
+
+    uint64_t freq = (uint64_t)g_sdr_state.freq_hz;
+    meta.center_freq_lo = (uint32_t)(freq & 0xFFFFFFFF);
+    meta.center_freq_hi = (uint32_t)(freq >> 32);
+
+    send(sock, (const char*)&meta, sizeof(meta), 0);
+}
+
+#ifdef _WIN32
+static DWORD WINAPI iq_stream_thread_func(void *arg)
+#else
+static void *iq_stream_thread_func(void *arg)
+#endif
+{
+    (void)arg;
+    int16_t *frame_buffer = (int16_t*)malloc(IQ_FRAME_SAMPLES * 2 * sizeof(int16_t));
+    if (!frame_buffer) {
+        fprintf(stderr, "[IQ] Failed to allocate frame buffer\n");
+#ifdef _WIN32
+        return 0;
+#else
+        return NULL;
+#endif
+    }
+
+    /* Track last known config to detect changes */
+    double last_freq = 0;
+    int last_sample_rate = 0;
+
+    printf("[IQ] Streaming thread started\n");
+
+    while (g_running) {
+        /* Accept I/Q client connection if none connected */
+        if (!g_iq_connected || g_iq_client_socket == INVALID_SOCKET) {
+            if (g_iq_listen_socket == INVALID_SOCKET) {
+#ifdef _WIN32
+                Sleep(100);
+#else
+                usleep(100000);
+#endif
+                continue;
+            }
+
+            /* Set non-blocking accept with timeout */
+            fd_set read_fds;
+            struct timeval tv;
+            FD_ZERO(&read_fds);
+            FD_SET(g_iq_listen_socket, &read_fds);
+            tv.tv_sec = 0;
+            tv.tv_usec = 100000;  /* 100ms timeout */
+
+            int ready = select((int)(g_iq_listen_socket + 1), &read_fds, NULL, NULL, &tv);
+            if (ready <= 0) {
+                continue;
+            }
+
+            struct sockaddr_in client_addr;
+            socklen_t client_len = sizeof(client_addr);
+            SOCKET new_client = accept(g_iq_listen_socket, (struct sockaddr*)&client_addr, &client_len);
+            if (new_client == INVALID_SOCKET) {
+                continue;
+            }
+
+            /* Accept the new I/Q client */
+            char client_ip[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
+            printf("[IQ] Client connected from %s:%d\n", client_ip, ntohs(client_addr.sin_port));
+
+            g_iq_client_socket = new_client;
+            g_iq_connected = true;
+            g_iq_sequence = 0;
+            g_iq_frames_sent = 0;
+            g_iq_frames_dropped = 0;
+
+            /* Reset config tracking */
+            last_freq = g_sdr_state.freq_hz;
+            last_sample_rate = g_sdr_state.sample_rate;
+
+            /* Send stream header to new client */
+            send_iq_header(g_iq_client_socket);
+            continue;
+        }
+
+        /* Wait for streaming to be active */
+        if (!g_sdr_state.streaming) {
+#ifdef _WIN32
+            Sleep(10);
+#else
+            usleep(10000);
+#endif
+            continue;
+        }
+
+        /* Send metadata update if config changed */
+        if (g_iq_config_changed ||
+            last_freq != g_sdr_state.freq_hz ||
+            last_sample_rate != g_sdr_state.sample_rate) {
+
+            g_iq_config_changed = false;
+            last_freq = g_sdr_state.freq_hz;
+            last_sample_rate = g_sdr_state.sample_rate;
+            send_iq_metadata(g_iq_client_socket);
+            printf("[IQ] Config changed, sent metadata update\n");
+        }
+
+        /* Read samples from ring buffer */
+        size_t samples = iq_buffer_read(frame_buffer, IQ_FRAME_SAMPLES);
+
+        /* If no samples and no hardware, generate test signal */
+        if (samples == 0 && !g_sdr_state.hardware_connected) {
+            /* Generate test signal: 1kHz tone at ~half scale */
+            static double phase = 0.0;
+            double freq_hz = 1000.0;
+            double sample_rate = (double)g_sdr_state.sample_rate;
+            double phase_inc = 2.0 * 3.14159265358979 * freq_hz / sample_rate;
+
+            for (size_t i = 0; i < IQ_FRAME_SAMPLES; i++) {
+                double val = sin(phase) * 16000.0;
+                frame_buffer[i * 2] = (int16_t)val;       /* I */
+                frame_buffer[i * 2 + 1] = (int16_t)(val * 0.5);  /* Q (phase shift for complex signal) */
+                phase += phase_inc;
+                if (phase > 2.0 * 3.14159265358979) phase -= 2.0 * 3.14159265358979;
+            }
+            samples = IQ_FRAME_SAMPLES;
+
+            /* Simulate sample rate timing */
+            double frame_time_ms = (1000.0 * IQ_FRAME_SAMPLES) / sample_rate;
+#ifdef _WIN32
+            Sleep((DWORD)(frame_time_ms + 0.5));
+#else
+            usleep((useconds_t)(frame_time_ms * 1000));
+#endif
+        } else if (samples == 0) {
+#ifdef _WIN32
+            Sleep(1);
+#else
+            usleep(1000);
+#endif
+            continue;
+        }
+
+        /* Build frame header */
+        iq_data_frame_t frame;
+        frame.magic = IQ_MAGIC_DATA;
+        frame.sequence = g_iq_sequence++;
+        frame.num_samples = (uint32_t)samples;
+        frame.flags = g_iq_current_flags;
+        g_iq_current_flags = 0;  /* Clear flags after sending */
+
+        /* Send frame header */
+        int sent = send(g_iq_client_socket, (const char*)&frame, sizeof(frame), 0);
+        if (sent != sizeof(frame)) {
+            printf("[IQ] Client disconnected (header send failed)\n");
+            closesocket(g_iq_client_socket);
+            g_iq_client_socket = INVALID_SOCKET;
+            g_iq_connected = false;
+            continue;
+        }
+
+        /* Send sample data */
+        size_t data_size = samples * 2 * sizeof(int16_t);
+        sent = send(g_iq_client_socket, (const char*)frame_buffer, (int)data_size, 0);
+        if (sent != (int)data_size) {
+            printf("[IQ] Client disconnected (data send failed)\n");
+            closesocket(g_iq_client_socket);
+            g_iq_client_socket = INVALID_SOCKET;
+            g_iq_connected = false;
+            continue;
+        }
+
+        g_iq_frames_sent++;
+    }
+
+    /* Cleanup */
+    if (g_iq_client_socket != INVALID_SOCKET) {
+        closesocket(g_iq_client_socket);
+        g_iq_client_socket = INVALID_SOCKET;
+    }
+    g_iq_connected = false;
+
+    free(frame_buffer);
+    printf("[IQ] Streaming thread stopped\n");
+
+#ifdef _WIN32
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+/*============================================================================
  * SDR Callbacks
  *============================================================================*/
 
 static void on_samples(const int16_t *xi, const int16_t *xq,
                       uint32_t count, bool reset, void *user_ctx) {
-    (void)xi; (void)xq; (void)count; (void)reset; (void)user_ctx;
-    /* Samples are received here - for now just count/discard */
-    /* In the future, could stream over TCP or process in some way */
+    (void)reset; (void)user_ctx;
+
+    /* Write samples to I/Q ring buffer for TCP streaming */
+    if (g_iq_connected && g_sdr_state.streaming) {
+        iq_buffer_write(xi, xq, count);
+    }
 }
 
 static void on_gain_change(double gain_db, int lna_db, void *user_ctx) {
@@ -170,11 +572,22 @@ static void on_overload(bool overloaded, void *user_ctx) {
         bool was_overloaded = state->overload;
         state->overload = overloaded;
 
-        /* Only notify if state changed */
+        /* Set I/Q stream flag */
+        if (overloaded) {
+            g_iq_current_flags |= IQ_FLAG_OVERLOAD;
+        }
+
+        /* Only notify if state changed AND rate limit not exceeded */
         if (was_overloaded != overloaded) {
-            printf("[SDR] %s\n", overloaded ? "OVERLOAD DETECTED" : "Overload cleared");
-            tcp_send_notification(state, "! OVERLOAD %s",
-                                  overloaded ? "DETECTED" : "CLEARED");
+            DWORD now = GetTickCount();
+            DWORD elapsed = now - g_last_overload_notify_time;
+
+            if (elapsed >= OVERLOAD_NOTIFY_COOLDOWN_MS) {
+                printf("[SDR] %s\n", overloaded ? "OVERLOAD DETECTED" : "Overload cleared");
+                tcp_send_notification(state, "! OVERLOAD %s",
+                                      overloaded ? "DETECTED" : "CLEARED");
+                g_last_overload_notify_time = now;
+            }
         }
     }
 }
@@ -201,7 +614,18 @@ static void signal_handler(int sig) {
         g_sdr_state.streaming = false;
     }
 
-    /* Close sockets to unblock accept/recv */
+    /* Close I/Q sockets */
+    if (g_iq_client_socket != INVALID_SOCKET) {
+        closesocket(g_iq_client_socket);
+        g_iq_client_socket = INVALID_SOCKET;
+        g_iq_connected = false;
+    }
+    if (g_iq_listen_socket != INVALID_SOCKET) {
+        closesocket(g_iq_listen_socket);
+        g_iq_listen_socket = INVALID_SOCKET;
+    }
+
+    /* Close control sockets to unblock accept/recv */
     if (g_client_socket != INVALID_SOCKET) {
         closesocket(g_client_socket);
         g_client_socket = INVALID_SOCKET;
@@ -259,6 +683,14 @@ static int recv_line(SOCKET sock, char *buf, int buf_size) {
 }
 
 /*============================================================================
+ * Forward Declarations
+ *============================================================================*/
+
+static bool init_sdr(tcp_sdr_state_t *state, int device_idx);
+static void cleanup_sdr(tcp_sdr_state_t *state);
+static bool reinit_sdr(tcp_sdr_state_t *state);
+
+/*============================================================================
  * Client Handler
  *============================================================================*/
 
@@ -290,8 +722,38 @@ static void handle_client(SOCKET client, tcp_sdr_state_t *state) {
         tcp_error_t err = tcp_parse_command(line, &cmd);
 
         if (err == TCP_OK) {
+            /* Suppress notifications during command execution to ensure
+             * the command response is sent before any async notifications.
+             * This prevents ! GAIN_CHANGE from arriving before OK. */
+            state->notify_enabled = false;
+
+            /* Handle START cooldown - SDR needs time to reset after STOP */
+            if (cmd.type == CMD_START && g_last_stop_time != 0) {
+                DWORD now = GetTickCount();
+                DWORD elapsed = now - g_last_stop_time;
+                if (elapsed < SDR_RESTART_COOLDOWN_MS) {
+                    DWORD wait_ms = SDR_RESTART_COOLDOWN_MS - elapsed;
+                    printf("[SDR] Waiting %lu ms for SDR cooldown...\n", wait_ms);
+                    Sleep(wait_ms);
+                }
+            }
+
             /* Execute command */
             tcp_execute_command(&cmd, state, &resp);
+
+            /* If START failed with hardware error, try recovery and retry once */
+            if (cmd.type == CMD_START && resp.error == TCP_ERR_HARDWARE) {
+                printf("[SDR] START failed, attempting recovery...\n");
+                if (reinit_sdr(state)) {
+                    /* Retry the START command */
+                    tcp_execute_command(&cmd, state, &resp);
+                }
+            }
+
+            /* Track STOP time for cooldown */
+            if (cmd.type == CMD_STOP && resp.error == TCP_OK) {
+                g_last_stop_time = GetTickCount();
+            }
         } else {
             /* Parse error */
             const char *msg = NULL;
@@ -314,6 +776,9 @@ static void handle_client(SOCKET client, tcp_sdr_state_t *state) {
             break;
         }
 
+        /* Re-enable async notifications after response is sent */
+        state->notify_enabled = true;
+
         /* Handle QUIT */
         if (cmd.type == CMD_QUIT) {
             break;
@@ -325,12 +790,19 @@ static void handle_client(SOCKET client, tcp_sdr_state_t *state) {
         printf("Stopping streaming (client disconnect)\n");
         if (state->hardware_connected && state->sdr_ctx) {
             psdr_stop(state->sdr_ctx);
+            g_last_stop_time = GetTickCount();  /* Track stop time for restart cooldown */
         }
         state->streaming = false;
     }
 
+    /* Reset overload state for next client */
+    state->overload = false;
+    g_last_overload_notify_time = 0;
+
     /* Disable async notifications */
     tcp_notify_clear_client(state);
+
+    printf("Client session cleanup complete\n");
 }
 
 /*============================================================================
@@ -340,12 +812,14 @@ static void handle_client(SOCKET client, tcp_sdr_state_t *state) {
 static void print_usage(const char *prog) {
     printf("Usage: %s [options]\n\n", prog);
     printf("Options:\n");
-    printf("  -p PORT    Listen port (default: %d)\n", TCP_DEFAULT_PORT);
+    printf("  -p PORT    Control port (default: %d)\n", TCP_DEFAULT_PORT);
+    printf("  -i PORT    I/Q stream port (default: %d)\n", IQ_DEFAULT_PORT);
     printf("  -T ADDR    Listen address (default: 127.0.0.1)\n");
-    printf("  -n         No hardware mode (testing without SDR)\n");
+    printf("  -I         Disable I/Q streaming port\n");
     printf("  -d INDEX   Select SDR device index (default: 0)\n");
     printf("  -h         Show this help\n");
     printf("\nProtocol: See docs/SDR_TCP_CONTROL_INTERFACE.md\n");
+    printf("I/Q Stream: See docs/SDR_IQ_STREAMING_INTERFACE.md\n");
 }
 
 /*============================================================================
@@ -443,6 +917,33 @@ static void cleanup_sdr(tcp_sdr_state_t *state) {
     }
 }
 
+/* Track device index for reinit */
+static int g_sdr_device_idx = 0;
+
+/**
+ * @brief Attempt to reinitialize SDR after a failure
+ *
+ * Called when hardware operations fail to try to recover.
+ */
+static bool reinit_sdr(tcp_sdr_state_t *state) {
+    printf("[SDR] Attempting hardware recovery...\n");
+
+    /* Clean up existing context */
+    cleanup_sdr(state);
+
+    /* Wait a moment for hardware to reset */
+    Sleep(500);
+
+    /* Try to reinitialize */
+    if (init_sdr(state, g_sdr_device_idx)) {
+        printf("[SDR] Hardware recovery successful\n");
+        return true;
+    }
+
+    printf("[SDR] Hardware recovery failed\n");
+    return false;
+}
+
 /*============================================================================
  * Main
  *============================================================================*/
@@ -451,18 +952,21 @@ int main(int argc, char *argv[]) {
     print_version("Phoenix SDR - TCP Control Server");
 
     int port = TCP_DEFAULT_PORT;
+    int iq_port = IQ_DEFAULT_PORT;
     const char *bind_addr = "127.0.0.1";
-    bool no_hardware = false;
+    bool iq_enabled = true;
     int device_idx = 0;
 
     /* Parse arguments */
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
             port = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "-i") == 0 && i + 1 < argc) {
+            iq_port = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "-I") == 0) {
+            iq_enabled = false;
         } else if (strcmp(argv[i], "-T") == 0 && i + 1 < argc) {
             bind_addr = argv[++i];
-        } else if (strcmp(argv[i], "-n") == 0) {
-            no_hardware = true;
         } else if (strcmp(argv[i], "-d") == 0 && i + 1 < argc) {
             device_idx = atoi(argv[++i]);
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -477,14 +981,10 @@ int main(int argc, char *argv[]) {
     /* Initialize notification mutex */
     tcp_notify_init(&g_sdr_state);
 
-    /* Initialize SDR hardware (unless -n flag) */
-    if (!no_hardware) {
-        if (!init_sdr(&g_sdr_state, device_idx)) {
-            fprintf(stderr, "Warning: Running without SDR hardware\n");
-            fprintf(stderr, "Use -n flag to suppress this warning\n\n");
-        }
-    } else {
-        printf("No-hardware mode: SDR commands will only update state\n\n");
+    /* Initialize SDR hardware */
+    g_sdr_device_idx = device_idx;  /* Save for reinit */
+    if (!init_sdr(&g_sdr_state, device_idx)) {
+        fprintf(stderr, "Warning: Running without SDR hardware\n");
     }
 
     /* Initialize sockets */
@@ -494,16 +994,27 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    /* Initialize I/Q ring buffer */
+    if (iq_enabled) {
+        if (!iq_buffer_init()) {
+            fprintf(stderr, "Failed to allocate I/Q ring buffer\n");
+            cleanup_sdr(&g_sdr_state);
+            socket_cleanup();
+            return 1;
+        }
+    }
+
     /* Set up signal handler */
     signal(SIGINT, signal_handler);
 #ifndef _WIN32
     signal(SIGTERM, signal_handler);
 #endif
 
-    /* Create listen socket */
+    /* Create control listen socket */
     g_listen_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (g_listen_socket == INVALID_SOCKET) {
-        fprintf(stderr, "Failed to create socket\n");
+        fprintf(stderr, "Failed to create control socket\n");
+        iq_buffer_cleanup();
         cleanup_sdr(&g_sdr_state);
         socket_cleanup();
         return 1;
@@ -513,7 +1024,7 @@ int main(int argc, char *argv[]) {
     int optval = 1;
     setsockopt(g_listen_socket, SOL_SOCKET, SO_REUSEADDR, (char*)&optval, sizeof(optval));
 
-    /* Bind */
+    /* Bind control socket */
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
@@ -522,6 +1033,7 @@ int main(int argc, char *argv[]) {
     if (inet_pton(AF_INET, bind_addr, &addr.sin_addr) != 1) {
         fprintf(stderr, "Invalid bind address: %s\n", bind_addr);
         closesocket(g_listen_socket);
+        iq_buffer_cleanup();
         cleanup_sdr(&g_sdr_state);
         socket_cleanup();
         return 1;
@@ -530,22 +1042,78 @@ int main(int argc, char *argv[]) {
     if (bind(g_listen_socket, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
         fprintf(stderr, "Bind failed on %s:%d\n", bind_addr, port);
         closesocket(g_listen_socket);
+        iq_buffer_cleanup();
         cleanup_sdr(&g_sdr_state);
         socket_cleanup();
         return 1;
     }
 
-    /* Listen */
+    /* Listen on control socket */
     if (listen(g_listen_socket, 1) == SOCKET_ERROR) {
-        fprintf(stderr, "Listen failed\n");
+        fprintf(stderr, "Listen failed on control socket\n");
         closesocket(g_listen_socket);
+        iq_buffer_cleanup();
         cleanup_sdr(&g_sdr_state);
         socket_cleanup();
         return 1;
     }
 
-    printf("Listening on %s:%d\n", bind_addr, port);
+    printf("Control port: %s:%d\n", bind_addr, port);
+
+    /* Create I/Q stream listen socket */
+    HANDLE iq_thread = NULL;
+    if (iq_enabled) {
+        g_iq_listen_socket = socket(AF_INET, SOCK_STREAM, 0);
+        if (g_iq_listen_socket == INVALID_SOCKET) {
+            fprintf(stderr, "Failed to create I/Q socket\n");
+            closesocket(g_listen_socket);
+            iq_buffer_cleanup();
+            cleanup_sdr(&g_sdr_state);
+            socket_cleanup();
+            return 1;
+        }
+
+        setsockopt(g_iq_listen_socket, SOL_SOCKET, SO_REUSEADDR, (char*)&optval, sizeof(optval));
+
+        struct sockaddr_in iq_addr;
+        memset(&iq_addr, 0, sizeof(iq_addr));
+        iq_addr.sin_family = AF_INET;
+        iq_addr.sin_port = htons((unsigned short)iq_port);
+        inet_pton(AF_INET, bind_addr, &iq_addr.sin_addr);
+
+        if (bind(g_iq_listen_socket, (struct sockaddr*)&iq_addr, sizeof(iq_addr)) == SOCKET_ERROR) {
+            fprintf(stderr, "Bind failed on I/Q port %s:%d\n", bind_addr, iq_port);
+            closesocket(g_iq_listen_socket);
+            closesocket(g_listen_socket);
+            iq_buffer_cleanup();
+            cleanup_sdr(&g_sdr_state);
+            socket_cleanup();
+            return 1;
+        }
+
+        if (listen(g_iq_listen_socket, 1) == SOCKET_ERROR) {
+            fprintf(stderr, "Listen failed on I/Q socket\n");
+            closesocket(g_iq_listen_socket);
+            closesocket(g_listen_socket);
+            iq_buffer_cleanup();
+            cleanup_sdr(&g_sdr_state);
+            socket_cleanup();
+            return 1;
+        }
+
+        printf("I/Q stream port: %s:%d\n", bind_addr, iq_port);
+
+        /* Start I/Q streaming thread */
+        iq_thread = CreateThread(NULL, 0, iq_stream_thread_func, NULL, 0, NULL);
+        if (!iq_thread) {
+            fprintf(stderr, "Failed to create I/Q streaming thread\n");
+        }
+    } else {
+        printf("I/Q streaming: DISABLED\n");
+    }
+
     printf("Hardware: %s\n", g_sdr_state.hardware_connected ? "CONNECTED" : "NOT CONNECTED");
+
     printf("Press Ctrl+C to stop\n\n");
 
     /* Accept loop */
@@ -573,10 +1141,20 @@ int main(int argc, char *argv[]) {
         printf("Client session ended\n\n");
     }
 
+    /* Wait for I/Q thread to finish */
+    if (iq_thread) {
+        WaitForSingleObject(iq_thread, 2000);
+        CloseHandle(iq_thread);
+    }
+
     /* Cleanup */
     cleanup_sdr(&g_sdr_state);
     tcp_notify_cleanup(&g_sdr_state);
+    iq_buffer_cleanup();
 
+    if (g_iq_listen_socket != INVALID_SOCKET) {
+        closesocket(g_iq_listen_socket);
+    }
     if (g_listen_socket != INVALID_SOCKET) {
         closesocket(g_listen_socket);
     }

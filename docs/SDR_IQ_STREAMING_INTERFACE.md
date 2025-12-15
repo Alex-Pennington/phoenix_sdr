@@ -2,9 +2,9 @@
 
 ## Design Specification for TCP I/Q Sample Delivery
 
-**Document Version:** 1.0  
-**Date:** December 14, 2025  
-**Status:** DRAFT  
+**Document Version:** 1.0
+**Date:** December 14, 2025
+**Status:** DRAFT
 **Authors:** Phoenix Nest Development Team
 
 ---
@@ -284,7 +284,7 @@ static volatile uint32_t g_iq_sequence = 0;
 /* In SDR callback (called by SDRplay API): */
 void on_samples(const int16_t *xi, const int16_t *xq, uint32_t count, void *ctx) {
     if (!g_iq_connected) return;
-    
+
     /* Interleave I/Q and write to ring buffer */
     /* ... */
 }
@@ -354,7 +354,7 @@ struct iq_data_frame {
 int main() {
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
-    
+
     /* Connect to I/Q stream port */
     SOCKET iq_sock = socket(AF_INET, SOCK_STREAM, 0);
     struct sockaddr_in server = {0};
@@ -362,43 +362,43 @@ int main() {
     server.sin_addr.s_addr = inet_addr("127.0.0.1");
     server.sin_port = htons(4536);
     connect(iq_sock, (struct sockaddr *)&server, sizeof(server));
-    
+
     /* Read header */
     struct iq_stream_header header;
     recv(iq_sock, (char *)&header, sizeof(header), 0);
-    
+
     if (header.magic != 0x50485849) {
         printf("Invalid magic\n");
         return 1;
     }
-    
+
     printf("Sample rate: %u Hz\n", header.sample_rate);
     printf("Format: %u\n", header.sample_format);
-    
+
     /* Now connect to control port and send START */
     /* ... */
-    
+
     /* Read I/Q frames */
     while (1) {
         struct iq_data_frame frame;
         recv(iq_sock, (char *)&frame, sizeof(frame), 0);
-        
+
         if (frame.magic != 0x49514451) {
             printf("Invalid frame magic\n");
             continue;
         }
-        
+
         /* Read sample data */
         size_t data_size = frame.num_samples * 4;  /* S16 format */
         int16_t *samples = malloc(data_size);
         recv(iq_sock, (char *)samples, data_size, 0);
-        
+
         /* Process samples... */
         printf("Frame %u: %u samples\n", frame.sequence, frame.num_samples);
-        
+
         free(samples);
     }
-    
+
     closesocket(iq_sock);
     WSACleanup();
     return 0;

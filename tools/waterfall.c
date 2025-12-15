@@ -1097,7 +1097,7 @@ int main(int argc, char *argv[]) {
         for (int i = 0; i < WATERFALL_WIDTH; i++) {
             /* Map pixel to frequency: pixel 0 = -ZOOM_MAX_HZ, pixel center = 0, pixel end = +ZOOM_MAX_HZ */
             float freq = ((float)i / WATERFALL_WIDTH - 0.5f) * 2.0f * ZOOM_MAX_HZ;
-            
+
             /* Convert frequency to FFT bin */
             int bin;
             if (freq >= 0) {
@@ -1105,7 +1105,7 @@ int main(int argc, char *argv[]) {
             } else {
                 bin = FFT_SIZE + (int)(freq / bin_hz - 0.5f);  /* Negative frequencies: bins 513-1023 */
             }
-            
+
             /* Clamp to valid range */
             if (bin < 0) bin = 0;
             if (bin >= FFT_SIZE) bin = FFT_SIZE - 1;
@@ -1186,26 +1186,39 @@ int main(int argc, char *argv[]) {
                 tick_detector_update(&g_tick_detector, combined_energy, frame_num);
             }
 
-            /* If above threshold, draw marker dot at the frequency position */
+            /* If above threshold, draw marker line spanning the bandwidth at the frequency position */
             if (combined_energy > g_tick_thresholds[f]) {
-                /* Calculate x position for zoomed display */
+                /* Calculate x position and width for zoomed display */
                 /* freq_hz maps to pixel: x = (freq_hz / ZOOM_MAX_HZ) * (WATERFALL_WIDTH/2) + WATERFALL_WIDTH/2 */
                 float freq_hz = center_bin * ((float)SAMPLE_RATE / FFT_SIZE);
-                int x_offset = (int)(freq_hz * (WATERFALL_WIDTH / 2) / ZOOM_MAX_HZ);
-                int x_pos = WATERFALL_WIDTH / 2 + x_offset;
-                int x_neg = WATERFALL_WIDTH / 2 - x_offset;
+                float bw_hz = (float)TICK_BW[f];  /* ± bandwidth in Hz */
+                
+                /* Convert Hz to pixels */
+                float pixels_per_hz = (WATERFALL_WIDTH / 2.0f) / ZOOM_MAX_HZ;
+                int center_x_offset = (int)(freq_hz * pixels_per_hz);
+                int bw_pixels = (int)(bw_hz * pixels_per_hz);
+                if (bw_pixels < 1) bw_pixels = 1;  /* At least 1 pixel wide */
 
-                /* Draw red dot at positive frequency */
-                if (x_pos >= 0 && x_pos < WATERFALL_WIDTH) {
-                    pixels[x_pos * 3 + 0] = 255;  /* R */
-                    pixels[x_pos * 3 + 1] = 0;    /* G */
-                    pixels[x_pos * 3 + 2] = 0;    /* B */
+                /* Positive sideband: draw line from (center - bw) to (center + bw) */
+                int x_pos_start = WATERFALL_WIDTH / 2 + center_x_offset - bw_pixels;
+                int x_pos_end = WATERFALL_WIDTH / 2 + center_x_offset + bw_pixels;
+                for (int x = x_pos_start; x <= x_pos_end; x++) {
+                    if (x >= 0 && x < WATERFALL_WIDTH) {
+                        pixels[x * 3 + 0] = 255;  /* R */
+                        pixels[x * 3 + 1] = 0;    /* G */
+                        pixels[x * 3 + 2] = 0;    /* B */
+                    }
                 }
-                /* Draw red dot at negative frequency */
-                if (x_neg >= 0 && x_neg < WATERFALL_WIDTH) {
-                    pixels[x_neg * 3 + 0] = 255;  /* R */
-                    pixels[x_neg * 3 + 1] = 0;    /* G */
-                    pixels[x_neg * 3 + 2] = 0;    /* B */
+
+                /* Negative sideband: draw line from (center - bw) to (center + bw) */
+                int x_neg_start = WATERFALL_WIDTH / 2 - center_x_offset - bw_pixels;
+                int x_neg_end = WATERFALL_WIDTH / 2 - center_x_offset + bw_pixels;
+                for (int x = x_neg_start; x <= x_neg_end; x++) {
+                    if (x >= 0 && x < WATERFALL_WIDTH) {
+                        pixels[x * 3 + 0] = 255;  /* R */
+                        pixels[x * 3 + 1] = 0;    /* G */
+                        pixels[x * 3 + 2] = 0;    /* B */
+                    }
                 }
             }
         }

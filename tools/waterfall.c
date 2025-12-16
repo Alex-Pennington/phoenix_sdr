@@ -180,10 +180,10 @@ static void generate_blackman_harris(float *window, int size) {
     const float a2 = 0.14128f;
     const float a3 = 0.01168f;
     const float pi = 3.14159265358979323846f;
-    
+
     for (int i = 0; i < size; i++) {
         float n = (float)i / (float)(size - 1);
-        window[i] = a0 
+        window[i] = a0
                   - a1 * cosf(2.0f * pi * n)
                   + a2 * cosf(4.0f * pi * n)
                   - a3 * cosf(6.0f * pi * n);
@@ -251,7 +251,7 @@ static int g_iq_buffer_idx = 0;
 /*----------------------------------------------------------------------------
  * DISPLAY PATH (new high-resolution waterfall)
  * Purpose: Visual feedback matching SDRuno quality
- * 
+ *
  * Design rationale (from SDRuno analysis):
  *   - 12 kHz sample rate gives ±6 kHz bandwidth (WWV is within ±2 kHz)
  *   - 2048-pt FFT at 12 kHz = 5.86 Hz/bin resolution
@@ -498,7 +498,7 @@ static uint64_t g_channel_log_interval = 0;  /* Log every N frames */
 static void on_tick_marker(const tick_marker_event_t *event, void *user_data) {
     (void)user_data;
     if (g_sync_detector) {
-        sync_detector_tick_marker(g_sync_detector, event->timestamp_ms, 
+        sync_detector_tick_marker(g_sync_detector, event->timestamp_ms,
                                    event->duration_ms, event->corr_ratio);
     }
 }
@@ -632,16 +632,16 @@ int main(int argc, char *argv[]) {
         /* Calculate decimation factors for both paths */
         g_detector_decimation = g_tcp_sample_rate / DETECTOR_SAMPLE_RATE;
         if (g_detector_decimation < 1) g_detector_decimation = 1;
-        
+
         g_display_decimation = g_tcp_sample_rate / DISPLAY_SAMPLE_RATE;
         if (g_display_decimation < 1) g_display_decimation = 1;
-        
+
         /* Legacy compatibility */
         g_decimation_factor = g_detector_decimation;
         g_effective_sample_rate = g_tcp_sample_rate / g_detector_decimation;
-        
+
         printf("Detector path: %d:1 -> %d Hz\n", g_detector_decimation, DETECTOR_SAMPLE_RATE);
-        printf("Display path:  %d:1 -> %d Hz (%.1f Hz/bin, %.1f ms effective)\n", 
+        printf("Display path:  %d:1 -> %d Hz (%.1f Hz/bin, %.1f ms effective)\n",
                g_display_decimation, DISPLAY_SAMPLE_RATE, DISPLAY_HZ_PER_BIN, DISPLAY_EFFECTIVE_MS);
 
         g_tcp_streaming = true;
@@ -708,10 +708,10 @@ int main(int argc, char *argv[]) {
     kiss_fft_cpx *fft_out = (kiss_fft_cpx *)malloc(DISPLAY_FFT_SIZE * sizeof(kiss_fft_cpx));
     uint8_t *pixels = (uint8_t *)malloc(WINDOW_WIDTH * WINDOW_HEIGHT * 3);
     float *magnitudes = (float *)malloc(WATERFALL_WIDTH * sizeof(float));
-    
+
     /* Display path buffer (12 kHz, 2048 samples for FFT) */
     g_display_buffer = (iq_sample_t *)malloc(DISPLAY_FFT_SIZE * sizeof(iq_sample_t));
-    
+
     /* Legacy buffer (not used but kept for compatibility) */
     g_iq_buffer = (iq_sample_t *)malloc(DISPLAY_FFT_SIZE * sizeof(iq_sample_t));
 
@@ -741,7 +741,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Failed to create tick detector\n");
         return 1;
     }
-    
+
     g_marker_detector = marker_detector_create("wwv_markers.csv");
     if (!g_marker_detector) {
         fprintf(stderr, "Failed to create marker detector\n");
@@ -850,7 +850,7 @@ int main(int argc, char *argv[]) {
                     g_tcp_center_freq = ((uint64_t)meta.center_freq_hi << 32) | meta.center_freq_lo;
                     g_tcp_gain_reduction = meta.gain_reduction;
                     g_tcp_lna_state = meta.lna_state;
-                    
+
                     /* Recalculate decimation factors */
                     g_detector_decimation = g_tcp_sample_rate / DETECTOR_SAMPLE_RATE;
                     if (g_detector_decimation < 1) g_detector_decimation = 1;
@@ -944,7 +944,7 @@ int main(int argc, char *argv[]) {
                      *========================================================*/
                     float det_i = lowpass_process(&g_detector_lowpass_i, i_raw);
                     float det_q = lowpass_process(&g_detector_lowpass_q, q_raw);
-                    
+
                     g_detector_decim_counter++;
                     if (g_detector_decim_counter >= g_detector_decimation) {
                         g_detector_decim_counter = 0;
@@ -958,17 +958,17 @@ int main(int argc, char *argv[]) {
                      *========================================================*/
                     float disp_i = lowpass_process(&g_display_lowpass_i, i_raw);
                     float disp_q = lowpass_process(&g_display_lowpass_q, q_raw);
-                    
+
                     g_display_decim_counter++;
                     if (g_display_decim_counter >= g_display_decimation) {
                         g_display_decim_counter = 0;
-                        
+
                         /* Store in circular buffer */
                         g_display_buffer[g_display_buffer_idx].i = disp_i;
                         g_display_buffer[g_display_buffer_idx].q = disp_q;
                         g_display_buffer_idx = (g_display_buffer_idx + 1) % DISPLAY_FFT_SIZE;
                         g_display_new_samples++;
-                        
+
                         /* With 50% overlap, run FFT every DISPLAY_OVERLAP new samples */
                         if (g_display_new_samples >= DISPLAY_OVERLAP) {
                             samples_collected = DISPLAY_OVERLAP;  /* Signal ready for FFT */
@@ -990,7 +990,7 @@ int main(int argc, char *argv[]) {
 
         /* Reset overlap counter */
         g_display_new_samples = 0;
-        
+
         /* Complex FFT of I/Q data - shows RF spectrum centered on DC */
         for (int i = 0; i < DISPLAY_FFT_SIZE; i++) {
             int buf_idx = (g_display_buffer_idx + i) % DISPLAY_FFT_SIZE;
@@ -1093,7 +1093,7 @@ int main(int argc, char *argv[]) {
             float noise_db = g_floor_db;
             float snr_db = tone1000_db - noise_db;
             const char *quality = (snr_db > 15) ? "GOOD" : (snr_db > 8) ? "FAIR" : (snr_db > 3) ? "POOR" : "NONE";
-            
+
             fprintf(g_channel_csv, "%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%s\n",
                     timestamp_ms, carrier_db, snr_db, sub500_db, sub600_db, tone1000_db, noise_db, quality);
         }

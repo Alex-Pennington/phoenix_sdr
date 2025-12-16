@@ -507,6 +507,7 @@ static sync_detector_t *g_sync_detector = NULL;
 static FILE *g_channel_csv = NULL;
 static uint64_t g_channel_log_interval = 0;  /* Log every N frames */
 static FILE *g_subcarrier_csv = NULL;
+static tone_tracker_t *g_tone_carrier = NULL;
 static tone_tracker_t *g_tone_500 = NULL;
 static tone_tracker_t *g_tone_600 = NULL;
 
@@ -794,6 +795,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Create tone trackers for receiver characterization */
+    g_tone_carrier = tone_tracker_create(0.0f, "wwv_carrier.csv");
     g_tone_500 = tone_tracker_create(500.0f, "wwv_tone_500.csv");
     g_tone_600 = tone_tracker_create(600.0f, "wwv_tone_600.csv");
 
@@ -1004,6 +1006,7 @@ int main(int argc, char *argv[]) {
                         g_display_new_samples++;
 
                         /* Feed tone trackers (same 12 kHz samples) */
+                        tone_tracker_process_sample(g_tone_carrier, disp_i, disp_q);
                         tone_tracker_process_sample(g_tone_500, disp_i, disp_q);
                         tone_tracker_process_sample(g_tone_600, disp_i, disp_q);
 
@@ -1273,6 +1276,7 @@ int main(int argc, char *argv[]) {
     tick_detector_destroy(g_tick_detector);
     marker_detector_destroy(g_marker_detector);
     sync_detector_destroy(g_sync_detector);
+    tone_tracker_destroy(g_tone_carrier);
     tone_tracker_destroy(g_tone_500);
     tone_tracker_destroy(g_tone_600);
     if (g_channel_csv) fclose(g_channel_csv);

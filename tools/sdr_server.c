@@ -65,7 +65,8 @@ typedef struct {
     uint32_t sample_format;   /* Format code */
     uint32_t center_freq_lo;  /* Center frequency low 32 bits */
     uint32_t center_freq_hi;  /* Center frequency high 32 bits */
-    uint32_t reserved[2];     /* Future use (0) */
+    uint32_t gain_reduction;  /* IF gain reduction in dB */
+    uint32_t lna_state;       /* LNA state (0-8) */
 } iq_stream_header_t;
 
 typedef struct {
@@ -81,7 +82,9 @@ typedef struct {
     uint32_t sample_format;   /* New format code */
     uint32_t center_freq_lo;  /* New center frequency low 32 bits */
     uint32_t center_freq_hi;  /* New center frequency high 32 bits */
-    uint32_t reserved[3];     /* Future use (0) */
+    uint32_t gain_reduction;  /* IF gain reduction in dB */
+    uint32_t lna_state;       /* LNA state (0-8) */
+    uint32_t reserved;        /* Future use (0) */
 } iq_metadata_update_t;
 #pragma pack(pop)
 
@@ -333,9 +336,12 @@ static void send_iq_header(SOCKET sock) {
     uint64_t freq = (uint64_t)g_sdr_state.freq_hz;
     header.center_freq_lo = (uint32_t)(freq & 0xFFFFFFFF);
     header.center_freq_hi = (uint32_t)(freq >> 32);
+    header.gain_reduction = (uint32_t)g_sdr_state.gain_reduction;
+    header.lna_state = (uint32_t)g_sdr_state.lna_state;
 
     send(sock, (const char*)&header, sizeof(header), 0);
-    printf("[IQ] Sent stream header: %u Hz, format S16\n", header.sample_rate);
+    printf("[IQ] Sent stream header: %u Hz, format S16, GR=%u, LNA=%u\n",
+           header.sample_rate, header.gain_reduction, header.lna_state);
 }
 
 static void send_iq_metadata(SOCKET sock) {
@@ -348,6 +354,8 @@ static void send_iq_metadata(SOCKET sock) {
     uint64_t freq = (uint64_t)g_sdr_state.freq_hz;
     meta.center_freq_lo = (uint32_t)(freq & 0xFFFFFFFF);
     meta.center_freq_hi = (uint32_t)(freq >> 32);
+    meta.gain_reduction = (uint32_t)g_sdr_state.gain_reduction;
+    meta.lna_state = (uint32_t)g_sdr_state.lna_state;
 
     send(sock, (const char*)&meta, sizeof(meta), 0);
 }
@@ -372,6 +380,8 @@ static void *iq_stream_thread_func(void *arg)
     /* Track last known config to detect changes */
     double last_freq = 0;
     int last_sample_rate = 0;
+    int last_gain = 0;
+    int last_lna = 0;
 
     printf("[IQ] Streaming thread started\n");
 
@@ -421,6 +431,8 @@ static void *iq_stream_thread_func(void *arg)
             /* Reset config tracking */
             last_freq = g_sdr_state.freq_hz;
             last_sample_rate = g_sdr_state.sample_rate;
+            last_gain = g_sdr_state.gain_reduction;
+            last_lna = g_sdr_state.lna_state;
 
             /* Send stream header to new client */
             send_iq_header(g_iq_client_socket);
@@ -440,11 +452,15 @@ static void *iq_stream_thread_func(void *arg)
         /* Send metadata update if config changed */
         if (g_iq_config_changed ||
             last_freq != g_sdr_state.freq_hz ||
-            last_sample_rate != g_sdr_state.sample_rate) {
+            last_sample_rate != g_sdr_state.sample_rate ||
+            last_gain != g_sdr_state.gain_reduction ||
+            last_lna != g_sdr_state.lna_state) {
 
             g_iq_config_changed = false;
             last_freq = g_sdr_state.freq_hz;
             last_sample_rate = g_sdr_state.sample_rate;
+            last_gain = g_sdr_state.gain_reduction;
+            last_lna = g_sdr_state.lna_state;
             send_iq_metadata(g_iq_client_socket);
             printf("[IQ] Config changed, sent metadata update\n");
         }

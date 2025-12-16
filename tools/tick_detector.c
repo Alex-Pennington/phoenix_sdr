@@ -35,6 +35,7 @@
 /* Detection timing */
 #define TICK_MIN_DURATION_MS    2.0f
 #define TICK_MAX_DURATION_MS    50.0f
+#define MARKER_MAX_DURATION_MS  1000.0f  /* Allow up to 1s for minute markers */
 #define TICK_COOLDOWN_MS        500.0f
 #define TICK_MIN_INTERVAL_MS    800.0f   /* Reject ticks closer than this */
 
@@ -50,8 +51,9 @@
 #define CORR_THRESHOLD_MULT     3.0f    /* Correlation must be 3x noise floor */
 #define CORR_NOISE_ADAPT        0.01f   /* Noise floor adaptation rate */
 #define CORR_DECIMATION         8       /* Compute correlation every N samples */
-#define MARKER_CORR_RATIO       40.0f   /* Corr ratio above this = minute marker */
-#define MARKER_MIN_DURATION_MS  100.0f  /* Duration above this = minute marker (backup) */
+#define MARKER_CORR_RATIO       80.0f   /* Corr ratio above this = minute marker (was 40, too low) */
+#define MARKER_MIN_DURATION_MS  500.0f  /* Marker must be at least 500ms (was 100ms) */
+#define MARKER_MAX_DURATION_MS_CHECK 900.0f  /* Marker should be under 900ms */
 
 /* Warmup and display */
 #define TICK_WARMUP_FRAMES      50
@@ -303,94 +305,88 @@ static void run_state_machine(tick_detector_t *td) {
             }
 
             if (energy < td->threshold_low) {
-                /* Tick ended - validate duration and interval */
+                /* Signal dropped - classify based on duration */
                 float duration_ms = td->tick_duration_frames * FRAME_DURATION_MS;
                 float interval_ms = (td->last_tick_frame > 0) ?
                     (td->tick_start_frame - td->last_tick_frame) * FRAME_DURATION_MS : TICK_MIN_INTERVAL_MS + 1.0f;
+                float timestamp_ms = frame * FRAME_DURATION_MS;
+                float corr_ratio = (td->corr_noise_floor > 0.001f) ? 
+                    td->corr_peak / td->corr_noise_floor : 0.0f;
 
-                bool valid_duration = (duration_ms >= TICK_MIN_DURATION_MS && duration_ms <= TICK_MAX_DURATION_MS);
                 bool valid_interval = (interval_ms >= TICK_MIN_INTERVAL_MS);
                 bool valid_correlation = (td->corr_peak > td->corr_noise_floor * CORR_THRESHOLD_MULT);
 
-                if (valid_duration && valid_interval && valid_correlation) {
-                    float corr_ratio = td->corr_peak / td->corr_noise_floor;
-                    float corr_avg_ratio = (td->corr_sum_count > 0) ?
-                        (td->corr_sum / td->corr_sum_count) / td->corr_noise_floor : 0.0f;
-                    float timestamp_ms = frame * FRAME_DURATION_MS;
-                    float avg_interval_ms = calculate_avg_interval(td, timestamp_ms);
+                /* Check for minute marker first (500-900ms, high correlation) */
+                bool is_marker_duration = (duration_ms >= MARKER_MIN_DURATION_MS && 
+                                           duration_ms <= MARKER_MAX_DURATION_MS_CHECK);
+                bool is_marker_corr = (corr_ratio > MARKER_CORR_RATIO);
 
-                    /* Check if this is a minute marker:
-                     * 1. Peak correlation ratio above threshold, OR
-                     * 2. Average correlation ratio above threshold, OR
-                     * 3. Duration above 100ms (backup for fading conditions)
-                     */
-                    bool is_marker_by_corr = (corr_ratio > MARKER_CORR_RATIO) ||
-                                             (corr_avg_ratio > MARKER_CORR_RATIO);
-                    bool is_marker_by_duration = (duration_ms >= MARKER_MIN_DURATION_MS);
+                if (is_marker_duration && valid_interval) {
+                    /* MINUTE MARKER detected! */
+                    td->markers_detected++;
+                    td->flash_frames_remaining = TICK_FLASH_FRAMES * 6;  /* Long flash for marker */
 
-                    if (is_marker_by_corr || is_marker_by_duration) {
-                        /* Minute marker! High correlation = long 800ms pulse */
-                        td->markers_detected++;
-                        td->flash_frames_remaining = TICK_FLASH_FRAMES * 3;  /* Longer flash */
+                    float since_last_marker = (td->last_marker_frame > 0) ?
+                        (td->tick_start_frame - td->last_marker_frame) * FRAME_DURATION_MS / 1000.0f : 0.0f;
 
-                        float since_last_marker = (td->last_marker_frame > 0) ?
-                            (td->tick_start_frame - td->last_marker_frame) * FRAME_DURATION_MS / 1000.0f : 0.0f;
+                    printf("[%7.1fs] *** MINUTE MARKER #%-3d ***  dur=%.0fms  corr=%.1f  since=%.1fs\n",
+                           timestamp_ms / 1000.0f, td->markers_detected,
+                           duration_ms, corr_ratio, since_last_marker);
 
-                        const char *method = is_marker_by_corr ? "corr" : "dur";
-                        printf("[%7.1fs] MARKER #%-3d  dur=%.0fms  corr=%.1f/%.1f  since=%.1fs [%s] ** SYNC **\n",
-                               timestamp_ms / 1000.0f, td->markers_detected,
-                               duration_ms, corr_ratio, corr_avg_ratio, since_last_marker, method);
-
-                        /* CSV logging */
-                        if (td->csv_file) {
-                            char time_str[16];
-                            get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
-                            wwv_time_t wwv = td->wwv_clock ? wwv_clock_now(td->wwv_clock) : (wwv_time_t){0};
-                            fprintf(td->csv_file, "%s,%.1f,M%d,%d,%s,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
-                                    time_str, timestamp_ms, td->markers_detected, wwv.second,
-                                    wwv_event_name(wwv.expected_event),
-                                    td->tick_peak_energy, duration_ms, interval_ms, avg_interval_ms,
-                                    td->noise_floor, td->corr_peak, corr_ratio);
-                            fflush(td->csv_file);
-                        }
-
-                        td->last_marker_frame = td->tick_start_frame;
-                        td->last_tick_frame = td->tick_start_frame;  /* Also use as tick reference */
-                    } else {
-                        /* Normal tick */
-                        td->ticks_detected++;
-                        td->flash_frames_remaining = TICK_FLASH_FRAMES;
-
-                        /* Update history */
-                        td->tick_timestamps_ms[td->tick_history_idx] = timestamp_ms;
-                        td->tick_history_idx = (td->tick_history_idx + 1) % TICK_HISTORY_SIZE;
-                        if (td->tick_history_count < TICK_HISTORY_SIZE) {
-                            td->tick_history_count++;
-                        }
-
-                        /* Console output */
-                        char indicator = (interval_ms > 950.0f && interval_ms < 1050.0f) ? ' ' : '!';
-                        printf("[%7.1fs] TICK #%-4d  int=%6.0fms  avg=%6.0fms  corr=%.1f %c\n",
-                               timestamp_ms / 1000.0f, td->ticks_detected,
-                               interval_ms, avg_interval_ms, corr_ratio, indicator);
-
-                        /* CSV logging */
-                        if (td->csv_file) {
-                            char time_str[16];
-                            get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
-                            wwv_time_t wwv = td->wwv_clock ? wwv_clock_now(td->wwv_clock) : (wwv_time_t){0};
-                            fprintf(td->csv_file, "%s,%.1f,%d,%d,%s,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
-                                    time_str, timestamp_ms, td->ticks_detected, wwv.second,
-                                    wwv_event_name(wwv.expected_event),
-                                    td->tick_peak_energy, duration_ms, interval_ms, avg_interval_ms,
-                                    td->noise_floor, td->corr_peak, corr_ratio);
-                            fflush(td->csv_file);
-                        }
-
-                        td->last_tick_frame = td->tick_start_frame;
+                    /* CSV logging */
+                    if (td->csv_file) {
+                        char time_str[16];
+                        get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
+                        wwv_time_t wwv = td->wwv_clock ? wwv_clock_now(td->wwv_clock) : (wwv_time_t){0};
+                        fprintf(td->csv_file, "%s,%.1f,M%d,%d,%s,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
+                                time_str, timestamp_ms, td->markers_detected, wwv.second,
+                                wwv_event_name(wwv.expected_event),
+                                td->tick_peak_energy, duration_ms, interval_ms, 0.0f,
+                                td->noise_floor, td->corr_peak, corr_ratio);
+                        fflush(td->csv_file);
                     }
 
-                    /* Callback for either type */
+                    td->last_marker_frame = td->tick_start_frame;
+                    /* Don't update last_tick_frame - marker shouldn't affect tick timing */
+                    
+                } else if (duration_ms >= TICK_MIN_DURATION_MS && 
+                           duration_ms <= TICK_MAX_DURATION_MS &&
+                           valid_interval && valid_correlation) {
+                    /* Normal tick */
+                    td->ticks_detected++;
+                    td->flash_frames_remaining = TICK_FLASH_FRAMES;
+
+                    float avg_interval_ms = calculate_avg_interval(td, timestamp_ms);
+
+                    /* Update history */
+                    td->tick_timestamps_ms[td->tick_history_idx] = timestamp_ms;
+                    td->tick_history_idx = (td->tick_history_idx + 1) % TICK_HISTORY_SIZE;
+                    if (td->tick_history_count < TICK_HISTORY_SIZE) {
+                        td->tick_history_count++;
+                    }
+
+                    /* Console output */
+                    char indicator = (interval_ms > 950.0f && interval_ms < 1050.0f) ? ' ' : '!';
+                    printf("[%7.1fs] TICK #%-4d  int=%6.0fms  avg=%6.0fms  corr=%.1f %c\n",
+                           timestamp_ms / 1000.0f, td->ticks_detected,
+                           interval_ms, avg_interval_ms, corr_ratio, indicator);
+
+                    /* CSV logging */
+                    if (td->csv_file) {
+                        char time_str[16];
+                        get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
+                        wwv_time_t wwv = td->wwv_clock ? wwv_clock_now(td->wwv_clock) : (wwv_time_t){0};
+                        fprintf(td->csv_file, "%s,%.1f,%d,%d,%s,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
+                                time_str, timestamp_ms, td->ticks_detected, wwv.second,
+                                wwv_event_name(wwv.expected_event),
+                                td->tick_peak_energy, duration_ms, interval_ms, avg_interval_ms,
+                                td->noise_floor, td->corr_peak, corr_ratio);
+                        fflush(td->csv_file);
+                    }
+
+                    td->last_tick_frame = td->tick_start_frame;
+
+                    /* Callback */
                     if (td->callback) {
                         tick_event_t event = {
                             .tick_number = td->ticks_detected,
@@ -404,14 +400,22 @@ static void run_state_machine(tick_detector_t *td) {
                         td->callback(&event, td->callback_user_data);
                     }
                 } else {
+                    /* Rejected - duration in the gap zone (50-500ms) or failed other checks */
                     td->ticks_rejected++;
+                    if (duration_ms > TICK_MAX_DURATION_MS) {
+                        printf("[%7.1fs] REJECTED: dur=%.0fms (gap zone), corr=%.1f\n",
+                               timestamp_ms / 1000.0f, duration_ms, corr_ratio);
+                    }
                 }
 
                 td->state = STATE_COOLDOWN;
                 td->cooldown_frames = MS_TO_FRAMES(TICK_COOLDOWN_MS);
-            } else if (td->tick_duration_frames * FRAME_DURATION_MS > TICK_MAX_DURATION_MS) {
-                /* Pulse too long - reject and go to cooldown */
+                
+            } else if (td->tick_duration_frames * FRAME_DURATION_MS > MARKER_MAX_DURATION_MS) {
+                /* Pulse WAY too long (>1s) - something is wrong, bail out */
                 td->ticks_rejected++;
+                printf("[%7.1fs] REJECTED: pulse >1s, bailing out\n",
+                       frame * FRAME_DURATION_MS / 1000.0f);
                 td->state = STATE_COOLDOWN;
                 td->cooldown_frames = MS_TO_FRAMES(TICK_COOLDOWN_MS);
             }

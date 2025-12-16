@@ -52,8 +52,9 @@
 #define CORR_NOISE_ADAPT        0.01f   /* Noise floor adaptation rate */
 #define CORR_DECIMATION         8       /* Compute correlation every N samples */
 #define MARKER_CORR_RATIO       80.0f   /* Corr ratio above this = minute marker (was 40, too low) */
-#define MARKER_MIN_DURATION_MS  500.0f  /* Marker must be at least 500ms (was 100ms) */
+#define MARKER_MIN_DURATION_MS  600.0f  /* Marker must be at least 600ms (tightened from 500ms) */
 #define MARKER_MAX_DURATION_MS_CHECK 900.0f  /* Marker should be under 900ms */
+#define MARKER_MIN_INTERVAL_MS  55000.0f /* Markers must be 55+ seconds apart */
 
 /* Warmup and display */
 #define TICK_WARMUP_FRAMES      50
@@ -316,30 +317,35 @@ static void run_state_machine(tick_detector_t *td) {
                 bool valid_interval = (interval_ms >= TICK_MIN_INTERVAL_MS);
                 bool valid_correlation = (td->corr_peak > td->corr_noise_floor * CORR_THRESHOLD_MULT);
 
-                /* Check for minute marker first (500-900ms, high correlation) */
+                /* Check for minute marker first (600-900ms duration, 55+ seconds since last) */
                 bool is_marker_duration = (duration_ms >= MARKER_MIN_DURATION_MS && 
                                            duration_ms <= MARKER_MAX_DURATION_MS_CHECK);
-                bool is_marker_corr = (corr_ratio > MARKER_CORR_RATIO);
+                
+                /* Marker interval check with startup/recovery handling:
+                 * - First marker (last_marker_frame == 0): always allow
+                 * - Subsequent markers: must be 55+ seconds apart
+                 * This handles startup and recovery from fading (missed markers)
+                 */
+                float since_last_marker_ms = (td->last_marker_frame > 0) ?
+                    (td->tick_start_frame - td->last_marker_frame) * FRAME_DURATION_MS : MARKER_MIN_INTERVAL_MS + 1000.0f;
+                bool valid_marker_interval = (since_last_marker_ms >= MARKER_MIN_INTERVAL_MS);
 
-                if (is_marker_duration && valid_interval) {
+                if (is_marker_duration && valid_interval && valid_marker_interval) {
                     /* MINUTE MARKER detected! */
                     td->markers_detected++;
                     td->flash_frames_remaining = TICK_FLASH_FRAMES * 6;  /* Long flash for marker */
 
-                    float since_last_marker = (td->last_marker_frame > 0) ?
-                        (td->tick_start_frame - td->last_marker_frame) * FRAME_DURATION_MS / 1000.0f : 0.0f;
-
                     printf("[%7.1fs] *** MINUTE MARKER #%-3d ***  dur=%.0fms  corr=%.1f  since=%.1fs\n",
                            timestamp_ms / 1000.0f, td->markers_detected,
-                           duration_ms, corr_ratio, since_last_marker);
+                           duration_ms, corr_ratio, since_last_marker_ms / 1000.0f);
 
                     /* CSV logging */
                     if (td->csv_file) {
                         char time_str[16];
                         get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
                         wwv_time_t wwv = td->wwv_clock ? wwv_clock_now(td->wwv_clock) : (wwv_time_t){0};
-                        fprintf(td->csv_file, "%s,%.1f,M%d,%d,%s,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
-                                time_str, timestamp_ms, td->markers_detected, wwv.second,
+                        fprintf(td->csv_file, "%s,%.1f,M%d,%s,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
+                                time_str, timestamp_ms, td->markers_detected,
                                 wwv_event_name(wwv.expected_event),
                                 td->tick_peak_energy, duration_ms, interval_ms, 0.0f,
                                 td->noise_floor, td->corr_peak, corr_ratio);
@@ -376,8 +382,8 @@ static void run_state_machine(tick_detector_t *td) {
                         char time_str[16];
                         get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
                         wwv_time_t wwv = td->wwv_clock ? wwv_clock_now(td->wwv_clock) : (wwv_time_t){0};
-                        fprintf(td->csv_file, "%s,%.1f,%d,%d,%s,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
-                                time_str, timestamp_ms, td->ticks_detected, wwv.second,
+                        fprintf(td->csv_file, "%s,%.1f,%d,%s,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
+                                time_str, timestamp_ms, td->ticks_detected,
                                 wwv_event_name(wwv.expected_event),
                                 td->tick_peak_energy, duration_ms, interval_ms, avg_interval_ms,
                                 td->noise_floor, td->corr_peak, corr_ratio);
@@ -400,11 +406,14 @@ static void run_state_machine(tick_detector_t *td) {
                         td->callback(&event, td->callback_user_data);
                     }
                 } else {
-                    /* Rejected - duration in the gap zone (50-500ms) or failed other checks */
+                    /* Rejected - duration in the gap zone (50-600ms) or failed other checks */
                     td->ticks_rejected++;
-                    if (duration_ms > TICK_MAX_DURATION_MS) {
-                        printf("[%7.1fs] REJECTED: dur=%.0fms (gap zone), corr=%.1f\n",
-                               timestamp_ms / 1000.0f, duration_ms, corr_ratio);
+                    if (duration_ms > TICK_MAX_DURATION_MS && duration_ms < MARKER_MIN_DURATION_MS) {
+                        printf("[%7.1fs] REJECTED: dur=%.0fms (gap zone 50-600ms)\n",
+                               timestamp_ms / 1000.0f, duration_ms);
+                    } else if (is_marker_duration && !valid_marker_interval) {
+                        printf("[%7.1fs] REJECTED: dur=%.0fms (marker-like but only %.1fs since last marker)\n",
+                               timestamp_ms / 1000.0f, duration_ms, since_last_marker_ms / 1000.0f);
                     }
                 }
 
@@ -502,7 +511,7 @@ tick_detector_t *tick_detector_create(const char *csv_path) {
             strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", localtime(&now));
             fprintf(td->csv_file, "# Phoenix SDR WWV Tick Log v%s\n", PHOENIX_VERSION_FULL);
             fprintf(td->csv_file, "# Started: %s\n", time_str);
-            fprintf(td->csv_file, "time,timestamp_ms,tick_num,wwv_sec,expected,energy_peak,duration_ms,interval_ms,avg_interval_ms,noise_floor,corr_peak,corr_ratio\n");
+            fprintf(td->csv_file, "time,timestamp_ms,tick_num,expected,energy_peak,duration_ms,interval_ms,avg_interval_ms,noise_floor,corr_peak,corr_ratio\n");
             fflush(td->csv_file);
         }
     }

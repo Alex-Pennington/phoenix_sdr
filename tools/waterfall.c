@@ -1131,18 +1131,18 @@ int main(int argc, char *argv[]) {
             struct tm *tm_info = localtime(&now);
             char time_str[16];
             strftime(time_str, sizeof(time_str), "%H:%M:%S", tm_info);
-            
+
             int minute = tm_info->tm_min;
             const char *expected = wwv_expected_tone(minute);
-            
+
             float sub500_db = 20.0f * log10f(g_bucket_energy[2] + 1e-10f);  /* 500 Hz bucket */
             float sub600_db = 20.0f * log10f(g_bucket_energy[3] + 1e-10f);  /* 600 Hz bucket */
             float delta_db = sub500_db - sub600_db;
-            
+
             const char *detected = (delta_db > 3.0f) ? "500Hz" : (delta_db < -3.0f) ? "600Hz" : "NONE";
-            const char *match = (strcmp(expected, detected) == 0) ? "YES" : 
+            const char *match = (strcmp(expected, detected) == 0) ? "YES" :
                                 (strcmp(expected, "NONE") == 0) ? "-" : "NO";
-            
+
             fprintf(g_subcarrier_csv, "%s,%.1f,%d,%s,%.1f,%.1f,%.1f,%s,%s\n",
                     time_str, frame_num * DISPLAY_EFFECTIVE_MS, minute,
                     expected, sub500_db, sub600_db, delta_db, detected, match);

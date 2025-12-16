@@ -239,6 +239,7 @@ try {
     Write-Status "Building waterfall..."
 
     $kissObj = Build-Object "src\kiss_fft.c" @()
+    $tickDetectorObj = Build-Object "tools\tick_detector.c" @()
     $waterfallDspObj = Build-Object "tools\waterfall_dsp.c" @()
     $waterfallAudioObj = Build-Object "tools\waterfall_audio.c" @()
     $waterfallObj = Build-Object "tools\waterfall.c" @("-I`"$SDL2Include`"")
@@ -253,7 +254,7 @@ try {
         "-lws2_32",
         "-lwinmm"
     )
-    $allArgs = @("-o", "`"$BinDir\waterfall.exe`"", "`"$waterfallObj`"", "`"$waterfallDspObj`"", "`"$waterfallAudioObj`"", "`"$kissObj`"") + $waterfallLdflags
+    $allArgs = @("-o", "`"$BinDir\waterfall.exe`"", "`"$waterfallObj`"", "`"$tickDetectorObj`"", "`"$waterfallDspObj`"", "`"$waterfallAudioObj`"", "`"$kissObj`"") + $waterfallLdflags
     $argString = $allArgs -join " "
     $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Linking failed for waterfall" }

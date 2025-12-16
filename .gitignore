@@ -19,6 +19,9 @@ recordings/
 # Logs and temp files
 logs/
 
+# Excluded from git - private files, proprietary docs, etc.
+excluded_from_git/
+
 # Misc junk files
 *.csv
 *.bat

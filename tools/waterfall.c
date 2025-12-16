@@ -118,6 +118,11 @@ static uint32_t g_tcp_gain_reduction = 0;
 static uint32_t g_tcp_lna_state = 0;
 static bool g_tcp_streaming = false;
 
+/* Decimation factors (computed from TCP sample rate) */
+static int g_detector_decimation = 1;   /* 2 MHz → 48 kHz */
+static int g_display_decimation = 1;    /* 2 MHz → 12 kHz */
+
+/* Legacy compatibility */
 static int g_decimation_factor = 1;
 static int g_decim_counter = 0;
 
@@ -157,12 +162,52 @@ static float lowpass_process(lowpass_t *lp, float x) {
     return y;
 }
 
-/* DSP filter instances */
+/*============================================================================
+ * Window Functions
+ *============================================================================*/
+
+/**
+ * Generate Blackman-Harris window coefficients
+ * 4-term Blackman-Harris has excellent sidelobe suppression (-92 dB)
+ * NENBW = 2.0 (noise equivalent bandwidth)
+ */
+static void generate_blackman_harris(float *window, int size) {
+    const float a0 = 0.35875f;
+    const float a1 = 0.48829f;
+    const float a2 = 0.14128f;
+    const float a3 = 0.01168f;
+    const float pi = 3.14159265358979323846f;
+    
+    for (int i = 0; i < size; i++) {
+        float n = (float)i / (float)(size - 1);
+        window[i] = a0 
+                  - a1 * cosf(2.0f * pi * n)
+                  + a2 * cosf(4.0f * pi * n)
+                  - a3 * cosf(6.0f * pi * n);
+    }
+}
+
+/**
+ * Generate Hann window coefficients (for detector path, unchanged)
+ */
+static void generate_hann(float *window, int size) {
+    const float pi = 3.14159265358979323846f;
+    for (int i = 0; i < size; i++) {
+        window[i] = 0.5f * (1.0f - cosf(2.0f * pi * i / (size - 1)));
+    }
+}
+
+/* DSP filter instances - DETECTOR PATH */
+static lowpass_t g_detector_lowpass_i;
+static lowpass_t g_detector_lowpass_q;
+static bool g_detector_dsp_initialized = false;
+static int g_detector_decim_counter = 0;
+
+/* DSP filter instances - DISPLAY PATH */
 static lowpass_t g_display_lowpass_i;
 static lowpass_t g_display_lowpass_q;
 static bool g_display_dsp_initialized = false;
-
-#define IQ_FILTER_CUTOFF    5000.0f     /* 5 kHz lowpass on I/Q */
+static int g_display_decim_counter = 0;
 
 /* Buffer for decimated I/Q samples */
 typedef struct {
@@ -170,20 +215,59 @@ typedef struct {
     float q;
 } iq_sample_t;
 
+/* Detector path buffer (48 kHz, feeds tick detector) */
+static iq_sample_t *g_detector_buffer = NULL;
+static int g_detector_buffer_idx = 0;
+
+/* Display path buffer (12 kHz, 2048-pt FFT with 50% overlap) */
+static iq_sample_t *g_display_buffer = NULL;
+static int g_display_buffer_idx = 0;
+static int g_display_new_samples = 0;  /* Count new samples since last FFT */
+
+/* Legacy compatibility */
 static iq_sample_t *g_iq_buffer = NULL;
 static int g_iq_buffer_idx = 0;
 
 /*============================================================================
- * Configuration - SIMPLIFIED SINGLE WATERFALL
+ * Configuration - DUAL PATH ARCHITECTURE
  *============================================================================*/
 
+/* Window dimensions */
 #define WATERFALL_WIDTH 1024
 #define BUCKET_WIDTH    200
 #define WINDOW_WIDTH    (WATERFALL_WIDTH + BUCKET_WIDTH)
-#define WINDOW_HEIGHT   600     /* Single waterfall, not split */
-#define FFT_SIZE        1024    /* Display FFT - good frequency resolution */
-#define SAMPLE_RATE     48000
-#define ZOOM_MAX_HZ     5000.0f /* Display ±5000 Hz around DC */
+#define WINDOW_HEIGHT   600
+
+/*----------------------------------------------------------------------------
+ * DETECTOR PATH (unchanged from original)
+ * Purpose: Feed tick detector with samples optimized for pulse detection
+ *----------------------------------------------------------------------------*/
+#define DETECTOR_SAMPLE_RATE    48000       /* 48 kHz for detector */
+#define DETECTOR_FILTER_CUTOFF  5000.0f     /* 5 kHz lowpass */
+
+/*----------------------------------------------------------------------------
+ * DISPLAY PATH (new high-resolution waterfall)
+ * Purpose: Visual feedback matching SDRuno quality
+ * 
+ * Design rationale (from SDRuno analysis):
+ *   - 12 kHz sample rate gives ±6 kHz bandwidth (WWV is within ±2 kHz)
+ *   - 2048-pt FFT at 12 kHz = 5.86 Hz/bin resolution
+ *   - Blackman-Harris window for clean spectral lines (NENBW ≈ 1.9)
+ *   - 50% overlap recovers time resolution: 170ms frame → 85ms effective
+ *   - Effective RBW ≈ 11 Hz (can resolve 10 Hz BCD sidebands)
+ *----------------------------------------------------------------------------*/
+#define DISPLAY_SAMPLE_RATE     12000       /* 12 kHz for display */
+#define DISPLAY_FILTER_CUTOFF   6000.0f     /* 6 kHz lowpass (Nyquist guard) */
+#define DISPLAY_FFT_SIZE        2048        /* 2048-pt FFT */
+#define DISPLAY_OVERLAP         1024        /* 50% overlap (half of FFT_SIZE) */
+#define DISPLAY_HZ_PER_BIN      ((float)DISPLAY_SAMPLE_RATE / DISPLAY_FFT_SIZE)  /* 5.86 Hz */
+#define DISPLAY_FRAME_MS        ((float)DISPLAY_FFT_SIZE * 1000.0f / DISPLAY_SAMPLE_RATE)  /* 170.7 ms */
+#define DISPLAY_EFFECTIVE_MS    ((float)DISPLAY_OVERLAP * 1000.0f / DISPLAY_SAMPLE_RATE)  /* 85.3 ms */
+
+/* Legacy defines for compatibility */
+#define FFT_SIZE        DISPLAY_FFT_SIZE
+#define SAMPLE_RATE     DETECTOR_SAMPLE_RATE  /* Detector path rate */
+#define ZOOM_MAX_HZ     5000.0f               /* Display ±5000 Hz around DC */
 
 /* Frequency buckets for WWV detection */
 #define NUM_TICK_FREQS  7
@@ -305,8 +389,10 @@ static bool tcp_reconnect(void) {
         g_iq_sock = SOCKET_INVALID;
     }
 
+    g_detector_dsp_initialized = false;
     g_display_dsp_initialized = false;
-    g_decim_counter = 0;
+    g_detector_decim_counter = 0;
+    g_display_decim_counter = 0;
 
     printf("\n*** CONNECTION LOST - Reconnecting to %s:%d ***\n", g_tcp_host, g_iq_port);
 
@@ -365,8 +451,12 @@ static bool tcp_reconnect(void) {
     printf("Stream header: rate=%u Hz, format=%u, freq=%llu Hz\n",
            g_tcp_sample_rate, g_tcp_sample_format, (unsigned long long)g_tcp_center_freq);
 
-    g_decimation_factor = g_tcp_sample_rate / SAMPLE_RATE;
-    if (g_decimation_factor < 1) g_decimation_factor = 1;
+    /* Recalculate decimation factors */
+    g_detector_decimation = g_tcp_sample_rate / DETECTOR_SAMPLE_RATE;
+    if (g_detector_decimation < 1) g_detector_decimation = 1;
+    g_display_decimation = g_tcp_sample_rate / DISPLAY_SAMPLE_RATE;
+    if (g_display_decimation < 1) g_display_decimation = 1;
+    g_decimation_factor = g_detector_decimation;
 
 #ifdef _WIN32
     timeout_ms = 100;
@@ -512,10 +602,20 @@ int main(int argc, char *argv[]) {
         setsockopt(g_iq_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
 
-        g_decimation_factor = g_tcp_sample_rate / SAMPLE_RATE;
-        if (g_decimation_factor < 1) g_decimation_factor = 1;
-        g_effective_sample_rate = g_tcp_sample_rate / g_decimation_factor;
-        printf("Decimation: %d:1 -> %d Hz effective\n", g_decimation_factor, g_effective_sample_rate);
+        /* Calculate decimation factors for both paths */
+        g_detector_decimation = g_tcp_sample_rate / DETECTOR_SAMPLE_RATE;
+        if (g_detector_decimation < 1) g_detector_decimation = 1;
+        
+        g_display_decimation = g_tcp_sample_rate / DISPLAY_SAMPLE_RATE;
+        if (g_display_decimation < 1) g_display_decimation = 1;
+        
+        /* Legacy compatibility */
+        g_decimation_factor = g_detector_decimation;
+        g_effective_sample_rate = g_tcp_sample_rate / g_detector_decimation;
+        
+        printf("Detector path: %d:1 -> %d Hz\n", g_detector_decimation, DETECTOR_SAMPLE_RATE);
+        printf("Display path:  %d:1 -> %d Hz (%.1f Hz/bin, %.1f ms effective)\n", 
+               g_display_decimation, DISPLAY_SAMPLE_RATE, DISPLAY_HZ_PER_BIN, DISPLAY_EFFECTIVE_MS);
 
         g_tcp_streaming = true;
     }
@@ -566,7 +666,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    kiss_fft_cfg fft_cfg = kiss_fft_alloc(FFT_SIZE, 0, NULL, NULL);
+    kiss_fft_cfg fft_cfg = kiss_fft_alloc(DISPLAY_FFT_SIZE, 0, NULL, NULL);
     if (!fft_cfg) {
         fprintf(stderr, "kiss_fft_alloc failed\n");
         SDL_DestroyTexture(texture);
@@ -577,27 +677,36 @@ int main(int argc, char *argv[]) {
     }
 
     /* Allocate buffers */
-    kiss_fft_cpx *fft_in = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
-    kiss_fft_cpx *fft_out = (kiss_fft_cpx *)malloc(FFT_SIZE * sizeof(kiss_fft_cpx));
+    kiss_fft_cpx *fft_in = (kiss_fft_cpx *)malloc(DISPLAY_FFT_SIZE * sizeof(kiss_fft_cpx));
+    kiss_fft_cpx *fft_out = (kiss_fft_cpx *)malloc(DISPLAY_FFT_SIZE * sizeof(kiss_fft_cpx));
     uint8_t *pixels = (uint8_t *)malloc(WINDOW_WIDTH * WINDOW_HEIGHT * 3);
     float *magnitudes = (float *)malloc(WATERFALL_WIDTH * sizeof(float));
-    g_iq_buffer = (iq_sample_t *)malloc(FFT_SIZE * sizeof(iq_sample_t));
+    
+    /* Display path buffer (12 kHz, 2048 samples for FFT) */
+    g_display_buffer = (iq_sample_t *)malloc(DISPLAY_FFT_SIZE * sizeof(iq_sample_t));
+    
+    /* Legacy buffer (not used but kept for compatibility) */
+    g_iq_buffer = (iq_sample_t *)malloc(DISPLAY_FFT_SIZE * sizeof(iq_sample_t));
 
-    if (!fft_in || !fft_out || !pixels || !magnitudes || !g_iq_buffer) {
+    if (!fft_in || !fft_out || !pixels || !magnitudes || !g_display_buffer || !g_iq_buffer) {
         fprintf(stderr, "Memory allocation failed\n");
         return 1;
     }
 
-    memset(g_iq_buffer, 0, FFT_SIZE * sizeof(iq_sample_t));
+    memset(g_display_buffer, 0, DISPLAY_FFT_SIZE * sizeof(iq_sample_t));
+    g_display_buffer_idx = 0;
+    g_display_new_samples = 0;
+    memset(g_iq_buffer, 0, DISPLAY_FFT_SIZE * sizeof(iq_sample_t));
     g_iq_buffer_idx = 0;
     memset(pixels, 0, WINDOW_WIDTH * WINDOW_HEIGHT * 3);
 
-    float *window_func = (float *)malloc(FFT_SIZE * sizeof(float));
-    for (int i = 0; i < FFT_SIZE; i++) {
-        window_func[i] = 0.5f * (1.0f - cosf(2.0f * 3.14159265f * i / (FFT_SIZE - 1)));
-    }
+    /* Blackman-Harris window for display FFT (better sidelobe suppression) */
+    float *window_func = (float *)malloc(DISPLAY_FFT_SIZE * sizeof(float));
+    generate_blackman_harris(window_func, DISPLAY_FFT_SIZE);
 
-    printf("\nWaterfall ready. Window: %dx%d, FFT: %d bins\n", WINDOW_WIDTH, WINDOW_HEIGHT, FFT_SIZE);
+    printf("\nWaterfall ready. Window: %dx%d\n", WINDOW_WIDTH, WINDOW_HEIGHT);
+    printf("Display: %d-pt FFT, Blackman-Harris, 50%% overlap\n", DISPLAY_FFT_SIZE);
+    printf("Resolution: %.1f Hz/bin, %.1f ms effective update\n", DISPLAY_HZ_PER_BIN, DISPLAY_EFFECTIVE_MS);
     printf("Keys: +/- gain, D=detect toggle, S=stats, Q/Esc quit\n\n");
 
     g_tick_detector = tick_detector_create("wwv_ticks.csv");
@@ -637,7 +746,7 @@ int main(int argc, char *argv[]) {
         int samples_collected = 0;
 
         if (g_tcp_mode) {
-            while (samples_collected < FFT_SIZE && running) {
+            while (samples_collected < DISPLAY_OVERLAP && running) {
                 uint32_t magic;
                 recv_result_t result = tcp_recv_exact_ex(g_iq_sock, &magic, 4);
                 if (result == RECV_TIMEOUT) {
@@ -663,8 +772,13 @@ int main(int argc, char *argv[]) {
                     g_tcp_center_freq = ((uint64_t)meta.center_freq_hi << 32) | meta.center_freq_lo;
                     g_tcp_gain_reduction = meta.gain_reduction;
                     g_tcp_lna_state = meta.lna_state;
-                    g_decimation_factor = g_tcp_sample_rate / SAMPLE_RATE;
-                    if (g_decimation_factor < 1) g_decimation_factor = 1;
+                    
+                    /* Recalculate decimation factors */
+                    g_detector_decimation = g_tcp_sample_rate / DETECTOR_SAMPLE_RATE;
+                    if (g_detector_decimation < 1) g_detector_decimation = 1;
+                    g_display_decimation = g_tcp_sample_rate / DISPLAY_SAMPLE_RATE;
+                    if (g_display_decimation < 1) g_display_decimation = 1;
+                    g_decimation_factor = g_detector_decimation;
                     printf("Metadata update: rate=%u, freq=%llu, GR=%u, LNA=%u\n",
                            g_tcp_sample_rate, (unsigned long long)g_tcp_center_freq,
                            g_tcp_gain_reduction, g_tcp_lna_state);
@@ -710,14 +824,21 @@ int main(int argc, char *argv[]) {
                     break;
                 }
 
+                /* Initialize DSP paths on first data */
+                if (!g_detector_dsp_initialized) {
+                    lowpass_init(&g_detector_lowpass_i, DETECTOR_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                    lowpass_init(&g_detector_lowpass_q, DETECTOR_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                    g_detector_dsp_initialized = true;
+                    printf("Detector DSP: lowpass @ %.0f Hz\n", DETECTOR_FILTER_CUTOFF);
+                }
                 if (!g_display_dsp_initialized) {
-                    lowpass_init(&g_display_lowpass_i, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
-                    lowpass_init(&g_display_lowpass_q, IQ_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                    lowpass_init(&g_display_lowpass_i, DISPLAY_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                    lowpass_init(&g_display_lowpass_q, DISPLAY_FILTER_CUTOFF, (float)g_tcp_sample_rate);
                     g_display_dsp_initialized = true;
-                    printf("DSP initialized: lowpass @ %.0f Hz\n", IQ_FILTER_CUTOFF);
+                    printf("Display DSP: lowpass @ %.0f Hz\n", DISPLAY_FILTER_CUTOFF);
                 }
 
-                for (uint32_t s = 0; s < frame.num_samples && samples_collected < FFT_SIZE; s++) {
+                for (uint32_t s = 0; s < frame.num_samples; s++) {
                     float i_raw, q_raw;
 
                     if (g_tcp_sample_format == IQ_FORMAT_S16) {
@@ -733,27 +854,44 @@ int main(int argc, char *argv[]) {
                         q_raw = (float)(iq_buffer[s * 2 + 1] - 128);
                     }
 
-                    /* Lowpass filter I and Q */
-                    float i_filt = lowpass_process(&g_display_lowpass_i, i_raw);
-                    float q_filt = lowpass_process(&g_display_lowpass_q, q_raw);
+                    /*========================================================
+                     * DETECTOR PATH (48 kHz)
+                     * Feeds tick detector with samples optimized for pulses
+                     *========================================================*/
+                    float det_i = lowpass_process(&g_detector_lowpass_i, i_raw);
+                    float det_q = lowpass_process(&g_detector_lowpass_q, q_raw);
+                    
+                    g_detector_decim_counter++;
+                    if (g_detector_decim_counter >= g_detector_decimation) {
+                        g_detector_decim_counter = 0;
+                        tick_detector_process_sample(g_tick_detector, det_i, det_q);
+                    }
 
-                    /* Decimate */
-                    g_decim_counter++;
-                    if (g_decim_counter >= g_decimation_factor) {
-                        g_decim_counter = 0;
-
-                        /* Feed tick detector (has its own 256-point FFT) */
-                        tick_detector_process_sample(g_tick_detector, i_filt, q_filt);
-
-                        /* Store filtered I/Q for display FFT (1024-point) */
-                        g_iq_buffer[g_iq_buffer_idx].i = i_filt;
-                        g_iq_buffer[g_iq_buffer_idx].q = q_filt;
-                        g_iq_buffer_idx = (g_iq_buffer_idx + 1) % FFT_SIZE;
-                        samples_collected++;
+                    /*========================================================
+                     * DISPLAY PATH (12 kHz)
+                     * High-resolution waterfall with Blackman-Harris window
+                     *========================================================*/
+                    float disp_i = lowpass_process(&g_display_lowpass_i, i_raw);
+                    float disp_q = lowpass_process(&g_display_lowpass_q, q_raw);
+                    
+                    g_display_decim_counter++;
+                    if (g_display_decim_counter >= g_display_decimation) {
+                        g_display_decim_counter = 0;
+                        
+                        /* Store in circular buffer */
+                        g_display_buffer[g_display_buffer_idx].i = disp_i;
+                        g_display_buffer[g_display_buffer_idx].q = disp_q;
+                        g_display_buffer_idx = (g_display_buffer_idx + 1) % DISPLAY_FFT_SIZE;
+                        g_display_new_samples++;
+                        
+                        /* With 50% overlap, run FFT every DISPLAY_OVERLAP new samples */
+                        if (g_display_new_samples >= DISPLAY_OVERLAP) {
+                            samples_collected = DISPLAY_OVERLAP;  /* Signal ready for FFT */
+                        }
                     }
                 }
             }
-            got_samples = (samples_collected >= FFT_SIZE);
+            got_samples = (samples_collected >= DISPLAY_OVERLAP);
         } else {
             /* Stdin mode - not used in TCP mode */
             SDL_Delay(10);
@@ -765,16 +903,19 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
+        /* Reset overlap counter */
+        g_display_new_samples = 0;
+        
         /* Complex FFT of I/Q data - shows RF spectrum centered on DC */
-        for (int i = 0; i < FFT_SIZE; i++) {
-            int buf_idx = (g_iq_buffer_idx + i) % FFT_SIZE;
-            fft_in[i].r = g_iq_buffer[buf_idx].i * window_func[i];
-            fft_in[i].i = g_iq_buffer[buf_idx].q * window_func[i];
+        for (int i = 0; i < DISPLAY_FFT_SIZE; i++) {
+            int buf_idx = (g_display_buffer_idx + i) % DISPLAY_FFT_SIZE;
+            fft_in[i].r = g_display_buffer[buf_idx].i * window_func[i];
+            fft_in[i].i = g_display_buffer[buf_idx].q * window_func[i];
         }
         kiss_fft(fft_cfg, fft_in, fft_out);
 
         /* Calculate magnitudes with FFT shift (DC in center) */
-        float bin_hz = (float)SAMPLE_RATE / FFT_SIZE;
+        float bin_hz = DISPLAY_HZ_PER_BIN;
         for (int i = 0; i < WATERFALL_WIDTH; i++) {
             /* Map pixel to frequency: left = -ZOOM_MAX_HZ, center = 0 (DC), right = +ZOOM_MAX_HZ */
             float freq = ((float)i / WATERFALL_WIDTH - 0.5f) * 2.0f * ZOOM_MAX_HZ;
@@ -783,15 +924,15 @@ int main(int argc, char *argv[]) {
             if (freq >= 0) {
                 bin = (int)(freq / bin_hz + 0.5f);
             } else {
-                bin = FFT_SIZE + (int)(freq / bin_hz - 0.5f);
+                bin = DISPLAY_FFT_SIZE + (int)(freq / bin_hz - 0.5f);
             }
 
             if (bin < 0) bin = 0;
-            if (bin >= FFT_SIZE) bin = FFT_SIZE - 1;
+            if (bin >= DISPLAY_FFT_SIZE) bin = DISPLAY_FFT_SIZE - 1;
 
             float re = fft_out[bin].r;
             float im = fft_out[bin].i;
-            magnitudes[i] = sqrtf(re * re + im * im) / FFT_SIZE;
+            magnitudes[i] = sqrtf(re * re + im * im) / DISPLAY_FFT_SIZE;
         }
 
         /* Auto-gain tracking */
@@ -828,30 +969,29 @@ int main(int argc, char *argv[]) {
             pixels[x * 3 + 2] = b;
         }
 
-        /* Calculate bucket energies and feed tick detector */
-        float hz_per_bin = (float)SAMPLE_RATE / FFT_SIZE;
+        /* Calculate bucket energies (using display FFT) */
         for (int f = 0; f < NUM_TICK_FREQS; f++) {
             int freq = TICK_FREQS[f];
             int bandwidth = TICK_BW[f];
 
-            int center_bin = (int)(freq / hz_per_bin + 0.5f);
-            int bin_span = (int)(bandwidth / hz_per_bin + 0.5f);
+            int center_bin = (int)(freq / DISPLAY_HZ_PER_BIN + 0.5f);
+            int bin_span = (int)(bandwidth / DISPLAY_HZ_PER_BIN + 0.5f);
             if (bin_span < 1) bin_span = 1;
 
             float pos_energy = 0.0f, neg_energy = 0.0f;
             for (int b = -bin_span; b <= bin_span; b++) {
                 int pos_bin = center_bin + b;
-                int neg_bin = FFT_SIZE - center_bin + b;
+                int neg_bin = DISPLAY_FFT_SIZE - center_bin + b;
 
-                if (pos_bin >= 0 && pos_bin < FFT_SIZE) {
+                if (pos_bin >= 0 && pos_bin < DISPLAY_FFT_SIZE) {
                     float re = fft_out[pos_bin].r;
                     float im = fft_out[pos_bin].i;
-                    pos_energy += sqrtf(re * re + im * im) / FFT_SIZE;
+                    pos_energy += sqrtf(re * re + im * im) / DISPLAY_FFT_SIZE;
                 }
-                if (neg_bin >= 0 && neg_bin < FFT_SIZE) {
+                if (neg_bin >= 0 && neg_bin < DISPLAY_FFT_SIZE) {
                     float re = fft_out[neg_bin].r;
                     float im = fft_out[neg_bin].i;
-                    neg_energy += sqrtf(re * re + im * im) / FFT_SIZE;
+                    neg_energy += sqrtf(re * re + im * im) / DISPLAY_FFT_SIZE;
                 }
             }
 
@@ -1001,6 +1141,7 @@ int main(int argc, char *argv[]) {
     free(pixels);
     free(fft_out);
     free(fft_in);
+    free(g_display_buffer);
     free(g_iq_buffer);
     kiss_fft_free(fft_cfg);
 

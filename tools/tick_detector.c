@@ -53,7 +53,7 @@
 #define CORR_DECIMATION         8       /* Compute correlation every N samples */
 #define MARKER_CORR_RATIO       80.0f   /* Corr ratio above this = minute marker (was 40, too low) */
 #define MARKER_MIN_DURATION_MS  600.0f  /* Marker must be at least 600ms (tightened from 500ms) */
-#define MARKER_MAX_DURATION_MS_CHECK 900.0f  /* Marker should be under 900ms */
+#define MARKER_MAX_DURATION_MS_CHECK 1500.0f  /* Marker should be under 1500ms */
 #define MARKER_MIN_INTERVAL_MS  55000.0f /* Markers must be 55+ seconds apart */
 
 /* Warmup and display */

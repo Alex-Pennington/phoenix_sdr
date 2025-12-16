@@ -22,6 +22,7 @@
 #define CORRELATION_WINDOW_MS   1500.0f  /* Max time between tick/marker detections to correlate */
 #define MARKER_INTERVAL_MIN_MS  55000.0f /* Minimum valid interval between markers */
 #define MARKER_INTERVAL_MAX_MS  65000.0f /* Maximum valid interval between markers */
+#define MARKER_NOMINAL_MS       60000.0f /* Nominal marker interval */
 #define PENDING_TIMEOUT_MS      3000.0f  /* Clear pending event if not correlated in time */
 #define SYNC_FLASH_FRAMES       30       /* Flash duration for confirmed marker */
 
@@ -105,10 +106,16 @@ static void try_correlate(sync_detector_t *sd, float current_ms) {
         float interval_ms = (sd->last_confirmed_ms > 0) ?
             (marker_time - sd->last_confirmed_ms) : 0.0f;
         
-        /* Check if interval is valid (~60 seconds) */
-        bool good_interval = (sd->last_confirmed_ms == 0) ||
-                            (interval_ms >= MARKER_INTERVAL_MIN_MS && 
-                             interval_ms <= MARKER_INTERVAL_MAX_MS);
+        /* Check if interval is a valid multiple of ~60 seconds (allows for missed markers) */
+        bool good_interval = (sd->last_confirmed_ms == 0);
+        if (!good_interval && interval_ms >= MARKER_INTERVAL_MIN_MS) {
+            /* Find how many 60-second periods fit */
+            int periods = (int)((interval_ms + MARKER_NOMINAL_MS/2) / MARKER_NOMINAL_MS);
+            float expected_ms = periods * MARKER_NOMINAL_MS;
+            float error_ms = fabsf(interval_ms - expected_ms);
+            /* Accept if within ±5 seconds of a multiple of 60s */
+            good_interval = (error_ms <= 5000.0f);
+        }
         
         if (good_interval) {
             /* Update confirmed marker history */

@@ -1,0 +1,142 @@
+# Phoenix SDR WWV Marker Log v0.3.2+120.644e8f9-dirty
+# WWV Timing Correlation Analysis Report
+## Phoenix SDR v0.3.2 - Test Run 2025-12-16
+
+---
+
+## Executive Summary
+
+**Test Duration**: 7.2 minutes (430 seconds)
+**Ticks Detected**: 310 + 5 minute markers
+**Good Interval Rate**: 22.6% (70 of 310 ticks in 900-1100ms range)
+
+### Key Findings
+
+1. **System is DROPPING TICKS** - Mean interval is 1390ms instead of 1000ms
+2. **Consistent drift**: +976ms per minute accumulating (16,267 PPM)
+3. **Accuracy DEGRADED over time**: 45% good → 10% good by end
+4. **Voice periods**: Slightly more problematic but NOT the main issue
+5. **Missed one minute marker** (between M4 and M5)
+
+---
+
+## 1. Tick Interval Analysis
+
+| Category | Count | Percentage |
+|----------|-------|------------|
+| **GOOD (900-1100ms)** | 70 | 22.6% |
+| Marginal Low (800-899ms) | 12 | 3.9% |
+| Marginal High (1101-1200ms) | 72 | 23.2% |
+| **BAD (<800 or >1200ms)** | 156 | **50.3%** |
+
+**Statistics:**
+- Mean: 1390.7 ms (should be ~1000ms)
+- Median: 1205.0 ms
+- Std Dev: 641.3 ms
+- Range: 800 - 5360 ms
+
+**Longest consecutive good run**: Only 5 ticks
+
+---
+
+## 2. Minute Marker Analysis
+
+| Marker | Timestamp | Interval | Error | Corr Ratio |
+|--------|-----------|----------|-------|------------|
+| M1 | 6,976 ms | (ref) | - | 21.5 |
+| M2 | 67,952 ms | 60,976 ms | +976 ms | 13.0 |
+| M3 | 128,933 ms | 60,981 ms | +981 ms | 27.1 |
+| M4 | 189,904 ms | 60,971 ms | +971 ms | 20.9 |
+| M5 | 311,867 ms | 121,963 ms | **MISSED 1** | 29.3 |
+
+**Cumulative Drift:**
+- M2: +976 ms
+- M3: +1,957 ms
+- M4: +2,928 ms
+- M5: +4,891 ms (after accounting for missed marker)
+
+**Drift Rate**: +976 ms per minute (~1.6% or 16,267 PPM)
+
+---
+
+## 3. Time Domain Degradation
+
+### Accuracy Degraded Significantly Over Time
+
+| Minute | Ticks | Good% | Mean Interval | Corr Ratio | Ticks Missed |
+|--------|-------|-------|---------------|------------|--------------|
+| 0 | 44 | **45%** | 1335 ms | 10.5 | ~8 |
+| 1 | 41 | 29% | 1487 ms | 8.5 | ~11 |
+| 2 | 45 | 11% | 1286 ms | 7.6 | ~7 |
+| 3 | 32 | 16% | 1924 ms | 7.8 | **~20** |
+| 4 | 48 | 19% | 1238 ms | 7.0 | ~4 |
+| 5 | 45 | 29% | 1341 ms | 7.1 | ~7 |
+| 6 | 45 | 11% | 1322 ms | 6.5 | ~7 |
+| 7 | 10 | **10%** | 1270 ms | 7.2 | ~42 |
+
+**Trends:**
+- Good interval rate: **45% → 10%** (degraded)
+- Correlation ratio: **10.5 → 7.2** (degraded)
+- Noise floor: **1.125 → 0.871** (improved - but still dropping ticks)
+
+---
+
+## 4. Voice Period Impact
+
+| Metric | During VOICE | During non-VOICE |
+|--------|--------------|------------------|
+| Total ticks | 42 | 268 |
+| Low correlation (<5.0) | 33.3% | 37.3% |
+| Bad intervals | **57.1%** | 49.3% |
+
+**Conclusion**: Voice periods are **slightly** more problematic (57.1% vs 49.3% bad intervals), but they only account for 13.9% of all bad detections - roughly proportional to their 13.5% of total ticks.
+
+**Voice is NOT the primary problem.**
+
+---
+
+## 5. Worst Offenders
+
+| Time | Tick | Period | Interval | Corr Ratio |
+|------|------|--------|----------|------------|
+| 10:41:28 | 150 | TICK | **5360 ms** | 9.1 |
+| 10:41:46 | 158 | TICK | **5221 ms** | 9.2 |
+| 10:39:16 | 58 | TICK | **5115 ms** | 13.7 |
+| 10:38:04 | 4 | TICK | **5083 ms** | 5.5 |
+| 10:41:52 | 160 | TICK | **4976 ms** | 4.2 |
+
+These are clustered around minute 3-4 of the run - the period with worst performance.
+
+---
+
+## 6. Root Cause Analysis
+
+### Primary Issue: Tick Detection Threshold/Sensitivity
+
+The system is **missing approximately 40% of ticks**, evidenced by:
+- Mean interval of 1390ms instead of 1000ms
+- Only 22.6% of intervals in correct range
+- Consistent +976ms/minute drift
+
+### NOT the Issue:
+- Voice interference (minimal impact)
+- Minute marker detection (working, just drifting with missed ticks)
+- Clock accuracy (drift is from missed ticks, not clock error)
+
+### Degradation Pattern:
+- Performance **worsened over time**
+- Noise floor improved but detection still failed
+- Suggests possible:
+  - AGC/gain drift
+  - Threshold not adapting properly
+  - Signal processing state accumulating errors
+
+---
+
+## Recommendations
+
+1. **Lower detection threshold** - Currently missing ~40% of ticks
+2. **Add adaptive threshold** based on noise floor trend
+3. **Investigate minute 3-4** - Something specific happened there
+4. **Consider using minute markers for re-sync** - They're more reliable than individual ticks
+5. **Add tick interpolation** - When interval > 1500ms, assume missed tick(s)

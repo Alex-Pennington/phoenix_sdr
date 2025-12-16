@@ -17,10 +17,13 @@
  */
 
 #include "tick_detector.h"
+#include "wwv_clock.h"
 #include "kiss_fft.h"
+#include "version.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 
 /*============================================================================
  * Internal Configuration
@@ -34,7 +37,6 @@
 #define TICK_MAX_DURATION_MS    50.0f
 #define TICK_COOLDOWN_MS        500.0f
 #define TICK_MIN_INTERVAL_MS    800.0f   /* Reject ticks closer than this */
-#define MARKER_MIN_DURATION_MS  100.0f   /* Position marker threshold */
 
 /* Threshold adaptation */
 #define TICK_NOISE_ADAPT_DOWN   0.002f   /* Fast attack when signal drops */
@@ -48,6 +50,8 @@
 #define CORR_THRESHOLD_MULT     3.0f    /* Correlation must be 3x noise floor */
 #define CORR_NOISE_ADAPT        0.01f   /* Noise floor adaptation rate */
 #define CORR_DECIMATION         8       /* Compute correlation every N samples */
+#define MARKER_CORR_RATIO       40.0f   /* Corr ratio above this = minute marker */
+#define MARKER_MIN_DURATION_MS  100.0f  /* Duration above this = minute marker (backup) */
 
 /* Warmup and display */
 #define TICK_WARMUP_FRAMES      50
@@ -93,6 +97,8 @@ struct tick_detector {
     int corr_buf_idx;           /* Write position in circular buffer */
     int corr_sample_count;      /* Total samples received */
     float corr_peak;            /* Peak correlation value this detection */
+    float corr_sum;             /* Accumulated correlation during pulse */
+    int corr_sum_count;         /* Number of correlation samples accumulated */
     int corr_peak_offset;       /* Sample offset of peak */
     float corr_noise_floor;     /* Correlation noise floor estimate */
     
@@ -134,6 +140,10 @@ struct tick_detector {
     
     /* Logging */
     FILE *csv_file;
+    time_t start_time;          /* Wall clock time when detector started */
+    
+    /* WWV broadcast clock */
+    wwv_clock_t *wwv_clock;
 };
 
 /*============================================================================
@@ -230,6 +240,16 @@ static float calculate_avg_interval(tick_detector_t *td, float current_time_ms) 
     return (count > 0) ? (sum / count) : 0.0f;
 }
 
+/**
+ * Get wall clock time string for CSV output
+ * Format: HH:MM:SS
+ */
+static void get_wall_time_str(tick_detector_t *td, float timestamp_ms, char *buf, size_t buflen) {
+    time_t event_time = td->start_time + (time_t)(timestamp_ms / 1000.0f);
+    struct tm *tm_info = localtime(&event_time);
+    strftime(buf, buflen, "%H:%M:%S", tm_info);
+}
+
 static void run_state_machine(tick_detector_t *td) {
     float energy = td->current_energy;
     uint64_t frame = td->frame_count;
@@ -271,6 +291,8 @@ static void run_state_machine(tick_detector_t *td) {
                 td->tick_peak_energy = energy;
                 td->tick_duration_frames = 1;
                 td->corr_peak = 0.0f;  /* Reset correlation peak for new detection */
+                td->corr_sum = 0.0f;   /* Reset accumulated correlation */
+                td->corr_sum_count = 0;
             }
             break;
             
@@ -291,37 +313,80 @@ static void run_state_machine(tick_detector_t *td) {
                 bool valid_correlation = (td->corr_peak > td->corr_noise_floor * CORR_THRESHOLD_MULT);
                 
                 if (valid_duration && valid_interval && valid_correlation) {
-                    /* Valid tick! */
-                    td->ticks_detected++;
-                    td->flash_frames_remaining = TICK_FLASH_FRAMES;
-                    
+                    float corr_ratio = td->corr_peak / td->corr_noise_floor;
+                    float corr_avg_ratio = (td->corr_sum_count > 0) ? 
+                        (td->corr_sum / td->corr_sum_count) / td->corr_noise_floor : 0.0f;
                     float timestamp_ms = frame * FRAME_DURATION_MS;
-                    
-                    /* Update history */
-                    td->tick_timestamps_ms[td->tick_history_idx] = timestamp_ms;
-                    td->tick_history_idx = (td->tick_history_idx + 1) % TICK_HISTORY_SIZE;
-                    if (td->tick_history_count < TICK_HISTORY_SIZE) {
-                        td->tick_history_count++;
-                    }
-                    
                     float avg_interval_ms = calculate_avg_interval(td, timestamp_ms);
                     
-                    /* Console output */
-                    char indicator = (interval_ms > 950.0f && interval_ms < 1050.0f) ? ' ' : '!';
-                    printf("[%7.1fs] TICK #%-4d  int=%6.0fms  avg=%6.0fms  corr=%.1f %c\n",
-                           timestamp_ms / 1000.0f, td->ticks_detected, 
-                           interval_ms, avg_interval_ms, td->corr_peak / td->corr_noise_floor, indicator);
+                    /* Check if this is a minute marker:
+                     * 1. Peak correlation ratio above threshold, OR
+                     * 2. Average correlation ratio above threshold, OR
+                     * 3. Duration above 100ms (backup for fading conditions)
+                     */
+                    bool is_marker_by_corr = (corr_ratio > MARKER_CORR_RATIO) || 
+                                             (corr_avg_ratio > MARKER_CORR_RATIO);
+                    bool is_marker_by_duration = (duration_ms >= MARKER_MIN_DURATION_MS);
                     
-                    /* CSV logging */
-                    if (td->csv_file) {
-                        fprintf(td->csv_file, "%.1f,%d,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
-                                timestamp_ms, td->ticks_detected, td->tick_peak_energy,
-                                duration_ms, interval_ms, avg_interval_ms, td->noise_floor,
-                                td->corr_peak, td->corr_peak / td->corr_noise_floor);
-                        fflush(td->csv_file);
+                    if (is_marker_by_corr || is_marker_by_duration) {
+                        /* Minute marker! High correlation = long 800ms pulse */
+                        td->markers_detected++;
+                        td->flash_frames_remaining = TICK_FLASH_FRAMES * 3;  /* Longer flash */
+                        
+                        float since_last_marker = (td->last_marker_frame > 0) ?
+                            (td->tick_start_frame - td->last_marker_frame) * FRAME_DURATION_MS / 1000.0f : 0.0f;
+                        
+                        const char *method = is_marker_by_corr ? "corr" : "dur";
+                        printf("[%7.1fs] MARKER #%-3d  dur=%.0fms  corr=%.1f/%.1f  since=%.1fs [%s] ** SYNC **\n",
+                               timestamp_ms / 1000.0f, td->markers_detected,
+                               duration_ms, corr_ratio, corr_avg_ratio, since_last_marker, method);
+                        
+                        /* CSV logging */
+                        if (td->csv_file) {
+                            char time_str[16];
+                            get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
+                            fprintf(td->csv_file, "%s,%.1f,M%d,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
+                                    time_str, timestamp_ms, td->markers_detected, td->tick_peak_energy,
+                                    duration_ms, interval_ms, avg_interval_ms, td->noise_floor,
+                                    td->corr_peak, corr_ratio);
+                            fflush(td->csv_file);
+                        }
+                        
+                        td->last_marker_frame = td->tick_start_frame;
+                        td->last_tick_frame = td->tick_start_frame;  /* Also use as tick reference */
+                    } else {
+                        /* Normal tick */
+                        td->ticks_detected++;
+                        td->flash_frames_remaining = TICK_FLASH_FRAMES;
+                        
+                        /* Update history */
+                        td->tick_timestamps_ms[td->tick_history_idx] = timestamp_ms;
+                        td->tick_history_idx = (td->tick_history_idx + 1) % TICK_HISTORY_SIZE;
+                        if (td->tick_history_count < TICK_HISTORY_SIZE) {
+                            td->tick_history_count++;
+                        }
+                        
+                        /* Console output */
+                        char indicator = (interval_ms > 950.0f && interval_ms < 1050.0f) ? ' ' : '!';
+                        printf("[%7.1fs] TICK #%-4d  int=%6.0fms  avg=%6.0fms  corr=%.1f %c\n",
+                               timestamp_ms / 1000.0f, td->ticks_detected, 
+                               interval_ms, avg_interval_ms, corr_ratio, indicator);
+                        
+                        /* CSV logging */
+                        if (td->csv_file) {
+                            char time_str[16];
+                            get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
+                            fprintf(td->csv_file, "%s,%.1f,%d,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
+                                    time_str, timestamp_ms, td->ticks_detected, td->tick_peak_energy,
+                                    duration_ms, interval_ms, avg_interval_ms, td->noise_floor,
+                                    td->corr_peak, corr_ratio);
+                            fflush(td->csv_file);
+                        }
+                        
+                        td->last_tick_frame = td->tick_start_frame;
                     }
                     
-                    /* Callback */
+                    /* Callback for either type */
                     if (td->callback) {
                         tick_event_t event = {
                             .tick_number = td->ticks_detected,
@@ -334,8 +399,6 @@ static void run_state_machine(tick_detector_t *td) {
                         };
                         td->callback(&event, td->callback_user_data);
                     }
-                    
-                    td->last_tick_frame = td->tick_start_frame;
                 } else {
                     td->ticks_rejected++;
                 }
@@ -343,26 +406,8 @@ static void run_state_machine(tick_detector_t *td) {
                 td->state = STATE_COOLDOWN;
                 td->cooldown_frames = MS_TO_FRAMES(TICK_COOLDOWN_MS);
             } else if (td->tick_duration_frames * FRAME_DURATION_MS > TICK_MAX_DURATION_MS) {
-                /* Pulse too long for tick - check if it's a position marker */
-                float duration_ms = td->tick_duration_frames * FRAME_DURATION_MS;
-                
-                if (duration_ms >= MARKER_MIN_DURATION_MS) {
-                    /* Position/minute marker detected! */
-                    td->markers_detected++;
-                    float timestamp_ms = frame * FRAME_DURATION_MS;
-                    float since_last_marker = (td->last_marker_frame > 0) ?
-                        (frame - td->last_marker_frame) * FRAME_DURATION_MS / 1000.0f : 0.0f;
-                    
-                    printf("[%7.1fs] MARKER #%d  dur=%.0fms  since_last=%.1fs  ** SYNC **\n",
-                           timestamp_ms / 1000.0f, td->markers_detected, duration_ms, since_last_marker);
-                    
-                    /* Reset timing reference */
-                    td->last_marker_frame = td->tick_start_frame;
-                    td->last_tick_frame = td->tick_start_frame;  /* Use marker as tick reference too */
-                } else {
-                    td->ticks_rejected++;
-                }
-                
+                /* Pulse too long - reject and go to cooldown */
+                td->ticks_rejected++;
                 td->state = STATE_COOLDOWN;
                 td->cooldown_frames = MS_TO_FRAMES(TICK_COOLDOWN_MS);
             }
@@ -434,12 +479,22 @@ tick_detector_t *tick_detector_create(const char *csv_path) {
     td->threshold_low = td->threshold_high * TICK_HYSTERESIS_RATIO;
     td->detection_enabled = true;
     td->warmup_complete = false;
+    td->start_time = time(NULL);  /* Record wall clock start time */
+    
+    /* Create WWV clock tracker */
+    td->wwv_clock = wwv_clock_create(WWV_STATION_WWV);
     
     /* Open CSV file */
     if (csv_path) {
         td->csv_file = fopen(csv_path, "w");
         if (td->csv_file) {
-            fprintf(td->csv_file, "timestamp_ms,tick_num,energy_peak,duration_ms,interval_ms,avg_interval_ms,noise_floor,corr_peak,corr_ratio\n");
+            /* Version and timestamp header */
+            char time_str[64];
+            time_t now = time(NULL);
+            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", localtime(&now));
+            fprintf(td->csv_file, "# Phoenix SDR WWV Tick Log v%s\n", PHOENIX_VERSION_FULL);
+            fprintf(td->csv_file, "# Started: %s\n", time_str);
+            fprintf(td->csv_file, "time,timestamp_ms,tick_num,energy_peak,duration_ms,interval_ms,avg_interval_ms,noise_floor,corr_peak,corr_ratio\n");
             fflush(td->csv_file);
         }
     }
@@ -455,6 +510,7 @@ tick_detector_t *tick_detector_create(const char *csv_path) {
 void tick_detector_destroy(tick_detector_t *td) {
     if (!td) return;
     
+    if (td->wwv_clock) wwv_clock_destroy(td->wwv_clock);
     if (td->csv_file) fclose(td->csv_file);
     if (td->fft_cfg) kiss_fft_free(td->fft_cfg);
     free(td->fft_in);
@@ -500,6 +556,12 @@ bool tick_detector_process_sample(tick_detector_t *td, float i_sample, float q_s
         if (td->state == STATE_IN_TICK && corr > td->corr_peak) {
             td->corr_peak = corr;
             td->corr_peak_offset = td->corr_sample_count;
+        }
+        
+        /* Accumulate correlation during detection */
+        if (td->state == STATE_IN_TICK) {
+            td->corr_sum += corr;
+            td->corr_sum_count++;
         }
     }
     

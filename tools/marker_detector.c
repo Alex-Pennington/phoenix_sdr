@@ -3,7 +3,7 @@
  * @brief WWV minute marker detector implementation
  *
  * Detects 800ms pulses at 1000Hz using sliding window accumulator.
- * 
+ *
  * Detection strategy:
  *   1. Extract 1000Hz bucket energy each FFT frame (5.3ms)
  *   2. Accumulate energy over sliding 1-second window (~188 frames)
@@ -31,12 +31,14 @@
 
 /* Detection thresholds */
 #define MARKER_THRESHOLD_MULT       3.0f    /* Accumulated must be 3x baseline */
+#define MARKER_THRESHOLD_MIN        1200.0f /* Don't trigger below this regardless of baseline */
 #define MARKER_NOISE_ADAPT_RATE     0.001f  /* Slow baseline adaptation */
 #define MARKER_COOLDOWN_MS          30000.0f /* 30 sec between markers (they're 60 sec apart) */
 
 /* Warmup */
 #define MARKER_WARMUP_FRAMES        100     /* ~500ms warmup */
 #define MARKER_WARMUP_ADAPT_RATE    0.02f
+#define MARKER_MIN_STARTUP_MS       10000.0f /* No markers in first 10 seconds */
 
 /* Display */
 #define MARKER_FLASH_FRAMES         30      /* Long flash for minute marker */
@@ -181,6 +183,9 @@ static void run_state_machine(marker_detector_t *md) {
     if (!md->warmup_complete) {
         md->baseline_energy += MARKER_WARMUP_ADAPT_RATE * (md->accumulated_energy - md->baseline_energy);
         md->threshold = md->baseline_energy * MARKER_THRESHOLD_MULT;
+        if (md->threshold < MARKER_THRESHOLD_MIN) {
+            md->threshold = MARKER_THRESHOLD_MIN;
+        }
 
         if (frame >= md->start_frame + MARKER_WARMUP_FRAMES) {
             md->warmup_complete = true;
@@ -190,11 +195,20 @@ static void run_state_machine(marker_detector_t *md) {
         return;
     }
 
+    /* No markers in first 10 seconds - baseline still stabilizing */
+    float timestamp_ms = md->frame_count * FRAME_DURATION_MS;
+    if (timestamp_ms < MARKER_MIN_STARTUP_MS) {
+        return;
+    }
+
     /* Adapt baseline during idle (slow) */
     if (md->state == STATE_IDLE && md->accumulated_energy < md->threshold) {
         md->baseline_energy += MARKER_NOISE_ADAPT_RATE * (md->accumulated_energy - md->baseline_energy);
         if (md->baseline_energy < 0.001f) md->baseline_energy = 0.001f;
         md->threshold = md->baseline_energy * MARKER_THRESHOLD_MULT;
+        if (md->threshold < MARKER_THRESHOLD_MIN) {
+            md->threshold = MARKER_THRESHOLD_MIN;
+        }
     }
 
     /* State machine */
@@ -298,7 +312,7 @@ marker_detector_t *marker_detector_create(const char *csv_path) {
     /* Allocate sliding window */
     md->energy_history = (float *)malloc(MARKER_WINDOW_FRAMES * sizeof(float));
 
-    if (!md->fft_in || !md->fft_out || !md->window_func || 
+    if (!md->fft_in || !md->fft_out || !md->window_func ||
         !md->i_buffer || !md->q_buffer || !md->energy_history) {
         marker_detector_destroy(md);
         return NULL;
@@ -340,7 +354,7 @@ marker_detector_t *marker_detector_create(const char *csv_path) {
             strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", localtime(&now));
             fprintf(md->csv_file, "# Phoenix SDR WWV Marker Log v%s\n", PHOENIX_VERSION_FULL);
             fprintf(md->csv_file, "# Started: %s\n", time_str);
-            fprintf(md->csv_file, "# Sliding window: %d frames (%.0f ms)\n", 
+            fprintf(md->csv_file, "# Sliding window: %d frames (%.0f ms)\n",
                     MARKER_WINDOW_FRAMES, MARKER_WINDOW_MS);
             fprintf(md->csv_file, "time,timestamp_ms,marker_num,wwv_sec,expected,accum_energy,duration_ms,since_last_sec,baseline,threshold\n");
             fflush(md->csv_file);
@@ -453,7 +467,7 @@ void marker_detector_print_stats(marker_detector_t *md) {
     int expected_markers = (int)(elapsed / 60.0f);  /* One per minute */
 
     printf("\n=== MARKER DETECTOR STATS ===\n");
-    printf("FFT: %d (%.1fms), Window: %d frames (%.0fms)\n", 
+    printf("FFT: %d (%.1fms), Window: %d frames (%.0fms)\n",
            MARKER_FFT_SIZE, FRAME_DURATION_MS, MARKER_WINDOW_FRAMES, MARKER_WINDOW_MS);
     printf("Target: %d Hz +/-%d Hz\n", MARKER_TARGET_FREQ_HZ, MARKER_BANDWIDTH_HZ);
     printf("Elapsed: %.1fs  Detected: %d  Expected: ~%d\n",

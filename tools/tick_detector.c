@@ -354,6 +354,11 @@ static void run_state_machine(tick_detector_t *td) {
                         
                         td->last_marker_frame = td->tick_start_frame;
                         td->last_tick_frame = td->tick_start_frame;  /* Also use as tick reference */
+                        
+                        /* Report to WWV clock */
+                        if (td->wwv_clock) {
+                            wwv_clock_report_tick(td->wwv_clock, timestamp_ms, true);
+                        }
                     } else {
                         /* Normal tick */
                         td->ticks_detected++;

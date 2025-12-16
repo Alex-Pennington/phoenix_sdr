@@ -23,6 +23,8 @@
 #include "kiss_fft.h"
 #include "version.h"
 #include "tick_detector.h"
+#include "marker_detector.h"
+#include "waterfall_flash.h"
 
 #ifdef _WIN32
 #include <io.h>
@@ -483,6 +485,7 @@ static void print_usage(const char *progname) {
  *============================================================================*/
 
 static tick_detector_t *g_tick_detector = NULL;
+static marker_detector_t *g_marker_detector = NULL;
 
 /*============================================================================
  * Color Mapping
@@ -714,6 +717,38 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Failed to create tick detector\n");
         return 1;
     }
+    
+    g_marker_detector = marker_detector_create("wwv_markers.csv");
+    if (!g_marker_detector) {
+        fprintf(stderr, "Failed to create marker detector\n");
+        return 1;
+    }
+
+    /* Initialize flash system and register detectors */
+    flash_init();
+    flash_register(&(flash_source_t){
+        .name = "tick",
+        .get_flash_frames = (int (*)(void*))tick_detector_get_flash_frames,
+        .decrement_flash = (void (*)(void*))tick_detector_decrement_flash,
+        .ctx = g_tick_detector,
+        .freq_hz = 1000,
+        .band_half_width = 3,
+        .band_r = 180, .band_g = 0, .band_b = 255,
+        .bar_index = 4,
+        .bar_r = 180, .bar_g = 0, .bar_b = 255
+    });
+    flash_register(&(flash_source_t){
+        .name = "marker",
+        .get_flash_frames = (int (*)(void*))marker_detector_get_flash_frames,
+        .decrement_flash = (void (*)(void*))marker_detector_decrement_flash,
+        .ctx = g_marker_detector,
+        .freq_hz = 1000,
+        .band_half_width = 8,
+        .band_r = 255, .band_g = 50, .band_b = 50,
+        .bar_index = 4,
+        .bar_r = 255, .bar_g = 50, .bar_b = 50
+    });
+
     uint64_t frame_num = 0;
 
     bool running = true;
@@ -729,9 +764,13 @@ int main(int argc, char *argv[]) {
                 } else if (event.key.keysym.sym == SDLK_PLUS || event.key.keysym.sym == SDLK_EQUALS || event.key.keysym.sym == SDLK_KP_PLUS) {
                     g_gain_offset += 3.0f;
                     printf("Gain: %+.0f dB\n", g_gain_offset);
+                    tick_detector_log_display_gain(g_tick_detector, g_gain_offset);
+                    marker_detector_log_display_gain(g_marker_detector, g_gain_offset);
                 } else if (event.key.keysym.sym == SDLK_MINUS || event.key.keysym.sym == SDLK_KP_MINUS) {
                     g_gain_offset -= 3.0f;
                     printf("Gain: %+.0f dB\n", g_gain_offset);
+                    tick_detector_log_display_gain(g_tick_detector, g_gain_offset);
+                    marker_detector_log_display_gain(g_marker_detector, g_gain_offset);
                 } else if (event.key.keysym.sym == SDLK_d) {
                     bool enabled = !tick_detector_get_enabled(g_tick_detector);
                     tick_detector_set_enabled(g_tick_detector, enabled);
@@ -786,6 +825,12 @@ int main(int argc, char *argv[]) {
                     /* Log metadata change to tick CSV */
                     if (g_tick_detector) {
                         tick_detector_log_metadata(g_tick_detector,
+                            g_tcp_center_freq, g_tcp_sample_rate,
+                            g_tcp_gain_reduction, g_tcp_lna_state);
+                    }
+                    /* Log metadata change to marker CSV */
+                    if (g_marker_detector) {
+                        marker_detector_log_metadata(g_marker_detector,
                             g_tcp_center_freq, g_tcp_sample_rate,
                             g_tcp_gain_reduction, g_tcp_lna_state);
                     }
@@ -865,6 +910,7 @@ int main(int argc, char *argv[]) {
                     if (g_detector_decim_counter >= g_detector_decimation) {
                         g_detector_decim_counter = 0;
                         tick_detector_process_sample(g_tick_detector, det_i, det_q);
+                        marker_detector_process_sample(g_marker_detector, det_i, det_q);
                     }
 
                     /*========================================================
@@ -998,32 +1044,8 @@ int main(int argc, char *argv[]) {
             g_bucket_energy[f] = pos_energy + neg_energy;
         }
 
-        /* Draw tick flash on waterfall when detected (purple band) */
-        if (tick_detector_get_flash_frames(g_tick_detector) > 0) {
-            /* Draw purple markers at ±1000 Hz positions */
-            float pixels_per_hz = (WATERFALL_WIDTH / 2.0f) / ZOOM_MAX_HZ;
-            int center_x = WATERFALL_WIDTH / 2;
-            int offset_1000 = (int)(1000.0f * pixels_per_hz);
-
-            /* Mark at +1000 Hz */
-            for (int dx = -3; dx <= 3; dx++) {
-                int x = center_x + offset_1000 + dx;
-                if (x >= 0 && x < WATERFALL_WIDTH) {
-                    pixels[x * 3 + 0] = 180;  /* Purple */
-                    pixels[x * 3 + 1] = 0;
-                    pixels[x * 3 + 2] = 255;
-                }
-            }
-            /* Mark at -1000 Hz */
-            for (int dx = -3; dx <= 3; dx++) {
-                int x = center_x - offset_1000 + dx;
-                if (x >= 0 && x < WATERFALL_WIDTH) {
-                    pixels[x * 3 + 0] = 180;  /* Purple */
-                    pixels[x * 3 + 1] = 0;
-                    pixels[x * 3 + 2] = 255;
-                }
-            }
-        }
+        /* Draw flash bands on waterfall for all registered detectors */
+        flash_draw_waterfall_bands(pixels, 0, WATERFALL_WIDTH, WINDOW_WIDTH, ZOOM_MAX_HZ);
 
         /* === RIGHT PANEL: Bucket energy bars === */
         int bar_width = BUCKET_WIDTH / NUM_TICK_FREQS;
@@ -1054,9 +1076,8 @@ int main(int argc, char *argv[]) {
 
             uint8_t r, g, b;
 
-            /* Flash purple for 1000 Hz bar when tick detected */
-            if (f == 4 && tick_detector_get_flash_frames(g_tick_detector) > 0) {
-                r = 180; g = 0; b = 255;
+            /* Check if any detector wants to flash this bar */
+            if (flash_get_bar_override(f, &r, &g, &b)) {
                 bar_height = WINDOW_HEIGHT;
             } else {
                 /* Color based on energy level */
@@ -1113,9 +1134,8 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        if (tick_detector_get_flash_frames(g_tick_detector) > 0) {
-            tick_detector_decrement_flash(g_tick_detector);
-        }
+        /* Decrement flash counters for all registered sources */
+        flash_decrement_all();
 
         SDL_UpdateTexture(texture, NULL, pixels, WINDOW_WIDTH * 3);
         SDL_RenderClear(renderer);
@@ -1127,7 +1147,9 @@ int main(int argc, char *argv[]) {
 
     printf("\n");
     tick_detector_print_stats(g_tick_detector);
+    marker_detector_print_stats(g_marker_detector);
     tick_detector_destroy(g_tick_detector);
+    marker_detector_destroy(g_marker_detector);
 
     if (g_tcp_mode) {
         if (g_iq_sock != SOCKET_INVALID) {

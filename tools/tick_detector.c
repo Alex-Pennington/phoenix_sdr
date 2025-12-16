@@ -681,6 +681,23 @@ void tick_detector_log_metadata(tick_detector_t *td, uint64_t center_freq,
            (unsigned long long)center_freq, sample_rate, gain_reduction, lna_state);
 }
 
+void tick_detector_log_display_gain(tick_detector_t *td, float display_gain_db) {
+    if (!td || !td->csv_file) return;
+
+    /* Get current wall clock time */
+    char time_str[64];
+    time_t now = time(NULL);
+    strftime(time_str, sizeof(time_str), "%H:%M:%S", localtime(&now));
+
+    /* Get timestamp in ms since detector start */
+    float timestamp_ms = td->frame_count * FRAME_DURATION_MS;
+
+    /* Log as special GAIN row */
+    fprintf(td->csv_file, "%s,%.1f,GAIN,0,display_gain=%.1f,0,0,0,0,0,0,0\n",
+            time_str, timestamp_ms, display_gain_db);
+    fflush(td->csv_file);
+}
+
 float tick_detector_get_frame_duration_ms(void) {
     return FRAME_DURATION_MS;
 }

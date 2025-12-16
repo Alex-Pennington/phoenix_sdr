@@ -137,6 +137,13 @@ void tick_detector_log_metadata(tick_detector_t *td, uint64_t center_freq,
                                 uint32_t lna_state);
 
 /**
+ * Log a display gain change to CSV
+ * @param td              Detector instance
+ * @param display_gain_db Display gain offset in dB
+ */
+void tick_detector_log_display_gain(tick_detector_t *td, float display_gain_db);
+
+/**
  * Get timing info for display
  */
 float tick_detector_get_frame_duration_ms(void);

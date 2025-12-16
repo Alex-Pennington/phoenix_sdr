@@ -23,7 +23,6 @@ logs/
 excluded_from_git/
 
 # Misc junk files
-*.csv
 *.bat
 scanforclaude.txt
 wwv_scan_out.txt

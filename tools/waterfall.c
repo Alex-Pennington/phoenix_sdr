@@ -488,6 +488,8 @@ static void print_usage(const char *progname) {
 static tick_detector_t *g_tick_detector = NULL;
 static marker_detector_t *g_marker_detector = NULL;
 static sync_detector_t *g_sync_detector = NULL;
+static FILE *g_channel_csv = NULL;
+static uint64_t g_channel_log_interval = 0;  /* Log every N frames */
 
 /*============================================================================
  * Sync Detector Callback Wrappers
@@ -754,6 +756,12 @@ int main(int argc, char *argv[]) {
     }
     tick_detector_set_marker_callback(g_tick_detector, on_tick_marker, NULL);
     marker_detector_set_callback(g_marker_detector, on_marker_event, NULL);
+
+    g_channel_csv = fopen("wwv_channel.csv", "w");
+    if (g_channel_csv) {
+        fprintf(g_channel_csv, "# Phoenix SDR WWV Channel Log v%s\n", PHOENIX_VERSION_FULL);
+        fprintf(g_channel_csv, "time,timestamp_ms,carrier_db,snr_db,sub500_db,sub600_db,tone1000_db,noise_db,quality\n");
+    }
 
     /* Initialize flash system and register detectors */
     flash_init();
@@ -1075,6 +1083,21 @@ int main(int argc, char *argv[]) {
             g_bucket_energy[f] = pos_energy + neg_energy;
         }
 
+        /* Log channel conditions every ~1 second (12 frames at 85ms effective) */
+        if (g_channel_csv && (frame_num % 12) == 0) {
+            float timestamp_ms = frame_num * DISPLAY_EFFECTIVE_MS;
+            float carrier_db = 20.0f * log10f(magnitudes[WATERFALL_WIDTH/2] + 1e-10f);
+            float sub500_db = 20.0f * log10f(g_bucket_energy[2] + 1e-10f);  /* 500 Hz */
+            float sub600_db = 20.0f * log10f(g_bucket_energy[3] + 1e-10f);  /* 600 Hz */
+            float tone1000_db = 20.0f * log10f(g_bucket_energy[4] + 1e-10f); /* 1000 Hz */
+            float noise_db = g_floor_db;
+            float snr_db = tone1000_db - noise_db;
+            const char *quality = (snr_db > 15) ? "GOOD" : (snr_db > 8) ? "FAIR" : (snr_db > 3) ? "POOR" : "NONE";
+            
+            fprintf(g_channel_csv, "%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%s\n",
+                    timestamp_ms, carrier_db, snr_db, sub500_db, sub600_db, tone1000_db, noise_db, quality);
+        }
+
         /* Draw flash bands on waterfall for all registered detectors */
         flash_draw_waterfall_bands(pixels, 0, WATERFALL_WIDTH, WINDOW_WIDTH, ZOOM_MAX_HZ);
 
@@ -1182,6 +1205,7 @@ int main(int argc, char *argv[]) {
     tick_detector_destroy(g_tick_detector);
     marker_detector_destroy(g_marker_detector);
     sync_detector_destroy(g_sync_detector);
+    if (g_channel_csv) fclose(g_channel_csv);
 
     if (g_tcp_mode) {
         if (g_iq_sock != SOCKET_INVALID) {

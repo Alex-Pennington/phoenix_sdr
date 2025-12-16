@@ -1,0 +1,4 @@
+# Phoenix SDR WWV Sync Log v0.3.2+123.b9f1969
+# Started: 2025-12-16 11:19:35
+time,timestamp_ms,marker_num,state,interval_sec,delta_ms,tick_dur_ms,marker_dur_ms
+11:21:02,87728.0,1,TENTATIVE,0.0,432,821.3,592.0

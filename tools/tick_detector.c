@@ -345,12 +345,10 @@ static void run_state_machine(tick_detector_t *td) {
                         if (td->csv_file) {
                             char time_str[16];
                             get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
-                            int wwv_sec = 0, wwv_min = 0;
-                            if (td->wwv_clock) {
-                                wwv_clock_get_position(td->wwv_clock, &wwv_sec, &wwv_min);
-                            }
-                            fprintf(td->csv_file, "%s,%.1f,M%d,%d,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
-                                    time_str, timestamp_ms, td->markers_detected, wwv_sec,
+                            wwv_time_t wwv = td->wwv_clock ? wwv_clock_now(td->wwv_clock) : (wwv_time_t){0};
+                            fprintf(td->csv_file, "%s,%.1f,M%d,%d,%s,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
+                                    time_str, timestamp_ms, td->markers_detected, wwv.second,
+                                    wwv_event_name(wwv.expected_event),
                                     td->tick_peak_energy, duration_ms, interval_ms, avg_interval_ms,
                                     td->noise_floor, td->corr_peak, corr_ratio);
                             fflush(td->csv_file);
@@ -358,11 +356,6 @@ static void run_state_machine(tick_detector_t *td) {
 
                         td->last_marker_frame = td->tick_start_frame;
                         td->last_tick_frame = td->tick_start_frame;  /* Also use as tick reference */
-
-                        /* Report to WWV clock */
-                        if (td->wwv_clock) {
-                            wwv_clock_report_tick(td->wwv_clock, timestamp_ms, true);
-                        }
                     } else {
                         /* Normal tick */
                         td->ticks_detected++;
@@ -385,23 +378,16 @@ static void run_state_machine(tick_detector_t *td) {
                         if (td->csv_file) {
                             char time_str[16];
                             get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
-                            int wwv_sec = 0, wwv_min = 0;
-                            if (td->wwv_clock) {
-                                wwv_clock_get_position(td->wwv_clock, &wwv_sec, &wwv_min);
-                            }
-                            fprintf(td->csv_file, "%s,%.1f,%d,%d,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
-                                    time_str, timestamp_ms, td->ticks_detected, wwv_sec,
+                            wwv_time_t wwv = td->wwv_clock ? wwv_clock_now(td->wwv_clock) : (wwv_time_t){0};
+                            fprintf(td->csv_file, "%s,%.1f,%d,%d,%s,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
+                                    time_str, timestamp_ms, td->ticks_detected, wwv.second,
+                                    wwv_event_name(wwv.expected_event),
                                     td->tick_peak_energy, duration_ms, interval_ms, avg_interval_ms,
                                     td->noise_floor, td->corr_peak, corr_ratio);
                             fflush(td->csv_file);
                         }
 
                         td->last_tick_frame = td->tick_start_frame;
-
-                        /* Report to WWV clock */
-                        if (td->wwv_clock) {
-                            wwv_clock_report_tick(td->wwv_clock, timestamp_ms, false);
-                        }
                     }
 
                     /* Callback for either type */
@@ -512,7 +498,7 @@ tick_detector_t *tick_detector_create(const char *csv_path) {
             strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", localtime(&now));
             fprintf(td->csv_file, "# Phoenix SDR WWV Tick Log v%s\n", PHOENIX_VERSION_FULL);
             fprintf(td->csv_file, "# Started: %s\n", time_str);
-            fprintf(td->csv_file, "time,timestamp_ms,tick_num,wwv_sec,energy_peak,duration_ms,interval_ms,avg_interval_ms,noise_floor,corr_peak,corr_ratio\n");
+            fprintf(td->csv_file, "time,timestamp_ms,tick_num,wwv_sec,expected,energy_peak,duration_ms,interval_ms,avg_interval_ms,noise_floor,corr_peak,corr_ratio\n");
             fflush(td->csv_file);
         }
     }
@@ -670,11 +656,6 @@ void tick_detector_print_stats(tick_detector_t *td) {
            td->markers_detected, td->ticks_rejected, avg_interval);
     printf("Energy noise: %.4f  Corr noise: %.2f\n", td->noise_floor, td->corr_noise_floor);
     printf("===========================\n");
-
-    /* Print WWV clock status */
-    if (td->wwv_clock) {
-        wwv_clock_print_status(td->wwv_clock);
-    }
 }
 
 void tick_detector_log_metadata(tick_detector_t *td, uint64_t center_freq,

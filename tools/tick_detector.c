@@ -315,16 +315,16 @@ static void run_state_machine(tick_detector_t *td) {
                 float interval_ms = (td->last_tick_frame > 0) ?
                     (td->tick_start_frame - td->last_tick_frame) * FRAME_DURATION_MS : TICK_MIN_INTERVAL_MS + 1.0f;
                 float timestamp_ms = frame * FRAME_DURATION_MS;
-                float corr_ratio = (td->corr_noise_floor > 0.001f) ? 
+                float corr_ratio = (td->corr_noise_floor > 0.001f) ?
                     td->corr_peak / td->corr_noise_floor : 0.0f;
 
                 bool valid_interval = (interval_ms >= TICK_MIN_INTERVAL_MS);
                 bool valid_correlation = (td->corr_peak > td->corr_noise_floor * CORR_THRESHOLD_MULT);
 
                 /* Check for minute marker first (600-900ms duration, 55+ seconds since last) */
-                bool is_marker_duration = (duration_ms >= MARKER_MIN_DURATION_MS && 
+                bool is_marker_duration = (duration_ms >= MARKER_MIN_DURATION_MS &&
                                            duration_ms <= MARKER_MAX_DURATION_MS_CHECK);
-                
+
                 /* Marker interval check with startup/recovery handling:
                  * - First marker (last_marker_frame == 0): always allow
                  * - Subsequent markers: must be 55+ seconds apart
@@ -370,8 +370,8 @@ static void run_state_machine(tick_detector_t *td) {
                         };
                         td->marker_callback(&event, td->marker_callback_user_data);
                     }
-                    
-                } else if (duration_ms >= TICK_MIN_DURATION_MS && 
+
+                } else if (duration_ms >= TICK_MIN_DURATION_MS &&
                            duration_ms <= TICK_MAX_DURATION_MS &&
                            valid_interval && valid_correlation) {
                     /* Normal tick */
@@ -435,7 +435,7 @@ static void run_state_machine(tick_detector_t *td) {
 
                 td->state = STATE_COOLDOWN;
                 td->cooldown_frames = MS_TO_FRAMES(TICK_COOLDOWN_MS);
-                
+
             } else if (td->tick_duration_frames * FRAME_DURATION_MS > MARKER_MAX_DURATION_MS) {
                 /* Pulse WAY too long (>1s) - something is wrong, bail out */
                 td->ticks_rejected++;

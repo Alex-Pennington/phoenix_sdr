@@ -125,6 +125,18 @@ int tick_detector_get_tick_count(tick_detector_t *td);
 void tick_detector_print_stats(tick_detector_t *td);
 
 /**
+ * Log a metadata change to CSV (gain, frequency, etc.)
+ * @param td              Detector instance
+ * @param center_freq     Center frequency in Hz
+ * @param sample_rate     Sample rate in Hz
+ * @param gain_reduction  IF gain reduction in dB
+ * @param lna_state       LNA state (0-8)
+ */
+void tick_detector_log_metadata(tick_detector_t *td, uint64_t center_freq,
+                                uint32_t sample_rate, uint32_t gain_reduction,
+                                uint32_t lna_state);
+
+/**
  * Get timing info for display
  */
 float tick_detector_get_frame_duration_ms(void);

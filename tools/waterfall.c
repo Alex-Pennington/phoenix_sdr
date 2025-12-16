@@ -99,7 +99,9 @@ typedef struct {
     uint32_t sample_format;
     uint32_t center_freq_lo;
     uint32_t center_freq_hi;
-    uint32_t reserved[3];
+    uint32_t gain_reduction;
+    uint32_t lna_state;
+    uint32_t reserved;
 } iq_metadata_update_t;
 #pragma pack(pop)
 
@@ -112,6 +114,8 @@ static socket_t g_iq_sock = SOCKET_INVALID;
 static uint32_t g_tcp_sample_rate = 2000000;
 static uint32_t g_tcp_sample_format = IQ_FORMAT_S16;
 static uint64_t g_tcp_center_freq = 15000000;
+static uint32_t g_tcp_gain_reduction = 0;
+static uint32_t g_tcp_lna_state = 0;
 static bool g_tcp_streaming = false;
 
 static int g_decimation_factor = 1;
@@ -657,10 +661,20 @@ int main(int argc, char *argv[]) {
                     }
                     g_tcp_sample_rate = meta.sample_rate;
                     g_tcp_center_freq = ((uint64_t)meta.center_freq_hi << 32) | meta.center_freq_lo;
+                    g_tcp_gain_reduction = meta.gain_reduction;
+                    g_tcp_lna_state = meta.lna_state;
                     g_decimation_factor = g_tcp_sample_rate / SAMPLE_RATE;
                     if (g_decimation_factor < 1) g_decimation_factor = 1;
-                    printf("Metadata update: rate=%u, freq=%llu\n",
-                           g_tcp_sample_rate, (unsigned long long)g_tcp_center_freq);
+                    printf("Metadata update: rate=%u, freq=%llu, GR=%u, LNA=%u\n",
+                           g_tcp_sample_rate, (unsigned long long)g_tcp_center_freq,
+                           g_tcp_gain_reduction, g_tcp_lna_state);
+                    
+                    /* Log metadata change to tick CSV */
+                    if (g_tick_detector) {
+                        tick_detector_log_metadata(g_tick_detector, 
+                            g_tcp_center_freq, g_tcp_sample_rate,
+                            g_tcp_gain_reduction, g_tcp_lna_state);
+                    }
                     continue;
                 }
 

@@ -242,6 +242,7 @@ try {
     $wwvClockObj = Build-Object "tools\wwv_clock.c" @()
     $tickDetectorObj = Build-Object "tools\tick_detector.c" @()
     $markerDetectorObj = Build-Object "tools\marker_detector.c" @()
+    $syncDetectorObj = Build-Object "tools\sync_detector.c" @()
     $waterfallFlashObj = Build-Object "tools\waterfall_flash.c" @()
     $waterfallDspObj = Build-Object "tools\waterfall_dsp.c" @()
     $waterfallAudioObj = Build-Object "tools\waterfall_audio.c" @()
@@ -257,7 +258,7 @@ try {
         "-lws2_32",
         "-lwinmm"
     )
-    $allArgs = @("-o", "`"$BinDir\waterfall.exe`"", "`"$waterfallObj`"", "`"$tickDetectorObj`"", "`"$markerDetectorObj`"", "`"$waterfallFlashObj`"", "`"$wwvClockObj`"", "`"$waterfallDspObj`"", "`"$waterfallAudioObj`"", "`"$kissObj`"") + $waterfallLdflags
+    $allArgs = @("-o", "`"$BinDir\waterfall.exe`"", "`"$waterfallObj`"", "`"$tickDetectorObj`"", "`"$markerDetectorObj`"", "`"$syncDetectorObj`"", "`"$waterfallFlashObj`"", "`"$wwvClockObj`"", "`"$waterfallDspObj`"", "`"$waterfallAudioObj`"", "`"$kissObj`"") + $waterfallLdflags
     $argString = $allArgs -join " "
     $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Linking failed for waterfall" }

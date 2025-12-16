@@ -24,6 +24,7 @@
 #include "version.h"
 #include "tick_detector.h"
 #include "marker_detector.h"
+#include "sync_detector.h"
 #include "waterfall_flash.h"
 
 #ifdef _WIN32
@@ -486,6 +487,27 @@ static void print_usage(const char *progname) {
 
 static tick_detector_t *g_tick_detector = NULL;
 static marker_detector_t *g_marker_detector = NULL;
+static sync_detector_t *g_sync_detector = NULL;
+
+/*============================================================================
+ * Sync Detector Callback Wrappers
+ *============================================================================*/
+
+static void on_tick_marker(const tick_marker_event_t *event, void *user_data) {
+    (void)user_data;
+    if (g_sync_detector) {
+        sync_detector_tick_marker(g_sync_detector, event->timestamp_ms, 
+                                   event->duration_ms, event->corr_ratio);
+    }
+}
+
+static void on_marker_event(const marker_event_t *event, void *user_data) {
+    (void)user_data;
+    if (g_sync_detector) {
+        sync_detector_marker_event(g_sync_detector, event->timestamp_ms,
+                                    event->accumulated_energy, event->duration_ms);
+    }
+}
 
 /*============================================================================
  * Color Mapping
@@ -723,6 +745,15 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Failed to create marker detector\n");
         return 1;
     }
+
+    /* Create sync detector and wire up callbacks */
+    g_sync_detector = sync_detector_create("wwv_sync.csv");
+    if (!g_sync_detector) {
+        fprintf(stderr, "Failed to create sync detector\n");
+        return 1;
+    }
+    tick_detector_set_marker_callback(g_tick_detector, on_tick_marker, NULL);
+    marker_detector_set_callback(g_marker_detector, on_marker_event, NULL);
 
     /* Initialize flash system and register detectors */
     flash_init();
@@ -1150,6 +1181,7 @@ int main(int argc, char *argv[]) {
     marker_detector_print_stats(g_marker_detector);
     tick_detector_destroy(g_tick_detector);
     marker_detector_destroy(g_marker_detector);
+    sync_detector_destroy(g_sync_detector);
 
     if (g_tcp_mode) {
         if (g_iq_sock != SOCKET_INVALID) {

@@ -60,6 +60,20 @@ typedef struct {
 typedef void (*tick_callback_fn)(const tick_event_t *event, void *user_data);
 
 /*============================================================================
+ * Callback for minute marker events (detected by duration)
+ *============================================================================*/
+
+typedef struct {
+    int marker_number;
+    float timestamp_ms;
+    float duration_ms;
+    float corr_ratio;
+    float interval_ms;      /* Time since previous marker */
+} tick_marker_event_t;
+
+typedef void (*tick_marker_callback_fn)(const tick_marker_event_t *event, void *user_data);
+
+/*============================================================================
  * Public API
  *============================================================================*/
 
@@ -82,6 +96,14 @@ void tick_detector_destroy(tick_detector_t *td);
  * @param user_data Passed to callback
  */
 void tick_detector_set_callback(tick_detector_t *td, tick_callback_fn callback, void *user_data);
+
+/**
+ * Set callback for minute marker events (duration-based detection)
+ * @param td        Detector instance
+ * @param callback  Function to call when minute marker detected
+ * @param user_data Passed to callback
+ */
+void tick_detector_set_marker_callback(tick_detector_t *td, tick_marker_callback_fn callback, void *user_data);
 
 /**
  * Feed I/Q samples to detector

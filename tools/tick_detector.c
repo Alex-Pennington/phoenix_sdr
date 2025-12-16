@@ -141,6 +141,10 @@ struct tick_detector {
     tick_callback_fn callback;
     void *callback_user_data;
 
+    /* Marker callback */
+    tick_marker_callback_fn marker_callback;
+    void *marker_callback_user_data;
+
     /* Logging */
     FILE *csv_file;
     time_t start_time;          /* Wall clock time when detector started */
@@ -354,6 +358,18 @@ static void run_state_machine(tick_detector_t *td) {
 
                     td->last_marker_frame = td->tick_start_frame;
                     /* Don't update last_tick_frame - marker shouldn't affect tick timing */
+
+                    /* Marker callback */
+                    if (td->marker_callback) {
+                        tick_marker_event_t event = {
+                            .marker_number = td->markers_detected,
+                            .timestamp_ms = timestamp_ms,
+                            .duration_ms = duration_ms,
+                            .corr_ratio = corr_ratio,
+                            .interval_ms = since_last_marker_ms
+                        };
+                        td->marker_callback(&event, td->marker_callback_user_data);
+                    }
                     
                 } else if (duration_ms >= TICK_MIN_DURATION_MS && 
                            duration_ms <= TICK_MAX_DURATION_MS &&
@@ -546,6 +562,12 @@ void tick_detector_set_callback(tick_detector_t *td, tick_callback_fn callback, 
     if (!td) return;
     td->callback = callback;
     td->callback_user_data = user_data;
+}
+
+void tick_detector_set_marker_callback(tick_detector_t *td, tick_marker_callback_fn callback, void *user_data) {
+    if (!td) return;
+    td->marker_callback = callback;
+    td->marker_callback_user_data = user_data;
 }
 
 bool tick_detector_process_sample(tick_detector_t *td, float i_sample, float q_sample) {

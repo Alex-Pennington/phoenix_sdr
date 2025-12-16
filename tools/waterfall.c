@@ -668,10 +668,10 @@ int main(int argc, char *argv[]) {
                     printf("Metadata update: rate=%u, freq=%llu, GR=%u, LNA=%u\n",
                            g_tcp_sample_rate, (unsigned long long)g_tcp_center_freq,
                            g_tcp_gain_reduction, g_tcp_lna_state);
-                    
+
                     /* Log metadata change to tick CSV */
                     if (g_tick_detector) {
-                        tick_detector_log_metadata(g_tick_detector, 
+                        tick_detector_log_metadata(g_tick_detector,
                             g_tcp_center_freq, g_tcp_sample_rate,
                             g_tcp_gain_reduction, g_tcp_lna_state);
                     }

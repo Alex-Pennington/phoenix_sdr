@@ -83,12 +83,12 @@ struct tick_detector {
     kiss_fft_cpx *fft_in;
     kiss_fft_cpx *fft_out;
     float *window_func;
-    
+
     /* Sample buffer for FFT */
     float *i_buffer;
     float *q_buffer;
     int buffer_idx;
-    
+
     /* Matched filter resources */
     float *template_i;          /* Cosine template */
     float *template_q;          /* Sine template */
@@ -101,20 +101,20 @@ struct tick_detector {
     int corr_sum_count;         /* Number of correlation samples accumulated */
     int corr_peak_offset;       /* Sample offset of peak */
     float corr_noise_floor;     /* Correlation noise floor estimate */
-    
+
     /* Detection state */
     detector_state_t state;
     float noise_floor;
     float threshold_high;
     float threshold_low;
     float current_energy;
-    
+
     /* Tick measurement */
     uint64_t tick_start_frame;
     float tick_peak_energy;
     int tick_duration_frames;
     int cooldown_frames;
-    
+
     /* Statistics */
     int ticks_detected;
     int ticks_rejected;
@@ -124,24 +124,24 @@ struct tick_detector {
     uint64_t frame_count;
     uint64_t start_frame;
     bool warmup_complete;
-    
+
     /* History for interval averaging */
     float tick_timestamps_ms[TICK_HISTORY_SIZE];
     int tick_history_idx;
     int tick_history_count;
-    
+
     /* UI feedback */
     int flash_frames_remaining;
     bool detection_enabled;
-    
+
     /* Callback */
     tick_callback_fn callback;
     void *callback_user_data;
-    
+
     /* Logging */
     FILE *csv_file;
     time_t start_time;          /* Wall clock time when detector started */
-    
+
     /* WWV broadcast clock */
     wwv_clock_t *wwv_clock;
 };
@@ -171,22 +171,22 @@ static void generate_template(tick_detector_t *td) {
 static float compute_correlation(tick_detector_t *td) {
     float sum_i = 0.0f;
     float sum_q = 0.0f;
-    
+
     /* Correlate template with buffer (complex multiply and accumulate) */
     for (int i = 0; i < TICK_TEMPLATE_SAMPLES; i++) {
         /* Index into circular buffer, starting from oldest sample */
         int buf_idx = (td->corr_buf_idx - TICK_TEMPLATE_SAMPLES + i + TICK_CORR_BUFFER_SIZE) % TICK_CORR_BUFFER_SIZE;
-        
+
         float sig_i = td->corr_buf_i[buf_idx];
         float sig_q = td->corr_buf_q[buf_idx];
         float tpl_i = td->template_i[i];
         float tpl_q = td->template_q[i];
-        
+
         /* Complex multiply: (sig_i + j*sig_q) * (tpl_i - j*tpl_q) */
         sum_i += sig_i * tpl_i + sig_q * tpl_q;
         sum_q += sig_q * tpl_i - sig_i * tpl_q;
     }
-    
+
     return sqrtf(sum_i * sum_i + sum_q * sum_q);
 }
 
@@ -194,14 +194,14 @@ static float calculate_bucket_energy(tick_detector_t *td) {
     int center_bin = (int)(TICK_TARGET_FREQ_HZ / HZ_PER_BIN + 0.5f);
     int bin_span = (int)(TICK_BANDWIDTH_HZ / HZ_PER_BIN + 0.5f);
     if (bin_span < 1) bin_span = 1;
-    
+
     float pos_energy = 0.0f;
     float neg_energy = 0.0f;
-    
+
     for (int b = -bin_span; b <= bin_span; b++) {
         int pos_bin = center_bin + b;
         int neg_bin = TICK_FFT_SIZE - center_bin + b;
-        
+
         if (pos_bin >= 0 && pos_bin < TICK_FFT_SIZE) {
             float re = td->fft_out[pos_bin].r;
             float im = td->fft_out[pos_bin].i;
@@ -213,18 +213,18 @@ static float calculate_bucket_energy(tick_detector_t *td) {
             neg_energy += sqrtf(re * re + im * im) / TICK_FFT_SIZE;
         }
     }
-    
+
     return pos_energy + neg_energy;
 }
 
 static float calculate_avg_interval(tick_detector_t *td, float current_time_ms) {
     if (td->tick_history_count < 2) return 0.0f;
-    
+
     float cutoff = current_time_ms - TICK_AVG_WINDOW_MS;
     float sum = 0.0f;
     int count = 0;
     float prev_time = -1.0f;
-    
+
     for (int i = 0; i < td->tick_history_count; i++) {
         int idx = (td->tick_history_idx - td->tick_history_count + i + TICK_HISTORY_SIZE) % TICK_HISTORY_SIZE;
         float t = td->tick_timestamps_ms[idx];
@@ -236,7 +236,7 @@ static float calculate_avg_interval(tick_detector_t *td, float current_time_ms) 
             prev_time = t;
         }
     }
-    
+
     return (count > 0) ? (sum / count) : 0.0f;
 }
 
@@ -253,22 +253,22 @@ static void get_wall_time_str(tick_detector_t *td, float timestamp_ms, char *buf
 static void run_state_machine(tick_detector_t *td) {
     float energy = td->current_energy;
     uint64_t frame = td->frame_count;
-    
+
     /* Warmup phase - fast adaptation to establish baseline */
     if (!td->warmup_complete) {
         td->noise_floor += TICK_WARMUP_ADAPT_RATE * (energy - td->noise_floor);
         if (td->noise_floor < 0.0001f) td->noise_floor = 0.0001f;
         td->threshold_high = td->noise_floor * TICK_THRESHOLD_MULT;
         td->threshold_low = td->threshold_high * TICK_HYSTERESIS_RATIO;
-        
+
         if (frame >= td->start_frame + TICK_WARMUP_FRAMES) {
             td->warmup_complete = true;
-            printf("[TICK] Warmup complete. Noise=%.4f, Thresh=%.4f\n", 
+            printf("[TICK] Warmup complete. Noise=%.4f, Thresh=%.4f\n",
                    td->noise_floor, td->threshold_high);
         }
         return;
     }
-    
+
     /* Adaptive noise floor - asymmetric: fast down, slow up */
     if (td->state == STATE_IDLE && energy < td->threshold_high) {
         if (energy < td->noise_floor) {
@@ -281,7 +281,7 @@ static void run_state_machine(tick_detector_t *td) {
         td->threshold_high = td->noise_floor * TICK_THRESHOLD_MULT;
         td->threshold_low = td->threshold_high * TICK_HYSTERESIS_RATIO;
     }
-    
+
     /* State machine */
     switch (td->state) {
         case STATE_IDLE:
@@ -295,52 +295,52 @@ static void run_state_machine(tick_detector_t *td) {
                 td->corr_sum_count = 0;
             }
             break;
-            
+
         case STATE_IN_TICK:
             td->tick_duration_frames++;
             if (energy > td->tick_peak_energy) {
                 td->tick_peak_energy = energy;
             }
-            
+
             if (energy < td->threshold_low) {
                 /* Tick ended - validate duration and interval */
                 float duration_ms = td->tick_duration_frames * FRAME_DURATION_MS;
                 float interval_ms = (td->last_tick_frame > 0) ?
                     (td->tick_start_frame - td->last_tick_frame) * FRAME_DURATION_MS : TICK_MIN_INTERVAL_MS + 1.0f;
-                
+
                 bool valid_duration = (duration_ms >= TICK_MIN_DURATION_MS && duration_ms <= TICK_MAX_DURATION_MS);
                 bool valid_interval = (interval_ms >= TICK_MIN_INTERVAL_MS);
                 bool valid_correlation = (td->corr_peak > td->corr_noise_floor * CORR_THRESHOLD_MULT);
-                
+
                 if (valid_duration && valid_interval && valid_correlation) {
                     float corr_ratio = td->corr_peak / td->corr_noise_floor;
-                    float corr_avg_ratio = (td->corr_sum_count > 0) ? 
+                    float corr_avg_ratio = (td->corr_sum_count > 0) ?
                         (td->corr_sum / td->corr_sum_count) / td->corr_noise_floor : 0.0f;
                     float timestamp_ms = frame * FRAME_DURATION_MS;
                     float avg_interval_ms = calculate_avg_interval(td, timestamp_ms);
-                    
+
                     /* Check if this is a minute marker:
                      * 1. Peak correlation ratio above threshold, OR
                      * 2. Average correlation ratio above threshold, OR
                      * 3. Duration above 100ms (backup for fading conditions)
                      */
-                    bool is_marker_by_corr = (corr_ratio > MARKER_CORR_RATIO) || 
+                    bool is_marker_by_corr = (corr_ratio > MARKER_CORR_RATIO) ||
                                              (corr_avg_ratio > MARKER_CORR_RATIO);
                     bool is_marker_by_duration = (duration_ms >= MARKER_MIN_DURATION_MS);
-                    
+
                     if (is_marker_by_corr || is_marker_by_duration) {
                         /* Minute marker! High correlation = long 800ms pulse */
                         td->markers_detected++;
                         td->flash_frames_remaining = TICK_FLASH_FRAMES * 3;  /* Longer flash */
-                        
+
                         float since_last_marker = (td->last_marker_frame > 0) ?
                             (td->tick_start_frame - td->last_marker_frame) * FRAME_DURATION_MS / 1000.0f : 0.0f;
-                        
+
                         const char *method = is_marker_by_corr ? "corr" : "dur";
                         printf("[%7.1fs] MARKER #%-3d  dur=%.0fms  corr=%.1f/%.1f  since=%.1fs [%s] ** SYNC **\n",
                                timestamp_ms / 1000.0f, td->markers_detected,
                                duration_ms, corr_ratio, corr_avg_ratio, since_last_marker, method);
-                        
+
                         /* CSV logging */
                         if (td->csv_file) {
                             char time_str[16];
@@ -355,10 +355,10 @@ static void run_state_machine(tick_detector_t *td) {
                                     td->noise_floor, td->corr_peak, corr_ratio);
                             fflush(td->csv_file);
                         }
-                        
+
                         td->last_marker_frame = td->tick_start_frame;
                         td->last_tick_frame = td->tick_start_frame;  /* Also use as tick reference */
-                        
+
                         /* Report to WWV clock */
                         if (td->wwv_clock) {
                             wwv_clock_report_tick(td->wwv_clock, timestamp_ms, true);
@@ -367,20 +367,20 @@ static void run_state_machine(tick_detector_t *td) {
                         /* Normal tick */
                         td->ticks_detected++;
                         td->flash_frames_remaining = TICK_FLASH_FRAMES;
-                        
+
                         /* Update history */
                         td->tick_timestamps_ms[td->tick_history_idx] = timestamp_ms;
                         td->tick_history_idx = (td->tick_history_idx + 1) % TICK_HISTORY_SIZE;
                         if (td->tick_history_count < TICK_HISTORY_SIZE) {
                             td->tick_history_count++;
                         }
-                        
+
                         /* Console output */
                         char indicator = (interval_ms > 950.0f && interval_ms < 1050.0f) ? ' ' : '!';
                         printf("[%7.1fs] TICK #%-4d  int=%6.0fms  avg=%6.0fms  corr=%.1f %c\n",
-                               timestamp_ms / 1000.0f, td->ticks_detected, 
+                               timestamp_ms / 1000.0f, td->ticks_detected,
                                interval_ms, avg_interval_ms, corr_ratio, indicator);
-                        
+
                         /* CSV logging */
                         if (td->csv_file) {
                             char time_str[16];
@@ -395,15 +395,15 @@ static void run_state_machine(tick_detector_t *td) {
                                     td->noise_floor, td->corr_peak, corr_ratio);
                             fflush(td->csv_file);
                         }
-                        
+
                         td->last_tick_frame = td->tick_start_frame;
-                        
+
                         /* Report to WWV clock */
                         if (td->wwv_clock) {
                             wwv_clock_report_tick(td->wwv_clock, timestamp_ms, false);
                         }
                     }
-                    
+
                     /* Callback for either type */
                     if (td->callback) {
                         tick_event_t event = {
@@ -420,7 +420,7 @@ static void run_state_machine(tick_detector_t *td) {
                 } else {
                     td->ticks_rejected++;
                 }
-                
+
                 td->state = STATE_COOLDOWN;
                 td->cooldown_frames = MS_TO_FRAMES(TICK_COOLDOWN_MS);
             } else if (td->tick_duration_frames * FRAME_DURATION_MS > TICK_MAX_DURATION_MS) {
@@ -430,7 +430,7 @@ static void run_state_machine(tick_detector_t *td) {
                 td->cooldown_frames = MS_TO_FRAMES(TICK_COOLDOWN_MS);
             }
             break;
-            
+
         case STATE_COOLDOWN:
             if (--td->cooldown_frames <= 0) {
                 td->state = STATE_IDLE;
@@ -446,42 +446,42 @@ static void run_state_machine(tick_detector_t *td) {
 tick_detector_t *tick_detector_create(const char *csv_path) {
     tick_detector_t *td = (tick_detector_t *)calloc(1, sizeof(tick_detector_t));
     if (!td) return NULL;
-    
+
     /* Allocate FFT */
     td->fft_cfg = kiss_fft_alloc(TICK_FFT_SIZE, 0, NULL, NULL);
     if (!td->fft_cfg) {
         free(td);
         return NULL;
     }
-    
+
     td->fft_in = (kiss_fft_cpx *)malloc(TICK_FFT_SIZE * sizeof(kiss_fft_cpx));
     td->fft_out = (kiss_fft_cpx *)malloc(TICK_FFT_SIZE * sizeof(kiss_fft_cpx));
     td->window_func = (float *)malloc(TICK_FFT_SIZE * sizeof(float));
     td->i_buffer = (float *)malloc(TICK_FFT_SIZE * sizeof(float));
     td->q_buffer = (float *)malloc(TICK_FFT_SIZE * sizeof(float));
-    
+
     /* Allocate matched filter resources */
     td->template_i = (float *)malloc(TICK_TEMPLATE_SAMPLES * sizeof(float));
     td->template_q = (float *)malloc(TICK_TEMPLATE_SAMPLES * sizeof(float));
     td->corr_buf_i = (float *)malloc(TICK_CORR_BUFFER_SIZE * sizeof(float));
     td->corr_buf_q = (float *)malloc(TICK_CORR_BUFFER_SIZE * sizeof(float));
-    
+
     if (!td->fft_in || !td->fft_out || !td->window_func || !td->i_buffer || !td->q_buffer ||
         !td->template_i || !td->template_q || !td->corr_buf_i || !td->corr_buf_q) {
         tick_detector_destroy(td);
         return NULL;
     }
-    
+
     /* Initialize window function (Hann) */
     for (int i = 0; i < TICK_FFT_SIZE; i++) {
         td->window_func[i] = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (TICK_FFT_SIZE - 1)));
     }
-    
+
     /* Initialize buffers */
     memset(td->i_buffer, 0, TICK_FFT_SIZE * sizeof(float));
     memset(td->q_buffer, 0, TICK_FFT_SIZE * sizeof(float));
     td->buffer_idx = 0;
-    
+
     /* Initialize matched filter */
     generate_template(td);
     memset(td->corr_buf_i, 0, TICK_CORR_BUFFER_SIZE * sizeof(float));
@@ -489,7 +489,7 @@ tick_detector_t *tick_detector_create(const char *csv_path) {
     td->corr_buf_idx = 0;
     td->corr_sample_count = 0;
     td->corr_noise_floor = 0.0f;
-    
+
     /* Initialize state */
     td->state = STATE_IDLE;
     td->noise_floor = 0.01f;
@@ -498,10 +498,10 @@ tick_detector_t *tick_detector_create(const char *csv_path) {
     td->detection_enabled = true;
     td->warmup_complete = false;
     td->start_time = time(NULL);  /* Record wall clock start time */
-    
+
     /* Create WWV clock tracker */
     td->wwv_clock = wwv_clock_create(WWV_STATION_WWV);
-    
+
     /* Open CSV file */
     if (csv_path) {
         td->csv_file = fopen(csv_path, "w");
@@ -516,18 +516,18 @@ tick_detector_t *tick_detector_create(const char *csv_path) {
             fflush(td->csv_file);
         }
     }
-    
+
     printf("[TICK] Detector created: FFT=%d (%.1fms), matched filter=%d samples (%.1fms)\n",
            TICK_FFT_SIZE, FRAME_DURATION_MS, TICK_TEMPLATE_SAMPLES, TICK_PULSE_MS);
-    printf("[TICK] Target: %dHz ±%dHz, logging to %s\n", 
+    printf("[TICK] Target: %dHz ±%dHz, logging to %s\n",
            TICK_TARGET_FREQ_HZ, TICK_BANDWIDTH_HZ, csv_path ? csv_path : "(disabled)");
-    
+
     return td;
 }
 
 void tick_detector_destroy(tick_detector_t *td) {
     if (!td) return;
-    
+
     if (td->wwv_clock) wwv_clock_destroy(td->wwv_clock);
     if (td->csv_file) fclose(td->csv_file);
     if (td->fft_cfg) kiss_fft_free(td->fft_cfg);
@@ -551,68 +551,68 @@ void tick_detector_set_callback(tick_detector_t *td, tick_callback_fn callback, 
 
 bool tick_detector_process_sample(tick_detector_t *td, float i_sample, float q_sample) {
     if (!td || !td->detection_enabled) return false;
-    
+
     /* Always feed correlation buffer (sample-by-sample) */
     td->corr_buf_i[td->corr_buf_idx] = i_sample;
     td->corr_buf_q[td->corr_buf_idx] = q_sample;
     td->corr_buf_idx = (td->corr_buf_idx + 1) % TICK_CORR_BUFFER_SIZE;
     td->corr_sample_count++;
-    
+
     /* Compute correlation every N samples (for efficiency) */
-    if (td->corr_sample_count >= TICK_TEMPLATE_SAMPLES && 
+    if (td->corr_sample_count >= TICK_TEMPLATE_SAMPLES &&
         (td->corr_sample_count % CORR_DECIMATION) == 0) {
         float corr = compute_correlation(td);
-        
+
         /* Update correlation noise floor (slow adaptation) */
         if (corr < td->corr_noise_floor || td->corr_noise_floor < 0.001f) {
             td->corr_noise_floor += CORR_NOISE_ADAPT * (corr - td->corr_noise_floor);
         } else if (td->state == STATE_IDLE) {
             td->corr_noise_floor += (CORR_NOISE_ADAPT * 0.1f) * (corr - td->corr_noise_floor);
         }
-        
+
         /* Track peak during detection */
         if (td->state == STATE_IN_TICK && corr > td->corr_peak) {
             td->corr_peak = corr;
             td->corr_peak_offset = td->corr_sample_count;
         }
-        
+
         /* Accumulate correlation during detection */
         if (td->state == STATE_IN_TICK) {
             td->corr_sum += corr;
             td->corr_sum_count++;
         }
     }
-    
+
     /* Buffer sample for FFT */
     td->i_buffer[td->buffer_idx] = i_sample;
     td->q_buffer[td->buffer_idx] = q_sample;
     td->buffer_idx++;
-    
+
     /* Not enough samples yet */
     if (td->buffer_idx < TICK_FFT_SIZE) {
         return false;
     }
-    
+
     /* Buffer full - run FFT */
     td->buffer_idx = 0;
-    
+
     /* Apply window and load FFT input */
     for (int i = 0; i < TICK_FFT_SIZE; i++) {
         td->fft_in[i].r = td->i_buffer[i] * td->window_func[i];
         td->fft_in[i].i = td->q_buffer[i] * td->window_func[i];
     }
-    
+
     /* Run FFT */
     kiss_fft(td->fft_cfg, td->fft_in, td->fft_out);
-    
+
     /* Extract bucket energy */
     td->current_energy = calculate_bucket_energy(td);
-    
+
     /* Run detection state machine */
     run_state_machine(td);
-    
+
     td->frame_count++;
-    
+
     return (td->flash_frames_remaining == TICK_FLASH_FRAMES);
 }
 
@@ -652,25 +652,25 @@ int tick_detector_get_tick_count(tick_detector_t *td) {
 
 void tick_detector_print_stats(tick_detector_t *td) {
     if (!td) return;
-    
+
     float elapsed = td->frame_count * FRAME_DURATION_MS / 1000.0f;
     float current_time_ms = td->frame_count * FRAME_DURATION_MS;
-    float detecting = td->warmup_complete ? 
+    float detecting = td->warmup_complete ?
         (elapsed - TICK_WARMUP_FRAMES * FRAME_DURATION_MS / 1000.0f) : 0.0f;
     int expected = (int)detecting;
     float rate = (expected > 0) ? (100.0f * td->ticks_detected / expected) : 0.0f;
     float avg_interval = calculate_avg_interval(td, current_time_ms);
-    
+
     printf("\n=== TICK DETECTOR STATS ===\n");
     printf("FFT: %d (%.1fms), Matched filter: %d samples\n", TICK_FFT_SIZE, FRAME_DURATION_MS, TICK_TEMPLATE_SAMPLES);
     printf("Target: %d Hz +/-%d Hz\n", TICK_TARGET_FREQ_HZ, TICK_BANDWIDTH_HZ);
-    printf("Elapsed: %.1fs  Detected: %d  Expected: %d  Rate: %.1f%%\n", 
+    printf("Elapsed: %.1fs  Detected: %d  Expected: %d  Rate: %.1f%%\n",
            elapsed, td->ticks_detected, expected, rate);
-    printf("Markers: %d  Rejected: %d  Avg interval: %.0fms\n", 
+    printf("Markers: %d  Rejected: %d  Avg interval: %.0fms\n",
            td->markers_detected, td->ticks_rejected, avg_interval);
     printf("Energy noise: %.4f  Corr noise: %.2f\n", td->noise_floor, td->corr_noise_floor);
     printf("===========================\n");
-    
+
     /* Print WWV clock status */
     if (td->wwv_clock) {
         wwv_clock_print_status(td->wwv_clock);
@@ -681,21 +681,21 @@ void tick_detector_log_metadata(tick_detector_t *td, uint64_t center_freq,
                                 uint32_t sample_rate, uint32_t gain_reduction,
                                 uint32_t lna_state) {
     if (!td || !td->csv_file) return;
-    
+
     /* Get current wall clock time */
     char time_str[64];
     time_t now = time(NULL);
     strftime(time_str, sizeof(time_str), "%H:%M:%S", localtime(&now));
-    
+
     /* Get timestamp in ms since detector start */
     float timestamp_ms = td->frame_count * FRAME_DURATION_MS;
-    
+
     /* Log as special META row */
     fprintf(td->csv_file, "%s,%.1f,META,0,freq=%llu rate=%u GR=%u LNA=%u,0,0,0,0,0,0\n",
             time_str, timestamp_ms,
             (unsigned long long)center_freq, sample_rate, gain_reduction, lna_state);
     fflush(td->csv_file);
-    
+
     printf("[TICK] Logged metadata: freq=%llu, rate=%u, GR=%u, LNA=%u\n",
            (unsigned long long)center_freq, sample_rate, gain_reduction, lna_state);
 }

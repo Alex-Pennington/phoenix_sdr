@@ -290,7 +290,7 @@ static int g_iq_buffer_idx = 0;
 /* Frequency buckets for WWV detection */
 #define NUM_TICK_FREQS  7
 static const int   TICK_FREQS[NUM_TICK_FREQS] = { 100,   440,  500,  600,  1000, 1200, 1500 };
-static const int   TICK_BW[NUM_TICK_FREQS]    = { 10,    5,    5,    5,    100,  100,  20   };
+static const int   TICK_BW[NUM_TICK_FREQS]    = { 10,    5,    30,   30,   100,  100,  20   };
 static const char *TICK_NAMES[NUM_TICK_FREQS] = { "100Hz", "440Hz", "500Hz", "600Hz", "1000Hz", "1200Hz", "1500Hz" };
 
 /*============================================================================
@@ -1112,6 +1112,11 @@ int main(int argc, char *argv[]) {
 
         /* Log channel conditions every ~1 second (12 frames at 85ms effective) */
         if (g_channel_csv && (frame_num % 12) == 0) {
+            time_t now = time(NULL);
+            struct tm *tm_info = localtime(&now);
+            char time_str[16];
+            strftime(time_str, sizeof(time_str), "%H:%M:%S", tm_info);
+
             float timestamp_ms = frame_num * DISPLAY_EFFECTIVE_MS;
             float carrier_db = 20.0f * log10f(magnitudes[WATERFALL_WIDTH/2] + 1e-10f);
             float sub500_db = 20.0f * log10f(g_bucket_energy[2] + 1e-10f);  /* 500 Hz */
@@ -1121,8 +1126,9 @@ int main(int argc, char *argv[]) {
             float snr_db = tone1000_db - noise_db;
             const char *quality = (snr_db > 15) ? "GOOD" : (snr_db > 8) ? "FAIR" : (snr_db > 3) ? "POOR" : "NONE";
 
-            fprintf(g_channel_csv, "%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%s\n",
-                    timestamp_ms, carrier_db, snr_db, sub500_db, sub600_db, tone1000_db, noise_db, quality);
+            fprintf(g_channel_csv, "%s,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%s\n",
+                    time_str, timestamp_ms, carrier_db, snr_db, sub500_db, sub600_db, tone1000_db, noise_db, quality);
+            fflush(g_channel_csv);
         }
 
         /* Log subcarrier conditions every ~1 second (12 frames) */

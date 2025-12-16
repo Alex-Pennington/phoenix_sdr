@@ -26,6 +26,7 @@
 #include "tick_detector.h"
 #include "marker_detector.h"
 #include "sync_detector.h"
+#include "tone_tracker.h"
 #include "waterfall_flash.h"
 
 /*============================================================================
@@ -506,6 +507,8 @@ static sync_detector_t *g_sync_detector = NULL;
 static FILE *g_channel_csv = NULL;
 static uint64_t g_channel_log_interval = 0;  /* Log every N frames */
 static FILE *g_subcarrier_csv = NULL;
+static tone_tracker_t *g_tone_500 = NULL;
+static tone_tracker_t *g_tone_600 = NULL;
 
 /*============================================================================
  * Sync Detector Callback Wrappers
@@ -790,6 +793,10 @@ int main(int argc, char *argv[]) {
         fflush(g_subcarrier_csv);
     }
 
+    /* Create tone trackers for receiver characterization */
+    g_tone_500 = tone_tracker_create(500.0f, "wwv_tone_500.csv");
+    g_tone_600 = tone_tracker_create(600.0f, "wwv_tone_600.csv");
+
     /* Initialize flash system and register detectors */
     flash_init();
     flash_register(&(flash_source_t){
@@ -995,6 +1002,10 @@ int main(int argc, char *argv[]) {
                         g_display_buffer[g_display_buffer_idx].q = disp_q;
                         g_display_buffer_idx = (g_display_buffer_idx + 1) % DISPLAY_FFT_SIZE;
                         g_display_new_samples++;
+
+                        /* Feed tone trackers (same 12 kHz samples) */
+                        tone_tracker_process_sample(g_tone_500, disp_i, disp_q);
+                        tone_tracker_process_sample(g_tone_600, disp_i, disp_q);
 
                         /* With 50% overlap, run FFT every DISPLAY_OVERLAP new samples */
                         if (g_display_new_samples >= DISPLAY_OVERLAP) {
@@ -1262,6 +1273,8 @@ int main(int argc, char *argv[]) {
     tick_detector_destroy(g_tick_detector);
     marker_detector_destroy(g_marker_detector);
     sync_detector_destroy(g_sync_detector);
+    tone_tracker_destroy(g_tone_500);
+    tone_tracker_destroy(g_tone_600);
     if (g_channel_csv) fclose(g_channel_csv);
     if (g_subcarrier_csv) fclose(g_subcarrier_csv);
 

@@ -334,7 +334,7 @@ static void run_state_machine(tick_detector_t *td) {
                     (td->tick_start_frame - td->last_marker_frame) * FRAME_DURATION_MS : MARKER_MIN_INTERVAL_MS + 1000.0f;
                 bool valid_marker_interval = (since_last_marker_ms >= MARKER_MIN_INTERVAL_MS);
 
-                if (is_marker_duration && valid_interval && valid_marker_interval) {
+                if (is_marker_duration && valid_marker_interval) {
                     /* MINUTE MARKER detected! */
                     td->markers_detected++;
                     td->flash_frames_remaining = TICK_FLASH_FRAMES * 6;  /* Long flash for marker */

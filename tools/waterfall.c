@@ -18,6 +18,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 
 #include <SDL.h>
 #include "kiss_fft.h"
@@ -26,6 +27,20 @@
 #include "marker_detector.h"
 #include "sync_detector.h"
 #include "waterfall_flash.h"
+
+/*============================================================================
+ * WWV Subcarrier Tone Schedule (minutes past the hour)
+ *============================================================================*/
+static const int WWV_500HZ_MINUTES[] = {4,6,12,14,16,20,22,24,26,28,32,34,36,38,40,42,52,54,56,58,-1};
+static const int WWV_600HZ_MINUTES[] = {1,3,5,7,11,13,15,17,19,21,23,25,27,31,33,35,37,39,41,53,55,57,-1};
+
+static const char *wwv_expected_tone(int minute) {
+    for (int i = 0; WWV_500HZ_MINUTES[i] >= 0; i++)
+        if (WWV_500HZ_MINUTES[i] == minute) return "500Hz";
+    for (int i = 0; WWV_600HZ_MINUTES[i] >= 0; i++)
+        if (WWV_600HZ_MINUTES[i] == minute) return "600Hz";
+    return "NONE";
+}
 
 #ifdef _WIN32
 #include <io.h>
@@ -490,6 +505,7 @@ static marker_detector_t *g_marker_detector = NULL;
 static sync_detector_t *g_sync_detector = NULL;
 static FILE *g_channel_csv = NULL;
 static uint64_t g_channel_log_interval = 0;  /* Log every N frames */
+static FILE *g_subcarrier_csv = NULL;
 
 /*============================================================================
  * Sync Detector Callback Wrappers
@@ -761,6 +777,17 @@ int main(int argc, char *argv[]) {
     if (g_channel_csv) {
         fprintf(g_channel_csv, "# Phoenix SDR WWV Channel Log v%s\n", PHOENIX_VERSION_FULL);
         fprintf(g_channel_csv, "time,timestamp_ms,carrier_db,snr_db,sub500_db,sub600_db,tone1000_db,noise_db,quality\n");
+    }
+
+    g_subcarrier_csv = fopen("wwv_subcarrier.csv", "w");
+    if (g_subcarrier_csv) {
+        time_t now = time(NULL);
+        char time_str[64];
+        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", localtime(&now));
+        fprintf(g_subcarrier_csv, "# Phoenix SDR WWV Subcarrier Log v%s\n", PHOENIX_VERSION_FULL);
+        fprintf(g_subcarrier_csv, "# Started: %s\n", time_str);
+        fprintf(g_subcarrier_csv, "time,timestamp_ms,minute,expected,sub500_db,sub600_db,delta_db,detected,match\n");
+        fflush(g_subcarrier_csv);
     }
 
     /* Initialize flash system and register detectors */
@@ -1098,6 +1125,30 @@ int main(int argc, char *argv[]) {
                     timestamp_ms, carrier_db, snr_db, sub500_db, sub600_db, tone1000_db, noise_db, quality);
         }
 
+        /* Log subcarrier conditions every ~1 second (12 frames) */
+        if (g_subcarrier_csv && (frame_num % 12) == 0) {
+            time_t now = time(NULL);
+            struct tm *tm_info = localtime(&now);
+            char time_str[16];
+            strftime(time_str, sizeof(time_str), "%H:%M:%S", tm_info);
+            
+            int minute = tm_info->tm_min;
+            const char *expected = wwv_expected_tone(minute);
+            
+            float sub500_db = 20.0f * log10f(g_bucket_energy[2] + 1e-10f);  /* 500 Hz bucket */
+            float sub600_db = 20.0f * log10f(g_bucket_energy[3] + 1e-10f);  /* 600 Hz bucket */
+            float delta_db = sub500_db - sub600_db;
+            
+            const char *detected = (delta_db > 3.0f) ? "500Hz" : (delta_db < -3.0f) ? "600Hz" : "NONE";
+            const char *match = (strcmp(expected, detected) == 0) ? "YES" : 
+                                (strcmp(expected, "NONE") == 0) ? "-" : "NO";
+            
+            fprintf(g_subcarrier_csv, "%s,%.1f,%d,%s,%.1f,%.1f,%.1f,%s,%s\n",
+                    time_str, frame_num * DISPLAY_EFFECTIVE_MS, minute,
+                    expected, sub500_db, sub600_db, delta_db, detected, match);
+            fflush(g_subcarrier_csv);
+        }
+
         /* Draw flash bands on waterfall for all registered detectors */
         flash_draw_waterfall_bands(pixels, 0, WATERFALL_WIDTH, WINDOW_WIDTH, ZOOM_MAX_HZ);
 
@@ -1206,6 +1257,7 @@ int main(int argc, char *argv[]) {
     marker_detector_destroy(g_marker_detector);
     sync_detector_destroy(g_sync_detector);
     if (g_channel_csv) fclose(g_channel_csv);
+    if (g_subcarrier_csv) fclose(g_subcarrier_csv);
 
     if (g_tcp_mode) {
         if (g_iq_sock != SOCKET_INVALID) {

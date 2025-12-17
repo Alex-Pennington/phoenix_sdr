@@ -262,7 +262,7 @@ static int g_iq_buffer_idx = 0;
  * DETECTOR PATH (unchanged from original)
  * Purpose: Feed tick detector with samples optimized for pulse detection
  *----------------------------------------------------------------------------*/
-#define DETECTOR_SAMPLE_RATE    48000       /* 48 kHz for detector */
+#define DETECTOR_SAMPLE_RATE    50000       /* 50 kHz for detector (2MHz/40 = exact) */
 #define DETECTOR_FILTER_CUTOFF  5000.0f     /* 5 kHz lowpass */
 
 /*----------------------------------------------------------------------------

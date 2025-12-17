@@ -30,14 +30,14 @@
 #define HZ_PER_BIN          ((float)MARKER_SAMPLE_RATE / MARKER_FFT_SIZE)
 
 /* Detection thresholds */
-#define MARKER_THRESHOLD_MULT       3.0f    /* Accumulated must be 3x baseline */
-#define MARKER_THRESHOLD_MIN        1200.0f /* Don't trigger below this regardless of baseline */
+#define MARKER_THRESHOLD_MULT       3.0f    /* Accumulated must be 3x baseline (proven in v133) */
 #define MARKER_NOISE_ADAPT_RATE     0.001f  /* Slow baseline adaptation */
 #define MARKER_COOLDOWN_MS          30000.0f /* 30 sec between markers (they're 60 sec apart) */
+#define MARKER_MAX_DURATION_MS      5000.0f /* Max time in IN_MARKER before forced exit (safety) */
 
 /* Warmup */
-#define MARKER_WARMUP_FRAMES        100     /* ~500ms warmup */
-#define MARKER_WARMUP_ADAPT_RATE    0.02f
+#define MARKER_WARMUP_FRAMES        200     /* ~1 second warmup (window is 195 frames) */
+#define MARKER_WARMUP_ADAPT_RATE    0.02f   /* Moderate warmup adaptation */
 #define MARKER_MIN_STARTUP_MS       10000.0f /* No markers in first 10 seconds */
 
 /* Display */
@@ -179,36 +179,33 @@ static void run_state_machine(marker_detector_t *md) {
     /* Update sliding window */
     update_accumulator(md, energy);
 
-    /* Warmup phase */
+    /* Warmup phase - fast adaptation to learn baseline */
     if (!md->warmup_complete) {
         md->baseline_energy += MARKER_WARMUP_ADAPT_RATE * (md->accumulated_energy - md->baseline_energy);
         md->threshold = md->baseline_energy * MARKER_THRESHOLD_MULT;
-        if (md->threshold < MARKER_THRESHOLD_MIN) {
-            md->threshold = MARKER_THRESHOLD_MIN;
-        }
 
         if (frame >= md->start_frame + MARKER_WARMUP_FRAMES) {
             md->warmup_complete = true;
-            printf("[MARKER] Warmup complete. Baseline=%.4f, Thresh=%.4f\n",
-                   md->baseline_energy, md->threshold);
+            printf("[MARKER] Warmup complete. Baseline=%.1f, Thresh=%.1f, Accum=%.1f\n",
+                   md->baseline_energy, md->threshold, md->accumulated_energy);
         }
         return;
     }
 
-    /* No markers in first 10 seconds - baseline still stabilizing */
+    /* No markers in first few seconds - baseline still stabilizing */
     float timestamp_ms = md->frame_count * FRAME_DURATION_MS;
     if (timestamp_ms < MARKER_MIN_STARTUP_MS) {
+        /* Keep adapting baseline during startup */
+        md->baseline_energy += MARKER_NOISE_ADAPT_RATE * (md->accumulated_energy - md->baseline_energy);
+        md->threshold = md->baseline_energy * MARKER_THRESHOLD_MULT;
         return;
     }
 
-    /* Adapt baseline during idle (slow) */
-    if (md->state == STATE_IDLE && md->accumulated_energy < md->threshold) {
+    /* Adapt baseline during idle - ALWAYS adapt, not just when below threshold */
+    if (md->state == STATE_IDLE) {
         md->baseline_energy += MARKER_NOISE_ADAPT_RATE * (md->accumulated_energy - md->baseline_energy);
         if (md->baseline_energy < 0.001f) md->baseline_energy = 0.001f;
         md->threshold = md->baseline_energy * MARKER_THRESHOLD_MULT;
-        if (md->threshold < MARKER_THRESHOLD_MIN) {
-            md->threshold = MARKER_THRESHOLD_MIN;
-        }
     }
 
     /* State machine */
@@ -228,11 +225,14 @@ static void run_state_machine(marker_detector_t *md) {
                 md->marker_peak_energy = md->accumulated_energy;
             }
 
-            if (md->accumulated_energy < md->threshold) {
-                /* Marker ended - check if it was long enough */
-                float duration_ms = md->marker_duration_frames * FRAME_DURATION_MS;
+            /* Check for timeout (prevent getting stuck forever) */
+            float duration_ms = md->marker_duration_frames * FRAME_DURATION_MS;
+            bool timed_out = (duration_ms > MARKER_MAX_DURATION_MS);
 
-                if (duration_ms >= MARKER_MIN_DURATION_MS) {
+            if (md->accumulated_energy < md->threshold || timed_out) {
+                /* Marker ended - check if it was long enough */
+
+                if (duration_ms >= MARKER_MIN_DURATION_MS && duration_ms < MARKER_MAX_DURATION_MS) {
                     /* Valid marker! */
                     md->markers_detected++;
                     md->flash_frames_remaining = MARKER_FLASH_FRAMES;
@@ -273,6 +273,11 @@ static void run_state_machine(marker_detector_t *md) {
                     }
 
                     md->last_marker_frame = md->marker_start_frame;
+                } else if (timed_out) {
+                    /* Timed out - probably false trigger, reset baseline */
+                    printf("[MARKER] Timeout after %.0fms - resetting baseline\n", duration_ms);
+                    md->baseline_energy = md->accumulated_energy;  /* Learn current level */
+                    md->threshold = md->baseline_energy * MARKER_THRESHOLD_MULT;
                 }
 
                 md->state = STATE_COOLDOWN;

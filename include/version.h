@@ -12,13 +12,13 @@
 #define PHOENIX_VERSION_H
 
 #define PHOENIX_VERSION_MAJOR   1
-#define PHOENIX_VERSION_MINOR   0
-#define PHOENIX_VERSION_PATCH   2
-#define PHOENIX_VERSION_BUILD   24
-#define PHOENIX_VERSION_STRING  "1.0.2"
-#define PHOENIX_VERSION_FULL    "1.0.2+24.11e6dd0"
-#define PHOENIX_GIT_COMMIT      "11e6dd0"
-#define PHOENIX_GIT_DIRTY       false
+#define PHOENIX_VERSION_MINOR   1
+#define PHOENIX_VERSION_PATCH   0
+#define PHOENIX_VERSION_BUILD   28
+#define PHOENIX_VERSION_STRING  "1.1.0"
+#define PHOENIX_VERSION_FULL    "1.1.0+28.c29ca7e-dirty"
+#define PHOENIX_GIT_COMMIT      "c29ca7e"
+#define PHOENIX_GIT_DIRTY       true
 
 /* Build timestamp - set by compiler */
 #define PHOENIX_BUILD_DATE      __DATE__

@@ -18,49 +18,49 @@
 
 struct subcarrier_detector {
     bool enabled;
-    
+
     /* Decimation (12 kHz -> 2.4 kHz) */
     int decim_counter;
-    
+
     /* DC blocker state (y[n] = x[n] - x[n-1] + alpha * y[n-1]) */
     float dc_prev_in_i;
     float dc_prev_in_q;
     float dc_prev_out_i;
     float dc_prev_out_q;
-    
+
     /* Goertzel state */
     float goertzel_coeff;       /* 2 * cos(2*pi*k/N) */
     float g_s1_i, g_s2_i;       /* I channel state */
     float g_s1_q, g_s2_q;       /* Q channel state */
     int block_index;            /* Sample counter within block */
-    
+
     /* Envelope tracking */
     float envelope;             /* Smoothed magnitude */
     float envelope_db;
-    
+
     /* Noise floor estimation (ring buffer of recent magnitudes) */
     float mag_history[256];     /* ~2.5 seconds at 100 Hz update */
     int mag_history_idx;
     int mag_history_count;
     float noise_floor;
     float noise_floor_db;
-    
+
     /* Current state */
     float snr_db;
     subcarrier_status_t status;
-    
+
     /* Sideband tracking (for symmetry check) */
     float last_pos_mag;
     float last_neg_mag;
-    
+
     /* Timing */
     uint64_t sample_count;
     uint64_t block_count;
-    
+
     /* Callback */
     subcarrier_callback_fn callback;
     void *user_data;
-    
+
     /* CSV logging */
     FILE *csv_file;
 };
@@ -130,14 +130,14 @@ static float estimate_noise_floor(subcarrier_detector_t *det) {
     if (det->mag_history_count < 10) {
         return 1e-6f;  /* Not enough data yet */
     }
-    
+
     /* Copy and sort (simple insertion sort for small N) */
     float sorted[256];
     int n = det->mag_history_count;
     if (n > 256) n = 256;
-    
+
     memcpy(sorted, det->mag_history, n * sizeof(float));
-    
+
     for (int i = 1; i < n; i++) {
         float key = sorted[i];
         int j = i - 1;
@@ -147,12 +147,12 @@ static float estimate_noise_floor(subcarrier_detector_t *det) {
         }
         sorted[j + 1] = key;
     }
-    
+
     /* Take lower percentile */
     int idx = (n * SUBCARRIER_NOISE_PERCENTILE) / 100;
     if (idx < 0) idx = 0;
     if (idx >= n) idx = n - 1;
-    
+
     return sorted[idx];
 }
 
@@ -163,19 +163,19 @@ static float estimate_noise_floor(subcarrier_detector_t *det) {
 subcarrier_detector_t *subcarrier_detector_create(const char *csv_path) {
     subcarrier_detector_t *det = calloc(1, sizeof(subcarrier_detector_t));
     if (!det) return NULL;
-    
+
     det->enabled = true;
-    
+
     /* Initialize Goertzel coefficient */
     det->goertzel_coeff = goertzel_init_coeff(SUBCARRIER_BLOCK_SIZE,
                                                SUBCARRIER_TARGET_FREQ_HZ,
                                                SUBCARRIER_SAMPLE_RATE);
-    
+
     /* Initialize state */
     det->envelope = 0.0f;
     det->noise_floor = 1e-6f;
     det->status = SUBCARRIER_ABSENT;
-    
+
     /* Open CSV if requested */
     if (csv_path) {
         det->csv_file = fopen(csv_path, "w");
@@ -184,23 +184,23 @@ subcarrier_detector_t *subcarrier_detector_create(const char *csv_path) {
                                    "snr_db,status,pos_mag,neg_mag\n");
         }
     }
-    
+
     printf("[subcarrier_detector] Created: target=%d Hz, block=%d samples (%.1f ms)\n",
            SUBCARRIER_TARGET_FREQ_HZ, SUBCARRIER_BLOCK_SIZE,
            1000.0f * SUBCARRIER_BLOCK_SIZE / SUBCARRIER_SAMPLE_RATE);
     printf("[subcarrier_detector] Goertzel coeff=%.6f, DC alpha=%.4f\n",
            det->goertzel_coeff, SUBCARRIER_DC_ALPHA);
-    
+
     return det;
 }
 
 void subcarrier_detector_destroy(subcarrier_detector_t *det) {
     if (!det) return;
-    
+
     if (det->csv_file) {
         fclose(det->csv_file);
     }
-    
+
     free(det);
 }
 
@@ -218,14 +218,14 @@ void subcarrier_detector_set_callback(subcarrier_detector_t *det,
 void subcarrier_detector_process_sample(subcarrier_detector_t *det,
                                         float i_sample, float q_sample) {
     if (!det || !det->enabled) return;
-    
+
     /* Decimate: keep every 5th sample (12 kHz -> 2.4 kHz) */
     det->decim_counter++;
     if (det->decim_counter < SUBCARRIER_DECIMATION) {
         return;  /* Skip this sample */
     }
     det->decim_counter = 0;
-    
+
     /* Process at 2.4 kHz */
     subcarrier_detector_process_sample_2400(det, i_sample, q_sample);
 }
@@ -236,63 +236,63 @@ void subcarrier_detector_process_sample(subcarrier_detector_t *det,
 void subcarrier_detector_process_sample_2400(subcarrier_detector_t *det,
                                              float i_sample, float q_sample) {
     if (!det || !det->enabled) return;
-    
+
     det->sample_count++;
-    
+
     /* DC blocking */
     float i_blocked = dc_block(i_sample, &det->dc_prev_in_i, &det->dc_prev_out_i,
                                SUBCARRIER_DC_ALPHA);
     float q_blocked = dc_block(q_sample, &det->dc_prev_in_q, &det->dc_prev_out_q,
                                SUBCARRIER_DC_ALPHA);
-    
+
     /* Feed to Goertzel (I and Q channels separately) */
     goertzel_process_sample(i_blocked, det->goertzel_coeff,
                             &det->g_s1_i, &det->g_s2_i);
     goertzel_process_sample(q_blocked, det->goertzel_coeff,
                             &det->g_s1_q, &det->g_s2_q);
-    
+
     det->block_index++;
-    
+
     /* End of block - compute magnitude */
     if (det->block_index >= SUBCARRIER_BLOCK_SIZE) {
         det->block_index = 0;
         det->block_count++;
-        
+
         /* Compute magnitude for I and Q */
         float mag_i = goertzel_magnitude(det->g_s1_i, det->g_s2_i, det->goertzel_coeff);
         float mag_q = goertzel_magnitude(det->g_s1_q, det->g_s2_q, det->goertzel_coeff);
-        
+
         /* Combined magnitude (both sidebands) */
         /* For real signal, I and Q should have similar 100 Hz content */
         float magnitude = sqrtf(mag_i * mag_i + mag_q * mag_q);
-        
+
         /* Track sidebands for balance check */
         det->last_pos_mag = mag_i;
         det->last_neg_mag = mag_q;
-        
+
         /* Reset Goertzel state for next block */
         det->g_s1_i = det->g_s2_i = 0;
         det->g_s1_q = det->g_s2_q = 0;
-        
+
         /* Update magnitude history for noise estimation */
         det->mag_history[det->mag_history_idx] = magnitude;
         det->mag_history_idx = (det->mag_history_idx + 1) % 256;
         if (det->mag_history_count < 256) det->mag_history_count++;
-        
+
         /* Update noise floor estimate (every ~10 blocks) */
         if ((det->block_count % 10) == 0) {
             det->noise_floor = estimate_noise_floor(det);
             det->noise_floor_db = 20.0f * log10f(det->noise_floor + 1e-10f);
         }
-        
+
         /* Smooth envelope */
         det->envelope = SUBCARRIER_ENV_ALPHA * magnitude +
                         (1.0f - SUBCARRIER_ENV_ALPHA) * det->envelope;
         det->envelope_db = 20.0f * log10f(det->envelope + 1e-10f);
-        
+
         /* Calculate SNR */
         det->snr_db = det->envelope_db - det->noise_floor_db;
-        
+
         /* Update status */
         if (det->snr_db < 0) {
             det->status = SUBCARRIER_ABSENT;
@@ -303,7 +303,7 @@ void subcarrier_detector_process_sample_2400(subcarrier_detector_t *det,
         } else {
             det->status = SUBCARRIER_STRONG;
         }
-        
+
         /* Fire callback */
         if (det->callback) {
             subcarrier_frame_t frame = {
@@ -316,7 +316,7 @@ void subcarrier_detector_process_sample_2400(subcarrier_detector_t *det,
             };
             det->callback(&frame, det->user_data);
         }
-        
+
         /* CSV logging */
         if (det->csv_file) {
             fprintf(det->csv_file, "%.1f,%.6f,%.2f,%.2f,%.2f,%d,%.6f,%.6f\n",
@@ -359,10 +359,10 @@ float subcarrier_detector_get_noise_floor_db(subcarrier_detector_t *det) {
 bool subcarrier_detector_get_sideband_balance(subcarrier_detector_t *det,
                                               float *pos_mag, float *neg_mag) {
     if (!det) return false;
-    
+
     if (pos_mag) *pos_mag = det->last_pos_mag;
     if (neg_mag) *neg_mag = det->last_neg_mag;
-    
+
     /* Check if sidebands are within 3 dB of each other */
     float ratio = det->last_pos_mag / (det->last_neg_mag + 1e-10f);
     return (ratio > 0.7f && ratio < 1.4f);
@@ -370,7 +370,7 @@ bool subcarrier_detector_get_sideband_balance(subcarrier_detector_t *det,
 
 void subcarrier_detector_print_stats(subcarrier_detector_t *det) {
     if (!det) return;
-    
+
     const char *status_str;
     switch (det->status) {
         case SUBCARRIER_ABSENT:  status_str = "ABSENT";  break;
@@ -379,7 +379,7 @@ void subcarrier_detector_print_stats(subcarrier_detector_t *det) {
         case SUBCARRIER_STRONG:  status_str = "STRONG";  break;
         default: status_str = "UNKNOWN";
     }
-    
+
     printf("[subcarrier_detector] Status: %s, SNR: %.1f dB, Envelope: %.2f dB, "
            "Noise: %.2f dB, Blocks: %llu\n",
            status_str, det->snr_db, det->envelope_db, det->noise_floor_db,

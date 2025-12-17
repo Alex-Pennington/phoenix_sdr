@@ -57,7 +57,7 @@ void sync_detector_destroy(sync_detector_t *sd);
  * @param duration_ms Duration of the pulse (should be ~800ms)
  * @param corr_ratio Correlation ratio from tick detector
  */
-void sync_detector_tick_marker(sync_detector_t *sd, float timestamp_ms, 
+void sync_detector_tick_marker(sync_detector_t *sd, float timestamp_ms,
                                 float duration_ms, float corr_ratio);
 
 /**

@@ -551,7 +551,7 @@ static void on_slow_marker_frame(const slow_marker_frame_t *frame, void *user_da
 
     /* DISABLED: External baseline from slow marker doesn't work - different FFT configs
     * Slow marker: 12kHz/2048-pt FFT (5.86 Hz/bin)
-    * Fast marker: 50kHz/256-pt FFT (195 Hz/bin)  
+    * Fast marker: 50kHz/256-pt FFT (195 Hz/bin)
     * The noise_floor values have incompatible scaling.
     * Self-tracking baseline works correctly (proven in v133).
     *
@@ -846,7 +846,7 @@ int main(int argc, char *argv[]) {
      * See analysis from overnight 12/17/2025 run: 5 hours, 0 detections, stuck in
      * IN_MARKER->COOLDOWN cycle due to baseline=2.5 vs accumulated=1800.
      * Self-tracking baseline works correctly (proven in v133).
-     * 
+     *
      * The external baseline API has been removed from marker_detector.c entirely.
      */
 

@@ -23,6 +23,7 @@
 #include <SDL.h>
 #include "kiss_fft.h"
 #include "version.h"
+/* wwv_detector_manager.h available for future refactoring - see note below */
 #include "tick_detector.h"
 #include "marker_detector.h"
 #include "sync_detector.h"
@@ -502,7 +503,14 @@ static void print_usage(const char *progname) {
 }
 
 /*============================================================================
- * Tick Detector Module
+ * WWV Detector Instances
+ *
+ * NOTE: wwv_detector_manager.c/.h provides a cleaner abstraction that
+ * encapsulates all detector orchestration. However, migrating to it
+ * requires updating the flash system and UI code that directly access
+ * detector state. For now, we keep direct detector ownership here.
+ *
+ * See wwv_detector_manager.h for the recommended architecture.
  *============================================================================*/
 
 static tick_detector_t *g_tick_detector = NULL;

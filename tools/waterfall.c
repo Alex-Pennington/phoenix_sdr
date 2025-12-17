@@ -861,7 +861,7 @@ int main(int argc, char *argv[]) {
     slow_marker_detector_set_callback(g_slow_marker, on_slow_marker_frame, NULL);
 
     /* Create subcarrier detector (100 Hz BCD) */
-    g_subcarrier_detector = subcarrier_detector_create("wwv_subcarrier.csv");
+    g_subcarrier_detector = subcarrier_detector_create("wwv_bcd.csv");
     if (!g_subcarrier_detector) {
         fprintf(stderr, "Failed to create subcarrier detector\n");
     }
@@ -1326,7 +1326,7 @@ int main(int argc, char *argv[]) {
                 float envelope = subcarrier_detector_get_envelope(g_subcarrier_detector);
                 float noise = subcarrier_detector_get_noise_floor_db(g_subcarrier_detector);
                 subcarrier_status_t status = subcarrier_detector_get_status(g_subcarrier_detector);
-                
+
                 const char *status_str;
                 switch (status) {
                     case SUBCARRIER_ABSENT:  status_str = "ABSENT";  break;
@@ -1335,7 +1335,7 @@ int main(int argc, char *argv[]) {
                     case SUBCARRIER_STRONG:  status_str = "STRONG";  break;
                     default: status_str = "UNKNOWN";
                 }
-                
+
                 telem_sendf(TELEM_BCD100, "%s,%.1f,%.6f,%.2f,%.2f,%s",
                             time_str, timestamp_ms,
                             envelope, snr, noise, status_str);

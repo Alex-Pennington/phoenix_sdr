@@ -209,6 +209,10 @@ SYNC,14:33:00,145320.0,3,LOCKED,2,60.0,12,5.1,823.5,145320.0
 
 ---
 
+### BCD1 - 100 Hz BCD Subcarrier DetectorBroadcast every ~1 second (or as configured). Reports the 100 Hz subcarrier envelope and SNR for BCD time code decoding.**Format:**  `BCD1,time,timestamp_ms,envelope,snr_db,noise_floor_db,status\n`| Field           | Type   | Description                                   ||-----------------|--------|-----------------------------------------------|| `time`          | string | Wall clock time `HH:MM:SS`                    || `timestamp_ms`  | float  | Milliseconds since waterfall start            || `envelope`      | float  | Detected 100 Hz envelope (linear)             || `snr_db`        | float  | SNR of 100 Hz subcarrier (dB)                 || `noise_floor_db`| float  | Estimated noise floor (dB)                    || `status`        | string | Detector status: `ABSENT`, `WEAK`, `PRESENT`, `STRONG` |**Example:**
+BCD1,14:32:15,85320.0,0.002345,18.7,-56.2,PRESENT
+
+---
 ## Reserved Channels (Not Yet Implemented)
 
 | Prefix | Channel Enum | Description |

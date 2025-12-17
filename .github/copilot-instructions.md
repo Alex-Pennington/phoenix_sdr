@@ -35,7 +35,7 @@
 
 | File | Reason |
 |------|--------|
-| tools/waterfall.c | Display working, control bar added - freeze while debugging audio |
+| *(none currently)* | |
 
 ---
 

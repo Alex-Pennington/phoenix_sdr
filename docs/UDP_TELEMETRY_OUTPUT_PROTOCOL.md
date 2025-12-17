@@ -175,24 +175,36 @@ MARK,14:33:00,145320.0,M3,0,MINUTE_MARKER,0.045623,823.5,60.02,0.000123,0.001234
 
 ### SYNC - Synchronization State
 
-Broadcast when sync state changes or markers are confirmed.
+Broadcast when sync state changes, markers are confirmed, or on startup.
 
-**Format:** `SYNC,time,timestamp_ms,marker_num,state,interval_sec,delta_ms,tick_dur_ms,marker_dur_ms\n`
+**Format:** `SYNC,time,timestamp_ms,marker_num,state,good_intervals,interval_sec,delta_ms,tick_dur_ms,marker_dur_ms,last_confirmed_ms\n`
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `time` | string | Wall clock time `HH:MM:SS` |
 | `timestamp_ms` | float | Milliseconds since waterfall start |
 | `marker_num` | int | Confirmed marker count |
-| `state` | string | Sync state: `SEARCHING`, `ACQUIRING`, `LOCKED` |
+| `state` | string | Sync state: `ACQUIRING`, `TENTATIVE`, `LOCKED` |
+| `good_intervals` | int | Count of valid ~60s intervals (confidence indicator) |
 | `interval_sec` | float | Interval between markers (seconds) |
 | `delta_ms` | float | Timing error (ms) from expected |
 | `tick_dur_ms` | float | Last tick pulse duration (ms) |
 | `marker_dur_ms` | float | Last marker pulse duration (ms) |
+| `last_confirmed_ms` | float | Timestamp of last confirmed marker (ms) |
 
-**Example:**
+**Sync States:**
+- `ACQUIRING` - No confirmed markers yet (initial state)
+- `TENTATIVE` - 1 confirmed marker, waiting for confirmation
+- `LOCKED` - 2+ markers with valid ~60s intervals
+
+**Example (startup):**
 ```
-SYNC,14:33:00,145320.0,3,LOCKED,60.0,12,5.1,823.5
+SYNC,14:30:00,0.0,0,ACQUIRING,0,0.0,0,0.0,0.0,0.0
+```
+
+**Example (locked):**
+```
+SYNC,14:33:00,145320.0,3,LOCKED,2,60.0,12,5.1,823.5,145320.0
 ```
 
 ---

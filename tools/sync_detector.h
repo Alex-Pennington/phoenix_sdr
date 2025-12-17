@@ -100,4 +100,15 @@ int sync_detector_get_flash_frames(sync_detector_t *sd);
  */
 void sync_detector_decrement_flash(sync_detector_t *sd);
 
+/**
+ * Broadcast current sync state via UDP telemetry
+ * Call on startup and whenever state needs to be reported
+ */
+void sync_detector_broadcast_state(sync_detector_t *sd);
+
+/**
+ * Get count of good (~60s) intervals for lock confidence
+ */
+int sync_detector_get_good_intervals(sync_detector_t *sd);
+
 #endif /* SYNC_DETECTOR_H */

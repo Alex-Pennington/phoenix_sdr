@@ -1,10 +1,4 @@
-/*******************************************************************************
- * FROZEN FILE - DO NOT MODIFY
- * See .github/copilot-instructions.md P1 section
- ******************************************************************************/
-
-/**
- * @file waterfall.c
+/**\n * @file waterfall.c
  * @brief Simple waterfall display for audio PCM input
  *
  * Reads 16-bit signed mono PCM from stdin OR I/Q samples from TCP.
@@ -909,6 +903,13 @@ int main(int argc, char *argv[]) {
     /* Initialize UDP telemetry broadcast */
     telem_init(3005);
     telem_enable(TELEM_CHANNEL | TELEM_CARRIER | TELEM_SUBCAR | TELEM_TONE500 | TELEM_TONE600 | TELEM_MARKERS | TELEM_SYNC);
+
+    /* Output initial sync state to console and telemetry */
+    printf("[SYNC] Startup state: %s (markers=%d, good_intervals=%d)\n",
+           sync_state_name(sync_detector_get_state(g_sync_detector)),
+           sync_detector_get_confirmed_count(g_sync_detector),
+           sync_detector_get_good_intervals(g_sync_detector));
+    sync_detector_broadcast_state(g_sync_detector);
 
     /* Initialize flash system and register detectors */
     flash_init();

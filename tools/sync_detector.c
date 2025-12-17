@@ -90,12 +90,13 @@ static void log_confirmed_marker(sync_detector_t *sd, float timestamp_ms,
             sd->pending_marker_duration_ms);
     fflush(sd->csv_file);
 
-    /* UDP telemetry broadcast */
-    telem_sendf(TELEM_SYNC, "%s,%.1f,%d,%s,%.1f,%.0f,%.1f,%.1f",
+    /* UDP telemetry broadcast - expanded format */
+    telem_sendf(TELEM_SYNC, "%s,%.1f,%d,%s,%d,%.1f,%.0f,%.1f,%.1f,%.1f",
                 time_str, timestamp_ms, sd->confirmed_count,
-                sync_state_name(sd->state), interval_ms / 1000.0f,
-                delta_ms, sd->pending_tick_duration_ms,
-                sd->pending_marker_duration_ms);
+                sync_state_name(sd->state), sd->good_intervals,
+                interval_ms / 1000.0f, delta_ms,
+                sd->pending_tick_duration_ms, sd->pending_marker_duration_ms,
+                sd->last_confirmed_ms);
 }
 
 static void confirm_marker(sync_detector_t *sd, float marker_time, float delta_ms, const char *source) {
@@ -300,4 +301,30 @@ void sync_detector_decrement_flash(sync_detector_t *sd) {
     if (sd && sd->flash_frames_remaining > 0) {
         sd->flash_frames_remaining--;
     }
+}
+
+int sync_detector_get_good_intervals(sync_detector_t *sd) {
+    return sd ? sd->good_intervals : 0;
+}
+
+void sync_detector_broadcast_state(sync_detector_t *sd) {
+    if (!sd) return;
+
+    char time_str[16];
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    strftime(time_str, sizeof(time_str), "%H:%M:%S", tm_info);
+
+    /* Broadcast current state - use 0 for interval/delta when no history */
+    float interval_sec = 0.0f;
+    if (sd->prev_confirmed_ms > 0 && sd->last_confirmed_ms > 0) {
+        interval_sec = (sd->last_confirmed_ms - sd->prev_confirmed_ms) / 1000.0f;
+    }
+
+    telem_sendf(TELEM_SYNC, "%s,%.1f,%d,%s,%d,%.1f,0,%.1f,%.1f,%.1f",
+                time_str, sd->last_confirmed_ms, sd->confirmed_count,
+                sync_state_name(sd->state), sd->good_intervals,
+                interval_sec,
+                sd->pending_tick_duration_ms, sd->pending_marker_duration_ms,
+                sd->last_confirmed_ms);
 }

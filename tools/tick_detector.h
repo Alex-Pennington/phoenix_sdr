@@ -27,10 +27,10 @@ extern "C" {
  * Configuration - Tune these for the target signal
  *============================================================================*/
 
-#define TICK_FFT_SIZE           256     /* 5.3ms frames at 48kHz - matches 5ms WWV pulse */
-#define TICK_SAMPLE_RATE        48000   /* Expected input sample rate */
-#define TICK_TARGET_FREQ_HZ     1000    /* Frequency bucket to watch */
-#define TICK_BANDWIDTH_HZ       100     /* Width of detection bucket */
+#define TICK_FFT_SIZE           256     /* 5.12ms frames at 50kHz - matches 5ms WWV pulse */
+#define TICK_SAMPLE_RATE        50000   /* Expected input sample rate (2MHz/40 = exact) */
+#define TICK_TARGET_FREQ_HZ     0       /* DC - carrier amplitude (not 1000 Hz tone!) */
+#define TICK_BANDWIDTH_HZ       250     /* Sinc main lobe: ±200 Hz, plus margin */
 
 /* Matched filter template */
 #define TICK_PULSE_MS           5.0f    /* WWV tick pulse duration */
@@ -55,6 +55,8 @@ typedef struct {
     float peak_energy;
     float avg_interval_ms;
     float noise_floor;
+    float corr_peak;
+    float corr_ratio;
 } tick_event_t;
 
 typedef void (*tick_callback_fn)(const tick_event_t *event, void *user_data);

@@ -24,7 +24,7 @@ extern "C" {
  * Configuration - Tune these for minute marker signal
  *============================================================================*/
 
-#define MARKER_SAMPLE_RATE      48000       /* Expected input sample rate */
+#define MARKER_SAMPLE_RATE      50000       /* Expected input sample rate (2MHz/40 = exact) */
 #define MARKER_TARGET_FREQ_HZ   1000        /* Frequency bucket to watch */
 #define MARKER_BANDWIDTH_HZ     200         /* Width of detection bucket (wider than tick) */
 
@@ -35,8 +35,8 @@ extern "C" {
 
 /* FFT configuration - shared with tick detector rate */
 #define MARKER_FFT_SIZE         256         /* Same as tick detector */
-#define MARKER_FRAME_MS         ((float)MARKER_FFT_SIZE * 1000.0f / MARKER_SAMPLE_RATE)  /* 5.33ms */
-#define MARKER_WINDOW_FRAMES    ((int)(MARKER_WINDOW_MS / MARKER_FRAME_MS))  /* ~188 frames */
+#define MARKER_FRAME_MS         ((float)MARKER_FFT_SIZE * 1000.0f / MARKER_SAMPLE_RATE)  /* 5.12ms */
+#define MARKER_WINDOW_FRAMES    ((int)(MARKER_WINDOW_MS / MARKER_FRAME_MS))  /* ~195 frames */
 
 /*============================================================================
  * Detector State (opaque to caller)

@@ -27,6 +27,7 @@
 #include "marker_detector.h"
 #include "sync_detector.h"
 #include "tone_tracker.h"
+#include "tick_correlator.h"
 #include "waterfall_flash.h"
 
 /*============================================================================
@@ -510,6 +511,7 @@ static FILE *g_subcarrier_csv = NULL;
 static tone_tracker_t *g_tone_carrier = NULL;
 static tone_tracker_t *g_tone_500 = NULL;
 static tone_tracker_t *g_tone_600 = NULL;
+static tick_correlator_t *g_tick_correlator = NULL;
 
 /*============================================================================
  * Sync Detector Callback Wrappers
@@ -528,6 +530,34 @@ static void on_marker_event(const marker_event_t *event, void *user_data) {
     if (g_sync_detector) {
         sync_detector_marker_event(g_sync_detector, event->timestamp_ms,
                                     event->accumulated_energy, event->duration_ms);
+    }
+}
+
+/*============================================================================
+ * Tick Correlator Callback
+ *============================================================================*/
+
+static void on_tick_event(const tick_event_t *event, void *user_data) {
+    (void)user_data;
+    if (g_tick_correlator) {
+        /* Get wall clock time string */
+        time_t now = time(NULL);
+        struct tm *tm_info = localtime(&now);
+        char time_str[16];
+        strftime(time_str, sizeof(time_str), "%H:%M:%S", tm_info);
+        
+        tick_correlator_add_tick(g_tick_correlator,
+                                  time_str,
+                                  event->timestamp_ms,
+                                  event->tick_number,
+                                  "TICK",  /* TODO: get from wwv_clock */
+                                  event->peak_energy,
+                                  event->duration_ms,
+                                  event->interval_ms,
+                                  event->avg_interval_ms,
+                                  event->noise_floor,
+                                  event->corr_peak,
+                                  event->corr_ratio);
     }
 }
 
@@ -775,7 +805,11 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     tick_detector_set_marker_callback(g_tick_detector, on_tick_marker, NULL);
+    tick_detector_set_callback(g_tick_detector, on_tick_event, NULL);
     marker_detector_set_callback(g_marker_detector, on_marker_event, NULL);
+
+    /* Create tick correlator */
+    g_tick_correlator = tick_correlator_create("wwv_tick_corr.csv");
 
     g_channel_csv = fopen("wwv_channel.csv", "w");
     if (g_channel_csv) {
@@ -1273,9 +1307,11 @@ int main(int argc, char *argv[]) {
     printf("\n");
     tick_detector_print_stats(g_tick_detector);
     marker_detector_print_stats(g_marker_detector);
+    tick_correlator_print_stats(g_tick_correlator);
     tick_detector_destroy(g_tick_detector);
     marker_detector_destroy(g_marker_detector);
     sync_detector_destroy(g_sync_detector);
+    tick_correlator_destroy(g_tick_correlator);
     tone_tracker_destroy(g_tone_carrier);
     tone_tracker_destroy(g_tone_500);
     tone_tracker_destroy(g_tone_600);

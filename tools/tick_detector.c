@@ -37,7 +37,6 @@
 #define TICK_MAX_DURATION_MS    50.0f
 #define MARKER_MAX_DURATION_MS  1000.0f  /* Allow up to 1s for minute markers */
 #define TICK_COOLDOWN_MS        500.0f
-#define TICK_MIN_INTERVAL_MS    800.0f   /* Reject ticks closer than this */
 
 /* Threshold adaptation */
 #define TICK_NOISE_ADAPT_DOWN   0.002f   /* Fast attack when signal drops */
@@ -158,16 +157,25 @@ struct tick_detector {
  *============================================================================*/
 
 /**
- * Generate matched filter template: windowed 1000Hz tone
+ * Sinc function: sin(pi*x)/(pi*x), returns 1 for x=0
+ */
+static float sinc(float x) {
+    if (fabsf(x) < 1e-6f) return 1.0f;
+    float pix = M_PI * x;
+    return sinf(pix) / pix;
+}
+
+/**
+ * Generate matched filter template: rectangular pulse envelope (not a tone!)
+ * The tick is a 5ms AM pulse - carrier amplitude increase, not a specific frequency.
  */
 static void generate_template(tick_detector_t *td) {
     for (int i = 0; i < TICK_TEMPLATE_SAMPLES; i++) {
-        float t = (float)i / TICK_SAMPLE_RATE;
         /* Hann window for smooth edges */
         float window = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (TICK_TEMPLATE_SAMPLES - 1)));
-        /* Complex tone at target frequency */
-        td->template_i[i] = cosf(2.0f * M_PI * TICK_TARGET_FREQ_HZ * t) * window;
-        td->template_q[i] = sinf(2.0f * M_PI * TICK_TARGET_FREQ_HZ * t) * window;
+        /* DC template - detects amplitude envelope, not frequency */
+        td->template_i[i] = window;  /* Real part = envelope shape */
+        td->template_q[i] = 0.0f;    /* No imaginary component for DC */
     }
 }
 
@@ -197,31 +205,61 @@ static float compute_correlation(tick_detector_t *td) {
     return sqrtf(sum_i * sum_i + sum_q * sum_q);
 }
 
+/**
+ * Calculate sinc-weighted energy around DC (carrier amplitude)
+ * 
+ * The 5ms rectangular tick pulse has a sinc spectrum:
+ *   sinc(f * T) where T = 5ms = 0.005s
+ *   Main lobe: ±200 Hz (first nulls at ±200 Hz)
+ *   Sidelobes at ±300, ±500, etc.
+ *
+ * We weight FFT bins by the expected sinc shape to maximize SNR.
+ */
 static float calculate_bucket_energy(tick_detector_t *td) {
-    int center_bin = (int)(TICK_TARGET_FREQ_HZ / HZ_PER_BIN + 0.5f);
-    int bin_span = (int)(TICK_BANDWIDTH_HZ / HZ_PER_BIN + 0.5f);
-    if (bin_span < 1) bin_span = 1;
-
-    float pos_energy = 0.0f;
-    float neg_energy = 0.0f;
-
-    for (int b = -bin_span; b <= bin_span; b++) {
-        int pos_bin = center_bin + b;
-        int neg_bin = TICK_FFT_SIZE - center_bin + b;
-
-        if (pos_bin >= 0 && pos_bin < TICK_FFT_SIZE) {
-            float re = td->fft_out[pos_bin].r;
-            float im = td->fft_out[pos_bin].i;
-            pos_energy += sqrtf(re * re + im * im) / TICK_FFT_SIZE;
-        }
-        if (neg_bin >= 0 && neg_bin < TICK_FFT_SIZE) {
-            float re = td->fft_out[neg_bin].r;
-            float im = td->fft_out[neg_bin].i;
-            neg_energy += sqrtf(re * re + im * im) / TICK_FFT_SIZE;
+    float total_energy = 0.0f;
+    float total_weight = 0.0f;
+    
+    /* How many bins to examine (±bandwidth around DC) */
+    int max_bin = (int)(TICK_BANDWIDTH_HZ / HZ_PER_BIN + 0.5f);
+    if (max_bin < 1) max_bin = 1;
+    if (max_bin > TICK_FFT_SIZE / 2) max_bin = TICK_FFT_SIZE / 2;
+    
+    /* Pulse duration in seconds for sinc calculation */
+    const float pulse_T = TICK_PULSE_MS / 1000.0f;  /* 0.005s */
+    
+    for (int b = 0; b <= max_bin; b++) {
+        /* Positive frequency bin */
+        float freq = b * HZ_PER_BIN;
+        float weight = fabsf(sinc(freq * pulse_T));  /* |sinc(f*T)| */
+        
+        /* Get magnitude from FFT */
+        float re = td->fft_out[b].r;
+        float im = td->fft_out[b].i;
+        float mag = sqrtf(re * re + im * im) / TICK_FFT_SIZE;
+        
+        /* DC bin (b=0) counts once, others have negative frequency mirror */
+        if (b == 0) {
+            total_energy += mag * weight;
+            total_weight += weight;
+        } else {
+            /* Positive frequency */
+            total_energy += mag * weight;
+            total_weight += weight;
+            
+            /* Negative frequency (mirror in FFT) */
+            int neg_bin = TICK_FFT_SIZE - b;
+            if (neg_bin > 0 && neg_bin < TICK_FFT_SIZE) {
+                re = td->fft_out[neg_bin].r;
+                im = td->fft_out[neg_bin].i;
+                mag = sqrtf(re * re + im * im) / TICK_FFT_SIZE;
+                total_energy += mag * weight;
+                total_weight += weight;
+            }
         }
     }
-
-    return pos_energy + neg_energy;
+    
+    /* Return weighted average (normalized) */
+    return (total_weight > 0.0f) ? (total_energy / total_weight) : 0.0f;
 }
 
 static float calculate_avg_interval(tick_detector_t *td, float current_time_ms) {
@@ -313,12 +351,11 @@ static void run_state_machine(tick_detector_t *td) {
                 /* Signal dropped - classify based on duration */
                 float duration_ms = td->tick_duration_frames * FRAME_DURATION_MS;
                 float interval_ms = (td->last_tick_frame > 0) ?
-                    (td->tick_start_frame - td->last_tick_frame) * FRAME_DURATION_MS : TICK_MIN_INTERVAL_MS + 1.0f;
+                    (td->tick_start_frame - td->last_tick_frame) * FRAME_DURATION_MS : 0.0f;
                 float timestamp_ms = frame * FRAME_DURATION_MS;
                 float corr_ratio = (td->corr_noise_floor > 0.001f) ?
                     td->corr_peak / td->corr_noise_floor : 0.0f;
 
-                bool valid_interval = (interval_ms >= TICK_MIN_INTERVAL_MS);
                 bool valid_correlation = (td->corr_peak > td->corr_noise_floor * CORR_THRESHOLD_MULT);
 
                 /* Check for minute marker first (600-900ms duration, 55+ seconds since last) */
@@ -373,7 +410,7 @@ static void run_state_machine(tick_detector_t *td) {
 
                 } else if (duration_ms >= TICK_MIN_DURATION_MS &&
                            duration_ms <= TICK_MAX_DURATION_MS &&
-                           valid_interval && valid_correlation) {
+                           valid_correlation) {
                     /* Normal tick */
                     td->ticks_detected++;
                     td->flash_frames_remaining = TICK_FLASH_FRAMES;
@@ -417,7 +454,9 @@ static void run_state_machine(tick_detector_t *td) {
                             .duration_ms = duration_ms,
                             .peak_energy = td->tick_peak_energy,
                             .avg_interval_ms = avg_interval_ms,
-                            .noise_floor = td->noise_floor
+                            .noise_floor = td->noise_floor,
+                            .corr_peak = td->corr_peak,
+                            .corr_ratio = corr_ratio
                         };
                         td->callback(&event, td->callback_user_data);
                     }
@@ -534,8 +573,8 @@ tick_detector_t *tick_detector_create(const char *csv_path) {
 
     printf("[TICK] Detector created: FFT=%d (%.1fms), matched filter=%d samples (%.1fms)\n",
            TICK_FFT_SIZE, FRAME_DURATION_MS, TICK_TEMPLATE_SAMPLES, TICK_PULSE_MS);
-    printf("[TICK] Target: %dHz ±%dHz, logging to %s\n",
-           TICK_TARGET_FREQ_HZ, TICK_BANDWIDTH_HZ, csv_path ? csv_path : "(disabled)");
+    printf("[TICK] Sinc-weighted DC detection, BW=±%dHz, logging to %s\n",
+           TICK_BANDWIDTH_HZ, csv_path ? csv_path : "(disabled)");
 
     return td;
 }
@@ -684,7 +723,7 @@ void tick_detector_print_stats(tick_detector_t *td) {
 
     printf("\n=== TICK DETECTOR STATS ===\n");
     printf("FFT: %d (%.1fms), Matched filter: %d samples\n", TICK_FFT_SIZE, FRAME_DURATION_MS, TICK_TEMPLATE_SAMPLES);
-    printf("Target: %d Hz +/-%d Hz\n", TICK_TARGET_FREQ_HZ, TICK_BANDWIDTH_HZ);
+    printf("Sinc-weighted DC detection, BW=±%d Hz\n", TICK_BANDWIDTH_HZ);
     printf("Elapsed: %.1fs  Detected: %d  Expected: %d  Rate: %.1f%%\n",
            elapsed, td->ticks_detected, expected, rate);
     printf("Markers: %d  Rejected: %d  Avg interval: %.0fms\n",

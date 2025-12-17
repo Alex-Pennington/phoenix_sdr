@@ -1112,11 +1112,11 @@ int main(int argc, char *argv[]) {
     if (g_log_to_file) {
         char log_filename[512];
         char exe_dir[512];
-        
+
         /* Get directory of the executable */
         strncpy(exe_dir, argv[0], sizeof(exe_dir) - 1);
         exe_dir[sizeof(exe_dir) - 1] = '\0';
-        
+
         /* Find last path separator and truncate to get directory */
         char *last_sep = strrchr(exe_dir, '\\');
         if (!last_sep) last_sep = strrchr(exe_dir, '/');
@@ -1127,7 +1127,7 @@ int main(int argc, char *argv[]) {
             /* No path separator, use current directory */
             snprintf(log_filename, sizeof(log_filename), "sdr_server_%s.log", PHOENIX_VERSION_STRING);
         }
-        
+
         if (freopen(log_filename, "w", stdout) == NULL) {
             fprintf(stderr, "Failed to open log file: %s\n", log_filename);
             return 1;
@@ -1142,7 +1142,7 @@ int main(int argc, char *argv[]) {
         if (!init_tray_icon()) {
             fprintf(stderr, "Warning: Failed to create system tray icon\n");
         }
-        
+
         /* Hide the console window - tray icon is now visible */
         HWND console = GetConsoleWindow();
         if (console) {

@@ -47,7 +47,7 @@
 #define TICK_THRESHOLD_MULT     2.0f
 
 /* Correlation thresholds */
-#define CORR_THRESHOLD_MULT     3.0f    /* Correlation must be 3x noise floor */
+#define CORR_THRESHOLD_MULT     10.0f   /* Correlation must be 10x noise floor (was 3, too low) */
 #define CORR_NOISE_ADAPT        0.01f   /* Noise floor adaptation rate */
 #define CORR_DECIMATION         8       /* Compute correlation every N samples */
 #define MARKER_CORR_RATIO       80.0f   /* Corr ratio above this = minute marker (was 40, too low) */

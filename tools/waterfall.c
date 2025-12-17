@@ -546,7 +546,7 @@ static void on_tick_event(const tick_event_t *event, void *user_data) {
         struct tm *tm_info = localtime(&now);
         char time_str[16];
         strftime(time_str, sizeof(time_str), "%H:%M:%S", tm_info);
-        
+
         tick_correlator_add_tick(g_tick_correlator,
                                   time_str,
                                   event->timestamp_ms,

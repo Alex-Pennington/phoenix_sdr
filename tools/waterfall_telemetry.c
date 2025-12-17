@@ -108,7 +108,7 @@ bool telem_init(int port) {
 
     /* Enable broadcast */
     int broadcast = 1;
-    if (setsockopt(g_sock, SOL_SOCKET, SO_BROADCAST, 
+    if (setsockopt(g_sock, SOL_SOCKET, SO_BROADCAST,
                    (const char *)&broadcast, sizeof(broadcast)) < 0) {
         fprintf(stderr, "[TELEM] Failed to enable broadcast\n");
         socket_close(g_sock);
@@ -151,7 +151,7 @@ void telem_cleanup(void) {
     g_enabled_channels = TELEM_NONE;
     g_initialized = false;
 
-    printf("[TELEM] Cleanup complete. Sent: %u, Dropped: %u\n", 
+    printf("[TELEM] Cleanup complete. Sent: %u, Dropped: %u\n",
            g_stats_sent, g_stats_dropped);
 }
 
@@ -201,7 +201,7 @@ void telem_send(telem_channel_t channel, const char *csv_line) {
     /* Format message with prefix */
     char buffer[TELEM_MAX_MESSAGE_LEN];
     const char *prefix = telem_channel_prefix(channel);
-    
+
     /* Check if csv_line already has newline */
     size_t len = strlen(csv_line);
     bool has_newline = (len > 0 && csv_line[len - 1] == '\n');
@@ -221,7 +221,7 @@ void telem_send(telem_channel_t channel, const char *csv_line) {
     /* Send (non-blocking, ignore errors) */
     sendto(g_sock, buffer, written, 0,
            (struct sockaddr *)&g_broadcast_addr, sizeof(g_broadcast_addr));
-    
+
     g_stats_sent++;
 }
 

@@ -96,10 +96,10 @@ bool telem_is_enabled(telem_channel_t channel);
 
 /**
  * Send telemetry message (non-blocking, fire-and-forget)
- * 
+ *
  * Message is only sent if the channel is enabled.
  * Format: "PREFIX,csv_data\n"
- * 
+ *
  * @param channel   Which channel this data belongs to
  * @param csv_line  CSV-formatted data (without prefix, with or without newline)
  */

@@ -3,10 +3,13 @@
  * @brief WWV minute marker detector module
  *
  * Detects 800ms pulses at 1000Hz that occur at second 0 of each minute.
- * Uses sliding window accumulator to detect sustained energy.
+ * Uses sliding window accumulator with self-tracking baseline.
  *
- * Pattern: Cookie-cutter detector following tick_detector.h template.
- * Each detector has own configuration, buffers, state machine, and logging.
+ * DESIGN NOTES:
+ *   - Self-contained detector with own FFT (50kHz, 256-pt)
+ *   - Self-tracking baseline adapts slowly during IDLE state
+ *   - Do NOT inject external baselines - incompatible scaling between FFT paths
+ *   - Proven reliable in v133 testing
  */
 
 #ifndef MARKER_DETECTOR_H
@@ -24,22 +27,22 @@ extern "C" {
  * Configuration - Tune these for minute marker signal
  *============================================================================*/
 
-#define MARKER_SAMPLE_RATE      50000       /* Expected input sample rate (2MHz/40 = exact) */
+#define MARKER_SAMPLE_RATE      50000       /* Input sample rate (2MHz/40) */
 #define MARKER_TARGET_FREQ_HZ   1000        /* Frequency bucket to watch */
-#define MARKER_BANDWIDTH_HZ     200         /* Width of detection bucket (wider than tick) */
+#define MARKER_BANDWIDTH_HZ     200         /* Width of detection bucket */
 
 /* Sliding window for 800ms pulse detection */
 #define MARKER_WINDOW_MS        1000.0f     /* 1 second window to catch 800ms pulse */
 #define MARKER_PULSE_MS         800.0f      /* Expected marker duration */
 #define MARKER_MIN_DURATION_MS  500.0f      /* Minimum to count as marker */
 
-/* FFT configuration - shared with tick detector rate */
-#define MARKER_FFT_SIZE         256         /* Same as tick detector */
+/* FFT configuration */
+#define MARKER_FFT_SIZE         256
 #define MARKER_FRAME_MS         ((float)MARKER_FFT_SIZE * 1000.0f / MARKER_SAMPLE_RATE)  /* 5.12ms */
 #define MARKER_WINDOW_FRAMES    ((int)(MARKER_WINDOW_MS / MARKER_FRAME_MS))  /* ~195 frames */
 
 /*============================================================================
- * Detector State (opaque to caller)
+ * Detector State (opaque)
  *============================================================================*/
 
 typedef struct marker_detector marker_detector_t;
@@ -82,20 +85,14 @@ void marker_detector_set_callback(marker_detector_t *md, marker_callback_fn call
 
 /**
  * Feed I/Q samples to detector
- * Detector buffers internally and runs FFT when ready
  * @return true if a marker was detected this sample
  */
 bool marker_detector_process_sample(marker_detector_t *md, float i_sample, float q_sample);
 
 /**
- * Check if detector is flashing (for UI display)
- * @return Frames remaining in flash, 0 if not flashing
+ * UI flash state
  */
 int marker_detector_get_flash_frames(marker_detector_t *md);
-
-/**
- * Decrement flash counter (call once per display frame)
- */
 void marker_detector_decrement_flash(marker_detector_t *md);
 
 /**
@@ -118,43 +115,17 @@ int marker_detector_get_marker_count(marker_detector_t *md);
 void marker_detector_print_stats(marker_detector_t *md);
 
 /**
- * Log a metadata change to CSV (gain, frequency, etc.)
+ * Log metadata to CSV
  */
 void marker_detector_log_metadata(marker_detector_t *md, uint64_t center_freq,
                                   uint32_t sample_rate, uint32_t gain_reduction,
                                   uint32_t lna_state);
-
-/**
- * Log display gain adjustment to CSV
- */
 void marker_detector_log_display_gain(marker_detector_t *md, float display_gain);
 
 /**
- * Get timing info for display
+ * Get timing info
  */
 float marker_detector_get_frame_duration_ms(void);
-
-/**
- * Set external noise floor from slow path
- * When set, fast path stops tracking its own baseline
- */
-void marker_detector_set_external_baseline(marker_detector_t *md, float baseline);
-
-/**
- * Clear external baseline, resume self-tracking
- */
-void marker_detector_clear_external_baseline(marker_detector_t *md);
-
-/**
- * Enable/disable fast-path subcarrier noise baseline
- * Uses 500/600 Hz buckets from same FFT (same units, no scaling issues)
- */
-void marker_detector_set_subcarrier_baseline(marker_detector_t *md, bool enabled);
-
-/**
- * Get current subcarrier noise floor (for diagnostics)
- */
-float marker_detector_get_subcarrier_noise_floor(marker_detector_t *md);
 
 #ifdef __cplusplus
 }

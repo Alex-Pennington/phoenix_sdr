@@ -9,6 +9,7 @@
 
 #include "sync_detector.h"
 #include "version.h"
+#include "waterfall_telemetry.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -88,6 +89,13 @@ static void log_confirmed_marker(sync_detector_t *sd, float timestamp_ms,
             sd->pending_tick_duration_ms,
             sd->pending_marker_duration_ms);
     fflush(sd->csv_file);
+
+    /* UDP telemetry broadcast */
+    telem_sendf(TELEM_SYNC, "%s,%.1f,%d,%s,%.1f,%.0f,%.1f,%.1f",
+                time_str, timestamp_ms, sd->confirmed_count,
+                sync_state_name(sd->state), interval_ms / 1000.0f,
+                delta_ms, sd->pending_tick_duration_ms,
+                sd->pending_marker_duration_ms);
 }
 
 static void try_correlate(sync_detector_t *sd, float current_ms) {

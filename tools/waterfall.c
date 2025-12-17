@@ -836,7 +836,7 @@ int main(int argc, char *argv[]) {
 
     /* Initialize UDP telemetry broadcast */
     telem_init(3005);
-    telem_enable(TELEM_CHANNEL | TELEM_CARRIER | TELEM_SUBCAR | TELEM_TONE500 | TELEM_TONE600);
+    telem_enable(TELEM_CHANNEL | TELEM_CARRIER | TELEM_SUBCAR | TELEM_TONE500 | TELEM_TONE600 | TELEM_MARKERS | TELEM_SYNC);
 
     /* Initialize flash system and register detectors */
     flash_init();

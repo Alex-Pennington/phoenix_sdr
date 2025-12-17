@@ -17,6 +17,7 @@
 #include "wwv_clock.h"
 #include "kiss_fft.h"
 #include "version.h"
+#include "waterfall_telemetry.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -257,6 +258,13 @@ static void run_state_machine(marker_detector_t *md) {
                                 md->marker_peak_energy, duration_ms, since_last,
                                 md->baseline_energy, md->threshold);
                         fflush(md->csv_file);
+
+                        /* UDP telemetry broadcast */
+                        telem_sendf(TELEM_MARKERS, "%s,%.1f,M%d,%d,%s,%.6f,%.1f,%.1f,%.6f,%.6f",
+                                    time_str, timestamp_ms, md->markers_detected, wwv.second,
+                                    wwv_event_name(wwv.expected_event),
+                                    md->marker_peak_energy, duration_ms, since_last,
+                                    md->baseline_energy, md->threshold);
                     }
 
                     /* Callback */

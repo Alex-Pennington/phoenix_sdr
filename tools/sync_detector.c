@@ -98,82 +98,96 @@ static void log_confirmed_marker(sync_detector_t *sd, float timestamp_ms,
                 sd->pending_marker_duration_ms);
 }
 
-static void try_correlate(sync_detector_t *sd, float current_ms) {
-    /* Need both events pending */
-    if (!sd->tick_pending || !sd->marker_pending)
-        return;
+static void confirm_marker(sync_detector_t *sd, float marker_time, float delta_ms, const char *source) {
+    /* Calculate interval from previous marker */
+    float interval_ms = (sd->last_confirmed_ms > 0) ?
+        (marker_time - sd->last_confirmed_ms) : 0.0f;
 
-    float delta = fabsf(sd->pending_marker_ms - sd->pending_tick_ms);
-
-    if (delta < CORRELATION_WINDOW_MS) {
-        /* CONFIRMED - both detectors agree! */
-        /* Use tick detector's timestamp (more precise, fires at pulse end) */
-        float marker_time = sd->pending_tick_ms;
-
-        /* Calculate interval from previous marker */
-        float interval_ms = (sd->last_confirmed_ms > 0) ?
-            (marker_time - sd->last_confirmed_ms) : 0.0f;
-
-        /* Check if interval is a valid multiple of ~60 seconds (allows for missed markers) */
-        bool good_interval = (sd->last_confirmed_ms == 0);
-        if (!good_interval && interval_ms >= MARKER_INTERVAL_MIN_MS) {
-            /* Find how many 60-second periods fit */
-            int periods = (int)((interval_ms + MARKER_NOMINAL_MS/2) / MARKER_NOMINAL_MS);
-            float expected_ms = periods * MARKER_NOMINAL_MS;
-            float error_ms = fabsf(interval_ms - expected_ms);
-            /* Accept if within ±5 seconds of a multiple of 60s */
-            good_interval = (error_ms <= 5000.0f);
-        }
-
-        if (good_interval) {
-            /* Update confirmed marker history */
-            sd->prev_confirmed_ms = sd->last_confirmed_ms;
-            sd->last_confirmed_ms = marker_time;
-            sd->confirmed_count++;
-
-            /* Track good intervals for lock confidence */
-            if (interval_ms >= MARKER_INTERVAL_MIN_MS &&
-                interval_ms <= MARKER_INTERVAL_MAX_MS) {
-                sd->good_intervals++;
-            }
-
-            /* Update state */
-            if (sd->good_intervals >= 2) {
-                sd->state = SYNC_LOCKED;
-            } else if (sd->confirmed_count >= 1) {
-                sd->state = SYNC_TENTATIVE;
-            }
-
-            /* Flash for UI */
-            sd->flash_frames_remaining = SYNC_FLASH_FRAMES;
-
-            /* Log to CSV */
-            log_confirmed_marker(sd, marker_time, interval_ms, delta, "CORRELATED");
-
-            /* Console output */
-            printf("[SYNC] *** CONFIRMED MARKER #%d *** delta=%.0fms interval=%.1fs state=%s\n",
-                   sd->confirmed_count, delta, interval_ms / 1000.0f,
-                   sync_state_name(sd->state));
-        } else {
-            printf("[SYNC] Correlated marker rejected: interval=%.1fs (out of range)\n",
-                   interval_ms / 1000.0f);
-        }
-
-        /* Clear both pending events */
-        sd->tick_pending = false;
-        sd->marker_pending = false;
+    /* Check if interval is a valid multiple of ~60 seconds (allows for missed markers) */
+    bool good_interval = (sd->last_confirmed_ms == 0);
+    if (!good_interval && interval_ms >= MARKER_INTERVAL_MIN_MS) {
+        /* Find how many 60-second periods fit */
+        int periods = (int)((interval_ms + MARKER_NOMINAL_MS/2) / MARKER_NOMINAL_MS);
+        float expected_ms = periods * MARKER_NOMINAL_MS;
+        float error_ms = fabsf(interval_ms - expected_ms);
+        /* Accept if within ±5 seconds of a multiple of 60s */
+        good_interval = (error_ms <= 5000.0f);
     }
+
+    if (good_interval) {
+        /* Update confirmed marker history */
+        sd->prev_confirmed_ms = sd->last_confirmed_ms;
+        sd->last_confirmed_ms = marker_time;
+        sd->confirmed_count++;
+
+        /* Track good intervals for lock confidence */
+        if (interval_ms >= MARKER_INTERVAL_MIN_MS &&
+            interval_ms <= MARKER_INTERVAL_MAX_MS) {
+            sd->good_intervals++;
+        }
+
+        /* Update state */
+        if (sd->good_intervals >= 2) {
+            sd->state = SYNC_LOCKED;
+        } else if (sd->confirmed_count >= 1) {
+            sd->state = SYNC_TENTATIVE;
+        }
+
+        /* Flash for UI */
+        sd->flash_frames_remaining = SYNC_FLASH_FRAMES;
+
+        /* Log to CSV */
+        log_confirmed_marker(sd, marker_time, interval_ms, delta_ms, source);
+
+        /* Console output */
+        printf("[SYNC] *** CONFIRMED MARKER #%d *** src=%s delta=%.0fms interval=%.1fs state=%s\n",
+               sd->confirmed_count, source, delta_ms, interval_ms / 1000.0f,
+               sync_state_name(sd->state));
+    } else {
+        printf("[SYNC] Marker rejected (%s): interval=%.1fs (out of range)\n",
+               source, interval_ms / 1000.0f);
+    }
+
+    /* Clear both pending events */
+    sd->tick_pending = false;
+    sd->marker_pending = false;
+}
+
+static void try_correlate(sync_detector_t *sd, float current_ms) {
+    /* Accept EITHER detector firing - no longer require both */
+    
+    /* If both are pending, check correlation and use the better source */
+    if (sd->tick_pending && sd->marker_pending) {
+        float delta = fabsf(sd->pending_marker_ms - sd->pending_tick_ms);
+        if (delta < CORRELATION_WINDOW_MS) {
+            /* Both detectors agree - use tick detector timestamp (more precise) */
+            confirm_marker(sd, sd->pending_tick_ms, delta, "BOTH");
+            return;
+        }
+        /* If they don't correlate, prefer the earlier one */
+        if (sd->pending_tick_ms < sd->pending_marker_ms) {
+            confirm_marker(sd, sd->pending_tick_ms, 0.0f, "TICK");
+        } else {
+            confirm_marker(sd, sd->pending_marker_ms, 0.0f, "MARK");
+        }
+        return;
+    }
+    
+    /* Single detector fired - no correlation partner available yet */
+    /* The timeout handler will confirm if partner doesn't arrive */
 }
 
 static void check_timeout(sync_detector_t *sd, float current_ms) {
-    /* Clear stale pending events that weren't correlated */
-    if (sd->tick_pending && (current_ms - sd->pending_tick_ms) > PENDING_TIMEOUT_MS) {
-        printf("[SYNC] Tick marker timed out (no correlation)\n");
-        sd->tick_pending = false;
+    /* If a single detector fired and partner didn't arrive, confirm from single source */
+    if (sd->tick_pending && !sd->marker_pending &&
+        (current_ms - sd->pending_tick_ms) > PENDING_TIMEOUT_MS) {
+        confirm_marker(sd, sd->pending_tick_ms, 0.0f, "TICK");
+        return;
     }
-    if (sd->marker_pending && (current_ms - sd->pending_marker_ms) > PENDING_TIMEOUT_MS) {
-        printf("[SYNC] Marker event timed out (no correlation)\n");
-        sd->marker_pending = false;
+    if (sd->marker_pending && !sd->tick_pending &&
+        (current_ms - sd->pending_marker_ms) > PENDING_TIMEOUT_MS) {
+        confirm_marker(sd, sd->pending_marker_ms, 0.0f, "MARK");
+        return;
     }
 }
 

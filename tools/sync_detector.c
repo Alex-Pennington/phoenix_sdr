@@ -155,7 +155,7 @@ static void confirm_marker(sync_detector_t *sd, float marker_time, float delta_m
 
 static void try_correlate(sync_detector_t *sd, float current_ms) {
     /* Accept EITHER detector firing - no longer require both */
-    
+
     /* If both are pending, check correlation and use the better source */
     if (sd->tick_pending && sd->marker_pending) {
         float delta = fabsf(sd->pending_marker_ms - sd->pending_tick_ms);
@@ -172,7 +172,7 @@ static void try_correlate(sync_detector_t *sd, float current_ms) {
         }
         return;
     }
-    
+
     /* Single detector fired - no correlation partner available yet */
     /* The timeout handler will confirm if partner doesn't arrive */
 }

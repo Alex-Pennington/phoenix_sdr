@@ -54,6 +54,7 @@ struct tone_tracker {
     float offset_hz;
     float offset_ppm;
     float snr_db;
+    float noise_floor_linear;   /* Linear noise floor for marker baseline */
     bool valid;
     
     /* Logging */
@@ -205,6 +206,7 @@ static void measure_tone(tone_tracker_t *tt) {
         
         /* Estimate noise floor (away from carrier) */
         float noise_floor = estimate_noise_floor(tt->magnitudes, TONE_FFT_SIZE, 0, SEARCH_BINS + 5);
+        tt->noise_floor_linear = noise_floor;  /* Store for marker detector baseline */
         tt->snr_db = 20.0f * log10f(peak_mag / (noise_floor + 1e-10f));
         tt->valid = (tt->snr_db >= MIN_SNR_DB);
         
@@ -245,6 +247,7 @@ static void measure_tone(tone_tracker_t *tt) {
     /* Estimate noise floor */
     float noise_floor = estimate_noise_floor(tt->magnitudes, TONE_FFT_SIZE, 
                                               nominal_bin, SEARCH_BINS + 5);
+    tt->noise_floor_linear = noise_floor;  /* Store for marker detector baseline */
     
     /* Calculate SNR (use stronger sideband) */
     float peak_mag = (usb_peak_mag > lsb_peak_mag) ? usb_peak_mag : lsb_peak_mag;
@@ -411,4 +414,22 @@ bool tone_tracker_is_valid(tone_tracker_t *tt) {
 
 uint64_t tone_tracker_get_frame_count(tone_tracker_t *tt) {
     return tt ? tt->frame_count : 0;
+}
+
+float tone_tracker_get_noise_floor(tone_tracker_t *tt) {
+    return tt ? tt->noise_floor_linear : 0.0f;
+}
+
+/* Global subcarrier noise floor for marker detector */
+float g_subcarrier_noise_floor = 0.01f;
+
+void tone_tracker_update_global_noise_floor(tone_tracker_t *tt) {
+    if (!tt || !tt->valid) return;
+    
+    /* Only update if this tracker has a valid measurement */
+    if (tt->noise_floor_linear > 0.0001f) {
+        /* Slow adaptation to prevent jumps */
+        g_subcarrier_noise_floor += 0.1f * (tt->noise_floor_linear - g_subcarrier_noise_floor);
+        if (g_subcarrier_noise_floor < 0.0001f) g_subcarrier_noise_floor = 0.0001f;
+    }
 }

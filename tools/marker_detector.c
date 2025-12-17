@@ -18,6 +18,7 @@
 #include "kiss_fft.h"
 #include "version.h"
 #include "waterfall_telemetry.h"
+/* tone_tracker.h removed - g_subcarrier_noise_floor had incompatible scaling */
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -35,6 +36,12 @@
 #define MARKER_NOISE_ADAPT_RATE     0.001f  /* Slow baseline adaptation */
 #define MARKER_COOLDOWN_MS          30000.0f /* 30 sec between markers (they're 60 sec apart) */
 #define MARKER_MAX_DURATION_MS      5000.0f /* Max time in IN_MARKER before forced exit (safety) */
+
+/* Subcarrier noise tracking (same FFT, different frequency bins) */
+#define SUBCARRIER_500_HZ           500
+#define SUBCARRIER_600_HZ           600
+#define SUBCARRIER_BANDWIDTH_HZ     100     /* ±50 Hz bucket */
+#define SUBCARRIER_NOISE_ADAPT      0.01f   /* Noise floor adaptation rate */
 
 /* Warmup */
 #define MARKER_WARMUP_FRAMES        200     /* ~1 second warmup (window is 195 frames) */
@@ -107,15 +114,77 @@ struct marker_detector {
 
     /* Logging */
     FILE *csv_file;
+    FILE *debug_file;           /* Frame-by-frame debug log */
     time_t start_time;
 
     /* WWV clock for expected event lookup */
     wwv_clock_t *wwv_clock;
+
+    /* External baseline from slow path */
+    bool use_external_baseline;
+    float external_baseline;
+
+    /* Fast-path subcarrier noise tracking (500/600 Hz in same FFT units) */
+    float subcarrier_500_energy;    /* Current 500 Hz bucket energy */
+    float subcarrier_600_energy;    /* Current 600 Hz bucket energy */
+    float subcarrier_noise_floor;   /* Tracked noise floor (same units as marker) */
+    bool use_subcarrier_baseline;   /* Use subcarrier noise for baseline */
 };
 
 /*============================================================================
  * Internal Functions
  *============================================================================*/
+
+/**
+ * Calculate energy in a frequency bucket (generalized for any freq)
+ */
+static float calculate_bucket_energy_at(marker_detector_t *md, int target_hz, int bandwidth_hz) {
+    int center_bin = (int)(target_hz / HZ_PER_BIN + 0.5f);
+    int bin_span = (int)(bandwidth_hz / HZ_PER_BIN + 0.5f);
+    if (bin_span < 1) bin_span = 1;
+
+    float pos_energy = 0.0f;
+    float neg_energy = 0.0f;
+
+    for (int b = -bin_span; b <= bin_span; b++) {
+        int pos_bin = center_bin + b;
+        int neg_bin = MARKER_FFT_SIZE - center_bin + b;
+
+        if (pos_bin >= 0 && pos_bin < MARKER_FFT_SIZE) {
+            float re = md->fft_out[pos_bin].r;
+            float im = md->fft_out[pos_bin].i;
+            pos_energy += sqrtf(re * re + im * im) / MARKER_FFT_SIZE;
+        }
+        if (neg_bin >= 0 && neg_bin < MARKER_FFT_SIZE) {
+            float re = md->fft_out[neg_bin].r;
+            float im = md->fft_out[neg_bin].i;
+            neg_energy += sqrtf(re * re + im * im) / MARKER_FFT_SIZE;
+        }
+    }
+
+    return pos_energy + neg_energy;
+}
+
+/**
+ * Update subcarrier noise floor from 500/600 Hz buckets
+ * These are clean (no tick contamination) during their active minutes
+ */
+static void update_subcarrier_noise(marker_detector_t *md) {
+    /* Measure both subcarrier buckets */
+    md->subcarrier_500_energy = calculate_bucket_energy_at(md, SUBCARRIER_500_HZ, SUBCARRIER_BANDWIDTH_HZ);
+    md->subcarrier_600_energy = calculate_bucket_energy_at(md, SUBCARRIER_600_HZ, SUBCARRIER_BANDWIDTH_HZ);
+    
+    /* Use the lower of the two as noise estimate
+     * When a subcarrier is active, that bucket will be high
+     * When inactive, both represent noise floor
+     * Taking minimum gives us the cleanest estimate */
+    float min_energy = (md->subcarrier_500_energy < md->subcarrier_600_energy) 
+                       ? md->subcarrier_500_energy : md->subcarrier_600_energy;
+    
+    /* Slow adaptation to build stable noise floor */
+    md->subcarrier_noise_floor += SUBCARRIER_NOISE_ADAPT * (min_energy - md->subcarrier_noise_floor);
+    if (md->subcarrier_noise_floor < 0.001f) md->subcarrier_noise_floor = 0.001f;
+}
 
 static float calculate_bucket_energy(marker_detector_t *md) {
     int center_bin = (int)(MARKER_TARGET_FREQ_HZ / HZ_PER_BIN + 0.5f);
@@ -180,6 +249,19 @@ static void run_state_machine(marker_detector_t *md) {
     /* Update sliding window */
     update_accumulator(md, energy);
 
+    /* Debug logging - every 20th frame (~100ms) to keep file manageable */
+    if (md->debug_file && (frame % 20 == 0)) {
+        char time_str[16];
+        get_wall_time_str(md, frame * FRAME_DURATION_MS, time_str, sizeof(time_str));
+        const char *state_names[] = {"IDLE", "IN_MARKER", "COOLDOWN"};
+        float ratio = (md->baseline_energy > 0.001f) ? md->accumulated_energy / md->baseline_energy : 0.0f;
+        fprintf(md->debug_file, "%s,%.1f,%s,%.1f,%.1f,%.1f,%.4f,%.2f\n",
+                time_str, frame * FRAME_DURATION_MS, state_names[md->state],
+                md->accumulated_energy, md->baseline_energy, md->threshold,
+                energy, ratio);
+        fflush(md->debug_file);
+    }
+
     /* Warmup phase - fast adaptation to learn baseline */
     if (!md->warmup_complete) {
         md->baseline_energy += MARKER_WARMUP_ADAPT_RATE * (md->accumulated_energy - md->baseline_energy);
@@ -202,9 +284,25 @@ static void run_state_machine(marker_detector_t *md) {
         return;
     }
 
-    /* Adapt baseline during idle - ALWAYS adapt, not just when below threshold */
+    /* Adapt baseline during idle
+     * 
+     * Priority:
+     * 1. External baseline (from slow path, if set)
+     * 2. Subcarrier noise floor (500/600 Hz from same FFT - clean, same units)
+     * 3. Self-track (fallback)
+     */
     if (md->state == STATE_IDLE) {
-        md->baseline_energy += MARKER_NOISE_ADAPT_RATE * (md->accumulated_energy - md->baseline_energy);
+        if (md->use_external_baseline) {
+            /* Use external baseline (from slow path, already scaled) */
+            md->baseline_energy = md->external_baseline * MARKER_WINDOW_FRAMES;
+        } else if (md->use_subcarrier_baseline && md->subcarrier_noise_floor > 0.001f) {
+            /* Use fast-path subcarrier noise floor (same units, no scaling needed)
+             * Scale by window frames since we're comparing to accumulated energy */
+            md->baseline_energy = md->subcarrier_noise_floor * MARKER_WINDOW_FRAMES;
+        } else {
+            /* Self-track baseline (fallback) */
+            md->baseline_energy += MARKER_NOISE_ADAPT_RATE * (md->accumulated_energy - md->baseline_energy);
+        }
         if (md->baseline_energy < 0.001f) md->baseline_energy = 0.001f;
         md->threshold = md->baseline_energy * MARKER_THRESHOLD_MULT;
     }
@@ -374,6 +472,31 @@ marker_detector_t *marker_detector_create(const char *csv_path) {
         }
     }
 
+    /* Open debug log file - derive path from csv_path */
+    if (csv_path) {
+        /* Replace "markers.csv" with "debug_marker.csv" */
+        char debug_path[512];
+        strncpy(debug_path, csv_path, sizeof(debug_path) - 1);
+        debug_path[sizeof(debug_path) - 1] = '\0';
+        char *markers_pos = strstr(debug_path, "markers.csv");
+        if (markers_pos) {
+            strcpy(markers_pos, "debug_marker.csv");
+        } else {
+            strcat(debug_path, "_debug.csv");
+        }
+        md->debug_file = fopen(debug_path, "w");
+        if (md->debug_file) {
+            char time_str[64];
+            time_t now = time(NULL);
+            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", localtime(&now));
+            fprintf(md->debug_file, "# Phoenix SDR Marker Debug Log v%s\n", PHOENIX_VERSION_FULL);
+            fprintf(md->debug_file, "# Started: %s\n", time_str);
+            fprintf(md->debug_file, "time,timestamp_ms,state,accum,baseline,threshold,energy,ratio\n");
+            fflush(md->debug_file);
+            printf("[MARKER] Debug log: %s\n", debug_path);
+        }
+    }
+
     printf("[MARKER] Detector created: FFT=%d (%.1fms), window=%d frames (%.0fms)\n",
            MARKER_FFT_SIZE, FRAME_DURATION_MS, MARKER_WINDOW_FRAMES, MARKER_WINDOW_MS);
     printf("[MARKER] Target: %dHz ±%dHz, logging to %s\n",
@@ -387,6 +510,7 @@ void marker_detector_destroy(marker_detector_t *md) {
 
     if (md->wwv_clock) wwv_clock_destroy(md->wwv_clock);
     if (md->csv_file) fclose(md->csv_file);
+    if (md->debug_file) fclose(md->debug_file);
     if (md->fft_cfg) kiss_fft_free(md->fft_cfg);
     free(md->fft_in);
     free(md->fft_out);
@@ -430,6 +554,9 @@ bool marker_detector_process_sample(marker_detector_t *md, float i_sample, float
 
     /* Extract bucket energy */
     md->current_energy = calculate_bucket_energy(md);
+
+    /* Update subcarrier noise tracking (500/600 Hz in same FFT units) */
+    update_subcarrier_noise(md);
 
     /* Run detection state machine */
     run_state_machine(md);
@@ -522,4 +649,27 @@ void marker_detector_log_display_gain(marker_detector_t *md, float display_gain)
 
 float marker_detector_get_frame_duration_ms(void) {
     return FRAME_DURATION_MS;
+}
+
+void marker_detector_set_external_baseline(marker_detector_t *md, float baseline) {
+    if (!md) return;
+    md->use_external_baseline = true;
+    md->external_baseline = baseline;
+}
+
+void marker_detector_clear_external_baseline(marker_detector_t *md) {
+    if (!md) return;
+    md->use_external_baseline = false;
+}
+
+void marker_detector_set_subcarrier_baseline(marker_detector_t *md, bool enabled) {
+    if (!md) return;
+    md->use_subcarrier_baseline = enabled;
+    if (enabled) {
+        printf("[MARKER] Subcarrier baseline enabled (500/600 Hz noise floor)\n");
+    }
+}
+
+float marker_detector_get_subcarrier_noise_floor(marker_detector_t *md) {
+    return md ? md->subcarrier_noise_floor : 0.0f;
 }

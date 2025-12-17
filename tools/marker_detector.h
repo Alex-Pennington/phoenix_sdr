@@ -134,6 +134,28 @@ void marker_detector_log_display_gain(marker_detector_t *md, float display_gain)
  */
 float marker_detector_get_frame_duration_ms(void);
 
+/**
+ * Set external noise floor from slow path
+ * When set, fast path stops tracking its own baseline
+ */
+void marker_detector_set_external_baseline(marker_detector_t *md, float baseline);
+
+/**
+ * Clear external baseline, resume self-tracking
+ */
+void marker_detector_clear_external_baseline(marker_detector_t *md);
+
+/**
+ * Enable/disable fast-path subcarrier noise baseline
+ * Uses 500/600 Hz buckets from same FFT (same units, no scaling issues)
+ */
+void marker_detector_set_subcarrier_baseline(marker_detector_t *md, bool enabled);
+
+/**
+ * Get current subcarrier noise floor (for diagnostics)
+ */
+float marker_detector_get_subcarrier_noise_floor(marker_detector_t *md);
+
 #ifdef __cplusplus
 }
 #endif

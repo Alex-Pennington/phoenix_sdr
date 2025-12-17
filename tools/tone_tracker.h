@@ -42,7 +42,14 @@ float tone_tracker_get_measured_hz(tone_tracker_t *tt);
 float tone_tracker_get_offset_hz(tone_tracker_t *tt);
 float tone_tracker_get_offset_ppm(tone_tracker_t *tt);
 float tone_tracker_get_snr_db(tone_tracker_t *tt);
+float tone_tracker_get_noise_floor(tone_tracker_t *tt);
 bool tone_tracker_is_valid(tone_tracker_t *tt);
 uint64_t tone_tracker_get_frame_count(tone_tracker_t *tt);
+
+/* Global subcarrier noise floor - exported for marker detector baseline */
+extern float g_subcarrier_noise_floor;
+
+/* Update global noise floor from active subcarrier tracker */
+void tone_tracker_update_global_noise_floor(tone_tracker_t *tt);
 
 #endif /* TONE_TRACKER_H */

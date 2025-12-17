@@ -28,6 +28,8 @@
 #include "sync_detector.h"
 #include "tone_tracker.h"
 #include "tick_correlator.h"
+#include "slow_marker_detector.h"
+#include "marker_correlator.h"
 #include "waterfall_flash.h"
 #include "waterfall_telemetry.h"
 
@@ -506,6 +508,8 @@ static void print_usage(const char *progname) {
 static tick_detector_t *g_tick_detector = NULL;
 static marker_detector_t *g_marker_detector = NULL;
 static sync_detector_t *g_sync_detector = NULL;
+static slow_marker_detector_t *g_slow_marker = NULL;
+static marker_correlator_t *g_marker_correlator = NULL;
 static FILE *g_channel_csv = NULL;
 static uint64_t g_channel_log_interval = 0;  /* Log every N frames */
 static FILE *g_subcarrier_csv = NULL;
@@ -526,8 +530,40 @@ static void on_tick_marker(const tick_marker_event_t *event, void *user_data) {
     }
 }
 
+static void on_slow_marker_frame(const slow_marker_frame_t *frame, void *user_data) {
+    (void)user_data;
+    
+    /* Feed correlator */
+    if (g_marker_correlator) {
+        marker_correlator_slow_frame(g_marker_correlator,
+                                      frame->timestamp_ms,
+                                      frame->energy,
+                                      frame->snr_db,
+                                      frame->above_threshold);
+    }
+    
+    /* DISABLED: External baseline from slow marker doesn't work - different FFT configs
+     * Slow marker: 12kHz/2048-pt FFT (5.86 Hz/bin)
+     * Fast marker: 50kHz/256-pt FFT (195 Hz/bin)  
+     * The noise_floor values have incompatible scaling.
+     * Self-tracking baseline works correctly (proven in v133).
+     */
+    // if (g_marker_detector) {
+    //     marker_detector_set_external_baseline(g_marker_detector, frame->noise_floor);
+    // }
+}
+
 static void on_marker_event(const marker_event_t *event, void *user_data) {
     (void)user_data;
+    
+    /* Feed correlator */
+    if (g_marker_correlator) {
+        marker_correlator_fast_event(g_marker_correlator,
+                                      event->timestamp_ms,
+                                      event->duration_ms);
+    }
+    
+    /* Also feed sync detector as before */
     if (g_sync_detector) {
         sync_detector_marker_event(g_sync_detector, event->timestamp_ms,
                                     event->accumulated_energy, event->duration_ms);
@@ -798,6 +834,29 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Failed to create marker detector\n");
         return 1;
     }
+    /* DISABLED: Subcarrier baseline doesn't work - 500/600 Hz energy is ~720x lower
+     * than 1000 Hz energy due to different frequency characteristics. Using it causes
+     * baseline to collapse to ~2.5, making everything look like a marker.
+     * See analysis from overnight 12/17/2025 run: 5 hours, 0 detections, stuck in
+     * IN_MARKER->COOLDOWN cycle due to baseline=2.5 vs accumulated=1800.
+     * Self-tracking baseline works correctly (proven in v133).
+     */
+    // marker_detector_set_subcarrier_baseline(g_marker_detector, true);
+
+    /* Create slow marker detector */
+    g_slow_marker = slow_marker_detector_create();
+    if (!g_slow_marker) {
+        fprintf(stderr, "Failed to create slow marker detector\n");
+        return 1;
+    }
+    slow_marker_detector_set_callback(g_slow_marker, on_slow_marker_frame, NULL);
+
+    /* Create marker correlator */
+    g_marker_correlator = marker_correlator_create("wwv_markers_corr.csv");
+    if (!g_marker_correlator) {
+        fprintf(stderr, "Failed to create marker correlator\n");
+        return 1;
+    }
 
     /* Create sync detector and wire up callbacks */
     g_sync_detector = sync_detector_create("wwv_sync.csv");
@@ -846,8 +905,8 @@ int main(int argc, char *argv[]) {
         .decrement_flash = (void (*)(void*))tick_detector_decrement_flash,
         .ctx = g_tick_detector,
         .freq_hz = 1000,
-        .band_half_width = 3,
-        .band_r = 180, .band_g = 0, .band_b = 255,
+        .band_half_width = 2,       /* 100 Hz bandwidth → ~4 pixels at current zoom */
+        .band_r = 180, .band_g = 0, .band_b = 255,  /* Purple */
         .bar_index = 4,
         .bar_r = 180, .bar_g = 0, .bar_b = 255
     });
@@ -857,10 +916,10 @@ int main(int argc, char *argv[]) {
         .decrement_flash = (void (*)(void*))marker_detector_decrement_flash,
         .ctx = g_marker_detector,
         .freq_hz = 1000,
-        .band_half_width = 8,
-        .band_r = 255, .band_g = 50, .band_b = 50,
+        .band_half_width = 4,       /* 200 Hz bandwidth → ~8 pixels at current zoom */
+        .band_r = 180, .band_g = 0, .band_b = 255,  /* Purple */
         .bar_index = 4,
-        .bar_r = 255, .bar_g = 50, .bar_b = 50
+        .bar_r = 180, .bar_g = 0, .bar_b = 255
     });
 
     uint64_t frame_num = 0;
@@ -1049,6 +1108,9 @@ int main(int argc, char *argv[]) {
                         tone_tracker_process_sample(g_tone_500, disp_i, disp_q);
                         tone_tracker_process_sample(g_tone_600, disp_i, disp_q);
 
+                        /* Note: marker_detector now tracks 500/600 Hz in its own FFT path
+                         * (same units, no scaling mismatch). No cross-path integration needed. */
+
                         /* With 50% overlap, run FFT every DISPLAY_OVERLAP new samples */
                         if (g_display_new_samples >= DISPLAY_OVERLAP) {
                             samples_collected = DISPLAY_OVERLAP;  /* Signal ready for FFT */
@@ -1078,6 +1140,12 @@ int main(int argc, char *argv[]) {
             fft_in[i].i = g_display_buffer[buf_idx].q * window_func[i];
         }
         kiss_fft(fft_cfg, fft_in, fft_out);
+
+        /* Feed slow marker detector with display FFT output */
+        if (g_slow_marker) {
+            float timestamp_ms = frame_num * DISPLAY_EFFECTIVE_MS;
+            slow_marker_detector_process_fft(g_slow_marker, fft_out, timestamp_ms);
+        }
 
         /* Calculate magnitudes with FFT shift (DC in center) */
         float bin_hz = DISPLAY_HZ_PER_BIN;
@@ -1354,6 +1422,8 @@ int main(int argc, char *argv[]) {
     tick_correlator_print_stats(g_tick_correlator);
     tick_detector_destroy(g_tick_detector);
     marker_detector_destroy(g_marker_detector);
+    slow_marker_detector_destroy(g_slow_marker);
+    marker_correlator_destroy(g_marker_correlator);
     sync_detector_destroy(g_sync_detector);
     tick_correlator_destroy(g_tick_correlator);
     tone_tracker_destroy(g_tone_carrier);

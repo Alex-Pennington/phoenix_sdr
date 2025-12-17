@@ -281,7 +281,12 @@ static int g_iq_buffer_idx = 0;
  *   - Effective RBW ≈ 11 Hz (can resolve 10 Hz BCD sidebands)
  *----------------------------------------------------------------------------*/
 #define DISPLAY_SAMPLE_RATE     12000       /* 12 kHz for display */
-#define DISPLAY_FILTER_CUTOFF   6000.0f     /* 6 kHz lowpass (Nyquist guard) */
+/* Anti-alias filter cutoff reduced from 6 kHz to 5 kHz. At 6 kHz cutoff with
+ * 12 kHz sample rate, the filter was exactly at Nyquist with no guard band.
+ * Signal content above 6 kHz could alias into the passband. 5 kHz provides
+ * 1 kHz margin below Nyquist. No impact on WWV detection since all signal
+ * content is within ±2 kHz of center. Added v1.0.1+19, 2025-12-17. */
+#define DISPLAY_FILTER_CUTOFF   5000.0f     /* 5 kHz lowpass (1 kHz Nyquist guard) */
 #define DISPLAY_FFT_SIZE        2048        /* 2048-pt FFT */
 #define DISPLAY_OVERLAP         1024        /* 50% overlap (half of FFT_SIZE) */
 #define DISPLAY_HZ_PER_BIN      ((float)DISPLAY_SAMPLE_RATE / DISPLAY_FFT_SIZE)  /* 5.86 Hz */
@@ -1069,8 +1074,13 @@ int main(int argc, char *argv[]) {
 
                     if (g_tcp_sample_format == IQ_FORMAT_S16) {
                         int16_t *samples = (int16_t *)iq_buffer;
-                        i_raw = (float)samples[s * 2];
-                        q_raw = (float)samples[s * 2 + 1];
+                        /* Normalize S16 to [-1, 1] range. Without this, raw int16 values
+                         * (-32768 to +32767) become floats of the same magnitude, causing
+                         * energy values ~10^9 instead of ~1. Adaptive thresholds self-adjust
+                         * so detection still works, but debugging is confusing and log plots
+                         * are nonsensical. Added v1.0.1+19, 2025-12-17. */
+                        i_raw = (float)samples[s * 2] / 32768.0f;
+                        q_raw = (float)samples[s * 2 + 1] / 32768.0f;
                     } else if (g_tcp_sample_format == IQ_FORMAT_F32) {
                         float *samples = (float *)iq_buffer;
                         i_raw = samples[s * 2];

@@ -10,7 +10,12 @@
 #include <string.h>
 #include <time.h>
 
-#define CORRELATION_WINDOW_MS   500.0f  /* Fast/slow must agree within 500ms */
+/* Correlation window increased from 500ms to 750ms. The slow path (12kHz) updates
+ * every ~85ms, so 500ms only allowed ~6 slow frames to catch correlation. With
+ * path timing differences, edge cases could miss. 750ms provides ~9 slow frames,
+ * more margin for timing jitter. Still well under 30-second marker cooldown so
+ * no risk of false correlations. Added v1.0.1+19, 2025-12-17. */
+#define CORRELATION_WINDOW_MS   750.0f  /* Fast/slow must agree within 750ms */
 #define MIN_DURATION_MS         500.0f  /* Minimum duration for fast path */
 
 struct marker_correlator {

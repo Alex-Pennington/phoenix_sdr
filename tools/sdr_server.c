@@ -19,8 +19,11 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
+#include <shellapi.h>
 #include <process.h>
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "shell32.lib")
 typedef int socklen_t;
 #else
 #include <sys/socket.h>
@@ -98,6 +101,8 @@ typedef struct {
  *============================================================================*/
 
 static volatile bool g_running = true;
+static bool g_log_to_file = false;
+static bool g_start_minimized = false;
 static SOCKET g_listen_socket = INVALID_SOCKET;
 static SOCKET g_client_socket = INVALID_SOCKET;
 static tcp_sdr_state_t g_sdr_state;
@@ -128,6 +133,13 @@ static DWORD g_last_stop_time = 0;
 
 #ifdef _WIN32
 static CRITICAL_SECTION g_iq_mutex;
+
+/* System tray globals */
+#define WM_TRAYICON (WM_USER + 1)
+#define ID_TRAY_EXIT 1001
+static HWND g_tray_hwnd = NULL;
+static NOTIFYICONDATAA g_nid;
+static bool g_tray_active = false;
 #else
 static pthread_mutex_t g_iq_mutex = PTHREAD_MUTEX_INITIALIZER;
 #endif
@@ -607,6 +619,107 @@ static void on_overload(bool overloaded, void *user_ctx) {
 }
 
 /*============================================================================
+ * System Tray Functions (Windows only)
+ *============================================================================*/
+
+#ifdef _WIN32
+static LRESULT CALLBACK tray_wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+        case WM_TRAYICON:
+            if (lParam == WM_RBUTTONUP || lParam == WM_LBUTTONUP) {
+                /* Show context menu */
+                POINT pt;
+                GetCursorPos(&pt);
+                HMENU menu = CreatePopupMenu();
+                AppendMenuA(menu, MF_STRING, ID_TRAY_EXIT, "Exit SDR Server");
+                SetForegroundWindow(hwnd);
+                TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL);
+                DestroyMenu(menu);
+            }
+            return 0;
+
+        case WM_COMMAND:
+            if (LOWORD(wParam) == ID_TRAY_EXIT) {
+                g_running = false;
+                PostQuitMessage(0);
+            }
+            return 0;
+
+        case WM_DESTROY:
+            if (g_tray_active) {
+                Shell_NotifyIconA(NIM_DELETE, &g_nid);
+                g_tray_active = false;
+            }
+            return 0;
+    }
+    return DefWindowProcA(hwnd, msg, wParam, lParam);
+}
+
+static bool init_tray_icon(void) {
+    /* Register window class for tray message handling */
+    WNDCLASSA wc = {0};
+    wc.lpfnWndProc = tray_wnd_proc;
+    wc.hInstance = GetModuleHandle(NULL);
+    wc.lpszClassName = "PhoenixSDRTrayClass";
+    if (!RegisterClassA(&wc)) {
+        fprintf(stderr, "Failed to register tray window class\n");
+        return false;
+    }
+
+    /* Create hidden message window */
+    g_tray_hwnd = CreateWindowA("PhoenixSDRTrayClass", "Phoenix SDR Server",
+                                 0, 0, 0, 0, 0, HWND_MESSAGE, NULL,
+                                 GetModuleHandle(NULL), NULL);
+    if (!g_tray_hwnd) {
+        fprintf(stderr, "Failed to create tray window\n");
+        return false;
+    }
+
+    /* Set up notification icon data */
+    memset(&g_nid, 0, sizeof(g_nid));
+    g_nid.cbSize = sizeof(NOTIFYICONDATAA);
+    g_nid.hWnd = g_tray_hwnd;
+    g_nid.uID = 1;
+    g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    g_nid.uCallbackMessage = WM_TRAYICON;
+    g_nid.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    snprintf(g_nid.szTip, sizeof(g_nid.szTip), "Phoenix SDR Server v%s", PHOENIX_VERSION_STRING);
+
+    /* Add the icon to system tray */
+    if (!Shell_NotifyIconA(NIM_ADD, &g_nid)) {
+        fprintf(stderr, "Failed to add tray icon\n");
+        DestroyWindow(g_tray_hwnd);
+        return false;
+    }
+
+    g_tray_active = true;
+    return true;
+}
+
+static void cleanup_tray_icon(void) {
+    if (g_tray_active) {
+        Shell_NotifyIconA(NIM_DELETE, &g_nid);
+        g_tray_active = false;
+    }
+    if (g_tray_hwnd) {
+        DestroyWindow(g_tray_hwnd);
+        g_tray_hwnd = NULL;
+    }
+    UnregisterClassA("PhoenixSDRTrayClass", GetModuleHandle(NULL));
+}
+
+/* Process tray messages - call periodically from main loop */
+static void process_tray_messages(void) {
+    if (!g_tray_hwnd) return;
+    MSG msg;
+    while (PeekMessage(&msg, g_tray_hwnd, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
+}
+#endif
+
+/*============================================================================
  * Signal Handler
  *============================================================================*/
 
@@ -831,6 +944,8 @@ static void print_usage(const char *prog) {
     printf("  -T ADDR    Listen address (default: 127.0.0.1)\n");
     printf("  -I         Disable I/Q streaming port\n");
     printf("  -d INDEX   Select SDR device index (default: 0)\n");
+    printf("  -l         Log output to file (sdr_server_<version>.log)\n");
+    printf("  -m         Start minimized (or hidden if -l also set)\n");
     printf("  -h         Show this help\n");
     printf("\nProtocol: See docs/SDR_TCP_CONTROL_INTERFACE.md\n");
     printf("I/Q Stream: See docs/SDR_IQ_STREAMING_INTERFACE.md\n");
@@ -983,10 +1098,57 @@ int main(int argc, char *argv[]) {
             bind_addr = argv[++i];
         } else if (strcmp(argv[i], "-d") == 0 && i + 1 < argc) {
             device_idx = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "-l") == 0) {
+            g_log_to_file = true;
+        } else if (strcmp(argv[i], "-m") == 0) {
+            g_start_minimized = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
         }
+    }
+
+    /* Set up file logging if enabled */
+    if (g_log_to_file) {
+        char log_filename[512];
+        char exe_dir[512];
+        
+        /* Get directory of the executable */
+        strncpy(exe_dir, argv[0], sizeof(exe_dir) - 1);
+        exe_dir[sizeof(exe_dir) - 1] = '\0';
+        
+        /* Find last path separator and truncate to get directory */
+        char *last_sep = strrchr(exe_dir, '\\');
+        if (!last_sep) last_sep = strrchr(exe_dir, '/');
+        if (last_sep) {
+            *(last_sep + 1) = '\0';  /* Keep the trailing slash */
+            snprintf(log_filename, sizeof(log_filename), "%ssdr_server_%s.log", exe_dir, PHOENIX_VERSION_STRING);
+        } else {
+            /* No path separator, use current directory */
+            snprintf(log_filename, sizeof(log_filename), "sdr_server_%s.log", PHOENIX_VERSION_STRING);
+        }
+        
+        if (freopen(log_filename, "w", stdout) == NULL) {
+            fprintf(stderr, "Failed to open log file: %s\n", log_filename);
+            return 1;
+        }
+        freopen(log_filename, "a", stderr);  /* Append stderr to same file */
+    }
+
+    /* Handle system tray / minimize mode */
+    if (g_start_minimized) {
+#ifdef _WIN32
+        /* Initialize system tray icon */
+        if (!init_tray_icon()) {
+            fprintf(stderr, "Warning: Failed to create system tray icon\n");
+        }
+        
+        /* Hide the console window - tray icon is now visible */
+        HWND console = GetConsoleWindow();
+        if (console) {
+            ShowWindow(console, SW_HIDE);
+        }
+#endif
     }
 
     /* Initialize SDR state */
@@ -1132,6 +1294,26 @@ int main(int argc, char *argv[]) {
 
     /* Accept loop */
     while (g_running) {
+#ifdef _WIN32
+        /* Process system tray messages if in minimized mode */
+        if (g_start_minimized) {
+            process_tray_messages();
+        }
+#endif
+
+        /* Use select with timeout so we can process tray messages */
+        fd_set read_fds;
+        struct timeval tv;
+        FD_ZERO(&read_fds);
+        FD_SET(g_listen_socket, &read_fds);
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000;  /* 100ms timeout */
+
+        int ready = select((int)(g_listen_socket + 1), &read_fds, NULL, NULL, &tv);
+        if (ready <= 0) {
+            continue;  /* Timeout or error, loop to check g_running and process messages */
+        }
+
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
 
@@ -1162,6 +1344,11 @@ int main(int argc, char *argv[]) {
     }
 
     /* Cleanup */
+#ifdef _WIN32
+    if (g_start_minimized) {
+        cleanup_tray_icon();
+    }
+#endif
     cleanup_sdr(&g_sdr_state);
     tcp_notify_cleanup(&g_sdr_state);
     iq_buffer_cleanup();

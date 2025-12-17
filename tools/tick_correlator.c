@@ -70,6 +70,7 @@ static void start_new_chain(tick_correlator_t *tc, float timestamp_ms) {
         chain_stats_t *cs = &tc->chains[tc->chain_count - 1];
         cs->chain_id = tc->current_chain_id;
         cs->tick_count = 0;
+        cs->inferred_count = 0;
         cs->start_ms = timestamp_ms;
         cs->end_ms = timestamp_ms;
         cs->total_drift_ms = 0.0f;
@@ -177,21 +178,39 @@ void tick_correlator_add_tick(tick_correlator_t *tc,
     /* Determine if this tick correlates with previous */
     bool correlates = (actual_interval >= CORR_MIN_INTERVAL_MS && 
                        actual_interval <= CORR_MAX_INTERVAL_MS);
+    /* Grace period for single-tick dropouts: if interval is ~2 seconds (1900-2100ms),
+     * assume exactly one tick was missed due to RF fade or QRN burst. Continue the
+     * chain rather than breaking it. Split the drift evenly across both ticks.
+     * Common on HF where brief fades are frequent. Added v1.0.1+19, 2025-12-17. */
+    bool one_skip = (actual_interval >= 1900.0f && actual_interval <= 2100.0f);
     
-    if (!correlates || tc->current_chain_id == 0) {
-        /* Start new chain */
+    /* Calculate drift from nominal */
+    float drift_this_tick = 0.0f;
+    
+    if (!correlates && !one_skip) {
+        /* Start new chain - neither normal interval nor single skip */
+        start_new_chain(tc, timestamp_ms);
+        tc->total_uncorrelated++;
+    } else if (one_skip && tc->current_chain_id != 0) {
+        /* Single tick dropout - continue chain, split drift across both */
+        drift_this_tick = (actual_interval - 2000.0f) / 2.0f;
+        tc->total_correlated++;
+        /* Increment inferred count for this chain */
+        if (tc->current_chain_id > 0 && tc->current_chain_id <= tc->chain_capacity) {
+            tc->chains[tc->current_chain_id - 1].inferred_count++;
+        }
+    } else if (tc->current_chain_id == 0) {
+        /* First tick or after uncorrelated - start new chain */
         start_new_chain(tc, timestamp_ms);
         tc->total_uncorrelated++;
     } else {
+        /* Normal correlation */
+        drift_this_tick = actual_interval - CORR_NOMINAL_INTERVAL;
         tc->total_correlated++;
     }
     
     /* Add to current chain */
     tc->current_chain_length++;
-    
-    /* Calculate drift from nominal */
-    float drift_this_tick = (tc->current_chain_length > 1) ? 
-        (actual_interval - CORR_NOMINAL_INTERVAL) : 0.0f;
     tc->cumulative_drift_ms += drift_this_tick;
     
     /* Update chain stats */

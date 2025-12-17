@@ -55,6 +55,11 @@ typedef struct {
 typedef struct {
     int chain_id;
     int tick_count;
+    /* Count of ticks inferred due to single-tick dropouts (1900-2100ms interval).
+     * On HF, brief fades or QRN bursts can cause one tick to be missed. Rather
+     * than breaking the chain, we allow single-skip intervals and track how many
+     * were inferred. Higher inferred_count = lower chain quality. Added v1.0.1+19. */
+    int inferred_count;
     float start_ms;
     float end_ms;
     float total_drift_ms;       /* Accumulated drift from nominal */

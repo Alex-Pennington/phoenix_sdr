@@ -158,10 +158,10 @@ function Build-Test($test) {
     }
 
     $argString = $allArgs -join " "
-    
+
     # Create temp file for stderr
     $stderrFile = "$BuildDir\$name.stderr.txt"
-    
+
     $pinfo = New-Object System.Diagnostics.ProcessStartInfo
     $pinfo.FileName = $CC
     $pinfo.Arguments = $argString
@@ -169,11 +169,11 @@ function Build-Test($test) {
     $pinfo.RedirectStandardOutput = $true
     $pinfo.UseShellExecute = $false
     $pinfo.CreateNoWindow = $true
-    
+
     $p = New-Object System.Diagnostics.Process
     $p.StartInfo = $pinfo
     $p.Start() | Out-Null
-    
+
     $stdout = $p.StandardOutput.ReadToEnd()
     $stderr = $p.StandardError.ReadToEnd()
     $p.WaitForExit()
@@ -184,7 +184,7 @@ function Build-Test($test) {
         if ($stderr) { Write-Host $stderr -ForegroundColor Red }
         return $false
     }
-    
+
     if ($Verbose -and $stdout) {
         Write-Host $stdout
     }
@@ -307,7 +307,7 @@ try {
             $skipped += $test.Name
             continue
         }
-        
+
         $success = Run-Test $test
         if ($success) {
             $passed += $test.Name

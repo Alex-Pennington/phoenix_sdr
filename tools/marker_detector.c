@@ -173,14 +173,14 @@ static void update_subcarrier_noise(marker_detector_t *md) {
     /* Measure both subcarrier buckets */
     md->subcarrier_500_energy = calculate_bucket_energy_at(md, SUBCARRIER_500_HZ, SUBCARRIER_BANDWIDTH_HZ);
     md->subcarrier_600_energy = calculate_bucket_energy_at(md, SUBCARRIER_600_HZ, SUBCARRIER_BANDWIDTH_HZ);
-    
+
     /* Use the lower of the two as noise estimate
      * When a subcarrier is active, that bucket will be high
      * When inactive, both represent noise floor
      * Taking minimum gives us the cleanest estimate */
-    float min_energy = (md->subcarrier_500_energy < md->subcarrier_600_energy) 
+    float min_energy = (md->subcarrier_500_energy < md->subcarrier_600_energy)
                        ? md->subcarrier_500_energy : md->subcarrier_600_energy;
-    
+
     /* Slow adaptation to build stable noise floor */
     md->subcarrier_noise_floor += SUBCARRIER_NOISE_ADAPT * (min_energy - md->subcarrier_noise_floor);
     if (md->subcarrier_noise_floor < 0.001f) md->subcarrier_noise_floor = 0.001f;
@@ -285,7 +285,7 @@ static void run_state_machine(marker_detector_t *md) {
     }
 
     /* Adapt baseline during idle
-     * 
+     *
      * Priority:
      * 1. External baseline (from slow path, if set)
      * 2. Subcarrier noise floor (500/600 Hz from same FFT - clean, same units)

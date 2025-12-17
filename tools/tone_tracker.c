@@ -35,20 +35,20 @@
 
 struct tone_tracker {
     float nominal_hz;           /* 500 or 600 */
-    
+
     /* Sample buffer */
     float *buffer_i;
     float *buffer_q;
     int buffer_idx;
     int samples_collected;
-    
+
     /* FFT */
     kiss_fft_cfg fft_cfg;
     kiss_fft_cpx *fft_in;
     kiss_fft_cpx *fft_out;
     float *window;
     float *magnitudes;
-    
+
     /* Results */
     float measured_hz;
     float offset_hz;
@@ -56,7 +56,7 @@ struct tone_tracker {
     float snr_db;
     float noise_floor_linear;   /* Linear noise floor for marker baseline */
     bool valid;
-    
+
     /* Logging */
     FILE *csv_file;
     uint64_t frame_count;
@@ -89,15 +89,15 @@ static void generate_blackman_harris(float *window, int size) {
 static float parabolic_peak(float *mag, int peak_bin, int fft_size) {
     if (peak_bin <= 0 || peak_bin >= fft_size - 1)
         return (float)peak_bin;
-    
+
     float alpha = mag[peak_bin - 1];
     float beta  = mag[peak_bin];
     float gamma = mag[peak_bin + 1];
-    
+
     float denom = alpha - 2.0f * beta + gamma;
     if (fabsf(denom) < 1e-10f)
         return (float)peak_bin;
-    
+
     float p = 0.5f * (alpha - gamma) / denom;
     return (float)peak_bin + p;
 }
@@ -109,17 +109,17 @@ static float parabolic_peak(float *mag, int peak_bin, int fft_size) {
 static int find_peak_bin(float *mag, int start, int end, int fft_size) {
     if (start < 0) start = 0;
     if (end >= fft_size) end = fft_size - 1;
-    
+
     int peak_bin = start;
     float peak_val = mag[start];
-    
+
     for (int i = start + 1; i <= end; i++) {
         if (mag[i] > peak_val) {
             peak_val = mag[i];
             peak_bin = i;
         }
     }
-    
+
     return peak_bin;
 }
 
@@ -130,7 +130,7 @@ static int find_peak_bin(float *mag, int start, int end, int fft_size) {
 static float estimate_noise_floor(float *mag, int fft_size, int exclude_bin, int exclude_range) {
     float sum = 0.0f;
     int count = 0;
-    
+
     /* Sample bins away from the tone */
     for (int i = 50; i < 150; i++) {
         if (abs(i - exclude_bin) > exclude_range) {
@@ -138,7 +138,7 @@ static float estimate_noise_floor(float *mag, int fft_size, int exclude_bin, int
             count++;
         }
     }
-    
+
     /* Also check negative frequency region */
     int neg_exclude = fft_size - exclude_bin;
     for (int i = fft_size - 150; i < fft_size - 50; i++) {
@@ -147,7 +147,7 @@ static float estimate_noise_floor(float *mag, int fft_size, int exclude_bin, int
             count++;
         }
     }
-    
+
     return (count > 0) ? (sum / count) : 1e-10f;
 }
 
@@ -162,23 +162,23 @@ static void measure_tone(tone_tracker_t *tt) {
         tt->fft_in[i].r = tt->buffer_i[idx] * tt->window[i];
         tt->fft_in[i].i = tt->buffer_q[idx] * tt->window[i];
     }
-    
+
     /* Run FFT */
     kiss_fft(tt->fft_cfg, tt->fft_in, tt->fft_out);
-    
+
     /* Calculate magnitudes */
     for (int i = 0; i < TONE_FFT_SIZE; i++) {
         float re = tt->fft_out[i].r;
         float im = tt->fft_out[i].i;
         tt->magnitudes[i] = sqrtf(re * re + im * im);
     }
-    
+
     /* Special case for DC/carrier (0 Hz) */
     if (tt->nominal_hz < 1.0f) {
         /* Find peak near DC (bin 0) - search both positive and negative freqs */
         int peak_bin = 0;
         float peak_mag = tt->magnitudes[0];
-        
+
         /* Search positive frequencies (bins 1 to SEARCH_BINS) */
         for (int i = 1; i <= SEARCH_BINS && i < TONE_FFT_SIZE/2; i++) {
             if (tt->magnitudes[i] > peak_mag) {
@@ -186,7 +186,7 @@ static void measure_tone(tone_tracker_t *tt) {
                 peak_bin = i;
             }
         }
-        
+
         /* Search negative frequencies (bins FFT_SIZE-1 down to FFT_SIZE-SEARCH_BINS) */
         for (int i = TONE_FFT_SIZE - 1; i >= TONE_FFT_SIZE - SEARCH_BINS; i--) {
             if (tt->magnitudes[i] > peak_mag) {
@@ -194,7 +194,7 @@ static void measure_tone(tone_tracker_t *tt) {
                 peak_bin = i;
             }
         }
-        
+
         /* Convert bin to Hz (handle negative frequencies) */
         float peak_frac = parabolic_peak(tt->magnitudes, peak_bin, TONE_FFT_SIZE);
         float measured_hz;
@@ -203,13 +203,13 @@ static void measure_tone(tone_tracker_t *tt) {
         } else {
             measured_hz = (peak_frac - TONE_FFT_SIZE) * TONE_HZ_PER_BIN;
         }
-        
+
         /* Estimate noise floor (away from carrier) */
         float noise_floor = estimate_noise_floor(tt->magnitudes, TONE_FFT_SIZE, 0, SEARCH_BINS + 5);
         tt->noise_floor_linear = noise_floor;  /* Store for marker detector baseline */
         tt->snr_db = 20.0f * log10f(peak_mag / (noise_floor + 1e-10f));
         tt->valid = (tt->snr_db >= MIN_SNR_DB);
-        
+
         if (tt->valid) {
             tt->measured_hz = measured_hz;
             tt->offset_hz = measured_hz;  /* Offset from 0 Hz */
@@ -221,21 +221,21 @@ static void measure_tone(tone_tracker_t *tt) {
         }
         return;
     }
-    
+
     /* Normal case for 500/600 Hz tones */
-    
+
     /* Find expected bin locations */
     int nominal_bin = (int)(tt->nominal_hz / TONE_HZ_PER_BIN + 0.5f);
     int lsb_center = TONE_FFT_SIZE - nominal_bin;
-    
+
     /* Find USB peak (positive frequency) */
-    int usb_peak_bin = find_peak_bin(tt->magnitudes, 
+    int usb_peak_bin = find_peak_bin(tt->magnitudes,
                                       nominal_bin - SEARCH_BINS,
                                       nominal_bin + SEARCH_BINS,
                                       TONE_FFT_SIZE);
     float usb_peak_frac = parabolic_peak(tt->magnitudes, usb_peak_bin, TONE_FFT_SIZE);
     float usb_peak_mag = tt->magnitudes[usb_peak_bin];
-    
+
     /* Find LSB peak (negative frequency) */
     int lsb_peak_bin = find_peak_bin(tt->magnitudes,
                                       lsb_center - SEARCH_BINS,
@@ -243,28 +243,28 @@ static void measure_tone(tone_tracker_t *tt) {
                                       TONE_FFT_SIZE);
     float lsb_peak_frac = parabolic_peak(tt->magnitudes, lsb_peak_bin, TONE_FFT_SIZE);
     float lsb_peak_mag = tt->magnitudes[lsb_peak_bin];
-    
+
     /* Estimate noise floor */
-    float noise_floor = estimate_noise_floor(tt->magnitudes, TONE_FFT_SIZE, 
+    float noise_floor = estimate_noise_floor(tt->magnitudes, TONE_FFT_SIZE,
                                               nominal_bin, SEARCH_BINS + 5);
     tt->noise_floor_linear = noise_floor;  /* Store for marker detector baseline */
-    
+
     /* Calculate SNR (use stronger sideband) */
     float peak_mag = (usb_peak_mag > lsb_peak_mag) ? usb_peak_mag : lsb_peak_mag;
     tt->snr_db = 20.0f * log10f(peak_mag / (noise_floor + 1e-10f));
-    
+
     /* Validity check */
     tt->valid = (tt->snr_db >= MIN_SNR_DB);
-    
+
     if (tt->valid) {
         /* Sideband spacing method for best accuracy */
         float usb_hz = usb_peak_frac * TONE_HZ_PER_BIN;
         float lsb_hz = (TONE_FFT_SIZE - lsb_peak_frac) * TONE_HZ_PER_BIN;
-        
+
         /* Average both sidebands */
         tt->measured_hz = (usb_hz + lsb_hz) / 2.0f;
         tt->offset_hz = tt->measured_hz - tt->nominal_hz;
-        
+
         /* Scale to carrier PPM (offset at tone freq → offset at carrier) */
         tt->offset_ppm = (tt->offset_hz / tt->nominal_hz) * (CARRIER_NOMINAL_HZ / 1e6f);
     } else {
@@ -280,14 +280,14 @@ static void measure_tone(tone_tracker_t *tt) {
 
 static void log_measurement(tone_tracker_t *tt) {
     if (!tt->csv_file) return;
-    
+
     time_t now = time(NULL);
     struct tm *tm_info = localtime(&now);
     char time_str[16];
     strftime(time_str, sizeof(time_str), "%H:%M:%S", tm_info);
-    
+
     float timestamp_ms = tt->frame_count * TONE_FRAME_MS;
-    
+
     fprintf(tt->csv_file, "%s,%.1f,%.3f,%.3f,%.2f,%.1f,%s\n",
             time_str,
             timestamp_ms,
@@ -306,10 +306,10 @@ static void log_measurement(tone_tracker_t *tt) {
 tone_tracker_t *tone_tracker_create(float nominal_hz, const char *csv_path) {
     tone_tracker_t *tt = (tone_tracker_t *)calloc(1, sizeof(tone_tracker_t));
     if (!tt) return NULL;
-    
+
     tt->nominal_hz = nominal_hz;
     tt->start_time = time(NULL);
-    
+
     /* Allocate buffers */
     tt->buffer_i = (float *)calloc(TONE_FFT_SIZE, sizeof(float));
     tt->buffer_q = (float *)calloc(TONE_FFT_SIZE, sizeof(float));
@@ -317,31 +317,31 @@ tone_tracker_t *tone_tracker_create(float nominal_hz, const char *csv_path) {
     tt->fft_out = (kiss_fft_cpx *)malloc(TONE_FFT_SIZE * sizeof(kiss_fft_cpx));
     tt->window = (float *)malloc(TONE_FFT_SIZE * sizeof(float));
     tt->magnitudes = (float *)malloc(TONE_FFT_SIZE * sizeof(float));
-    
-    if (!tt->buffer_i || !tt->buffer_q || !tt->fft_in || 
+
+    if (!tt->buffer_i || !tt->buffer_q || !tt->fft_in ||
         !tt->fft_out || !tt->window || !tt->magnitudes) {
         tone_tracker_destroy(tt);
         return NULL;
     }
-    
+
     /* Initialize FFT */
     tt->fft_cfg = kiss_fft_alloc(TONE_FFT_SIZE, 0, NULL, NULL);
     if (!tt->fft_cfg) {
         tone_tracker_destroy(tt);
         return NULL;
     }
-    
+
     /* Generate window */
     generate_blackman_harris(tt->window, TONE_FFT_SIZE);
-    
+
     /* Open CSV file */
     if (csv_path) {
         tt->csv_file = fopen(csv_path, "w");
         if (tt->csv_file) {
             char time_str[64];
-            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", 
+            strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S",
                      localtime(&tt->start_time));
-            
+
             fprintf(tt->csv_file, "# Phoenix SDR WWV Tone Tracker (%.0f Hz) v%s\n",
                     nominal_hz, PHOENIX_VERSION_FULL);
             fprintf(tt->csv_file, "# Started: %s\n", time_str);
@@ -351,16 +351,16 @@ tone_tracker_t *tone_tracker_create(float nominal_hz, const char *csv_path) {
             fflush(tt->csv_file);
         }
     }
-    
+
     printf("[TONE] Tracker created for %.0f Hz (%.2f Hz/bin, %.1f ms frame)\n",
            nominal_hz, TONE_HZ_PER_BIN, TONE_FRAME_MS);
-    
+
     return tt;
 }
 
 void tone_tracker_destroy(tone_tracker_t *tt) {
     if (!tt) return;
-    
+
     if (tt->csv_file) fclose(tt->csv_file);
     if (tt->fft_cfg) kiss_fft_free(tt->fft_cfg);
     free(tt->buffer_i);
@@ -374,20 +374,20 @@ void tone_tracker_destroy(tone_tracker_t *tt) {
 
 void tone_tracker_process_sample(tone_tracker_t *tt, float i, float q) {
     if (!tt) return;
-    
+
     /* Store sample in circular buffer */
     tt->buffer_i[tt->buffer_idx] = i;
     tt->buffer_q[tt->buffer_idx] = q;
     tt->buffer_idx = (tt->buffer_idx + 1) % TONE_FFT_SIZE;
     tt->samples_collected++;
-    
+
     /* Process when buffer is full */
     if (tt->samples_collected >= TONE_FFT_SIZE) {
         tt->samples_collected = 0;
-        
+
         measure_tone(tt);
         log_measurement(tt);
-        
+
         tt->frame_count++;
     }
 }
@@ -425,7 +425,7 @@ float g_subcarrier_noise_floor = 0.01f;
 
 void tone_tracker_update_global_noise_floor(tone_tracker_t *tt) {
     if (!tt || !tt->valid) return;
-    
+
     /* Only update if this tracker has a valid measurement */
     if (tt->noise_floor_linear > 0.0001f) {
         /* Slow adaptation to prevent jumps */

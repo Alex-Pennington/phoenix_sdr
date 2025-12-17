@@ -532,7 +532,7 @@ static void on_tick_marker(const tick_marker_event_t *event, void *user_data) {
 
 static void on_slow_marker_frame(const slow_marker_frame_t *frame, void *user_data) {
     (void)user_data;
-    
+
     /* Feed correlator */
     if (g_marker_correlator) {
         marker_correlator_slow_frame(g_marker_correlator,
@@ -541,10 +541,10 @@ static void on_slow_marker_frame(const slow_marker_frame_t *frame, void *user_da
                                       frame->snr_db,
                                       frame->above_threshold);
     }
-    
+
     /* DISABLED: External baseline from slow marker doesn't work - different FFT configs
      * Slow marker: 12kHz/2048-pt FFT (5.86 Hz/bin)
-     * Fast marker: 50kHz/256-pt FFT (195 Hz/bin)  
+     * Fast marker: 50kHz/256-pt FFT (195 Hz/bin)
      * The noise_floor values have incompatible scaling.
      * Self-tracking baseline works correctly (proven in v133).
      */
@@ -555,14 +555,14 @@ static void on_slow_marker_frame(const slow_marker_frame_t *frame, void *user_da
 
 static void on_marker_event(const marker_event_t *event, void *user_data) {
     (void)user_data;
-    
+
     /* Feed correlator */
     if (g_marker_correlator) {
         marker_correlator_fast_event(g_marker_correlator,
                                       event->timestamp_ms,
                                       event->duration_ms);
     }
-    
+
     /* Also feed sync detector as before */
     if (g_sync_detector) {
         sync_detector_marker_event(g_sync_detector, event->timestamp_ms,

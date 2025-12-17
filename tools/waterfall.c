@@ -29,6 +29,7 @@
 #include "tone_tracker.h"
 #include "tick_correlator.h"
 #include "waterfall_flash.h"
+#include "waterfall_telemetry.h"
 
 /*============================================================================
  * WWV Subcarrier Tone Schedule (minutes past the hour)
@@ -833,6 +834,10 @@ int main(int argc, char *argv[]) {
     g_tone_500 = tone_tracker_create(500.0f, "wwv_tone_500.csv");
     g_tone_600 = tone_tracker_create(600.0f, "wwv_tone_600.csv");
 
+    /* Initialize UDP telemetry broadcast */
+    telem_init(3005);
+    telem_enable(TELEM_CHANNEL | TELEM_CARRIER | TELEM_SUBCAR | TELEM_TONE500 | TELEM_TONE600);
+
     /* Initialize flash system and register detectors */
     flash_init();
     flash_register(&(flash_source_t){
@@ -1177,6 +1182,40 @@ int main(int argc, char *argv[]) {
             fprintf(g_channel_csv, "%s,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%s\n",
                     time_str, timestamp_ms, carrier_db, snr_db, sub500_db, sub600_db, tone1000_db, noise_db, quality);
             fflush(g_channel_csv);
+
+            /* UDP telemetry broadcast */
+            telem_sendf(TELEM_CHANNEL, "%s,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%s",
+                        time_str, timestamp_ms, carrier_db, snr_db, sub500_db, sub600_db, tone1000_db, noise_db, quality);
+
+            /* Also send carrier tracker data */
+            if (tone_tracker_is_valid(g_tone_carrier)) {
+                telem_sendf(TELEM_CARRIER, "%s,%.1f,%.3f,%.3f,%.2f,%.1f",
+                            time_str, timestamp_ms,
+                            tone_tracker_get_measured_hz(g_tone_carrier),
+                            tone_tracker_get_offset_hz(g_tone_carrier),
+                            tone_tracker_get_offset_ppm(g_tone_carrier),
+                            tone_tracker_get_snr_db(g_tone_carrier));
+            }
+
+            /* Send tone 500 tracker data */
+            if (tone_tracker_is_valid(g_tone_500)) {
+                telem_sendf(TELEM_TONE500, "%s,%.1f,%.3f,%.3f,%.2f,%.1f",
+                            time_str, timestamp_ms,
+                            tone_tracker_get_measured_hz(g_tone_500),
+                            tone_tracker_get_offset_hz(g_tone_500),
+                            tone_tracker_get_offset_ppm(g_tone_500),
+                            tone_tracker_get_snr_db(g_tone_500));
+            }
+
+            /* Send tone 600 tracker data */
+            if (tone_tracker_is_valid(g_tone_600)) {
+                telem_sendf(TELEM_TONE600, "%s,%.1f,%.3f,%.3f,%.2f,%.1f",
+                            time_str, timestamp_ms,
+                            tone_tracker_get_measured_hz(g_tone_600),
+                            tone_tracker_get_offset_hz(g_tone_600),
+                            tone_tracker_get_offset_ppm(g_tone_600),
+                            tone_tracker_get_snr_db(g_tone_600));
+            }
         }
 
         /* Log subcarrier conditions every ~1 second (12 frames) */
@@ -1201,6 +1240,11 @@ int main(int argc, char *argv[]) {
                     time_str, frame_num * DISPLAY_EFFECTIVE_MS, minute,
                     expected, sub500_db, sub600_db, delta_db, detected, match);
             fflush(g_subcarrier_csv);
+
+            /* UDP telemetry broadcast */
+            telem_sendf(TELEM_SUBCAR, "%s,%.1f,%d,%s,%.1f,%.1f,%.1f,%s,%s",
+                        time_str, frame_num * DISPLAY_EFFECTIVE_MS, minute,
+                        expected, sub500_db, sub600_db, delta_db, detected, match);
         }
 
         /* Draw flash bands on waterfall for all registered detectors */
@@ -1315,6 +1359,7 @@ int main(int argc, char *argv[]) {
     tone_tracker_destroy(g_tone_carrier);
     tone_tracker_destroy(g_tone_500);
     tone_tracker_destroy(g_tone_600);
+    telem_cleanup();
     if (g_channel_csv) fclose(g_channel_csv);
     if (g_subcarrier_csv) fclose(g_subcarrier_csv);
 

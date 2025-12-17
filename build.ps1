@@ -248,6 +248,7 @@ try {
     $waterfallFlashObj = Build-Object "tools\waterfall_flash.c" @()
     $waterfallDspObj = Build-Object "tools\waterfall_dsp.c" @()
     $waterfallAudioObj = Build-Object "tools\waterfall_audio.c" @()
+    $waterfallTelemObj = Build-Object "tools\waterfall_telemetry.c" @()
     $waterfallObj = Build-Object "tools\waterfall.c" @("-I`"$SDL2Include`"")
 
     Write-Status "Linking waterfall.exe..."
@@ -260,7 +261,7 @@ try {
         "-lws2_32",
         "-lwinmm"
     )
-    $allArgs = @("-o", "`"$BinDir\waterfall.exe`"", "`"$waterfallObj`"", "`"$tickDetectorObj`"", "`"$markerDetectorObj`"", "`"$syncDetectorObj`"", "`"$toneTrackerObj`"", "`"$tickCorrelatorObj`"", "`"$waterfallFlashObj`"", "`"$wwvClockObj`"", "`"$waterfallDspObj`"", "`"$waterfallAudioObj`"", "`"$kissObj`"") + $waterfallLdflags
+    $allArgs = @("-o", "`"$BinDir\waterfall.exe`"", "`"$waterfallObj`"", "`"$tickDetectorObj`"", "`"$markerDetectorObj`"", "`"$syncDetectorObj`"", "`"$toneTrackerObj`"", "`"$tickCorrelatorObj`"", "`"$waterfallFlashObj`"", "`"$wwvClockObj`"", "`"$waterfallDspObj`"", "`"$waterfallAudioObj`"", "`"$waterfallTelemObj`"", "`"$kissObj`"") + $waterfallLdflags
     $argString = $allArgs -join " "
     $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Linking failed for waterfall" }
@@ -306,6 +307,20 @@ try {
     $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Linking failed for test_tcp_commands" }
     Write-Status "Built: $BinDir\test_tcp_commands.exe"
+
+    # Build test_telemetry (UDP telemetry unit tests)
+    Write-Status "Building test_telemetry..."
+
+    $telemObj = Build-Object "tools\waterfall_telemetry.c" @()
+    $testTelemObj = Build-Object "test\test_telemetry.c" @()
+
+    Write-Status "Linking test_telemetry.exe..."
+    $telemLdflags = @("-lws2_32", "-lm")
+    $allArgs = @("-o", "`"$BinDir\test_telemetry.exe`"", "`"$testTelemObj`"", "`"$telemObj`"") + $telemLdflags
+    $argString = $allArgs -join " "
+    $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Linking failed for test_telemetry" }
+    Write-Status "Built: $BinDir\test_telemetry.exe"
 
     # Build SDR source files for sdr_server
     Write-Status "Building SDR library objects..."

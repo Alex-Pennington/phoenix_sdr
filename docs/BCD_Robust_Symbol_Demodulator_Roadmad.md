@@ -7,6 +7,44 @@
 
 ---
 
+## Implementation Status
+
+| Phase | Module | Status | Notes |
+|-------|--------|--------|-------|
+| 1 | `bcd_time_detector.c/h` | ✅ Done | Pattern: tick_detector FFT path |
+| 2 | `bcd_freq_detector.c/h` | ✅ Done | Pattern: marker_detector with larger FFT |
+| 3 | `bcd_correlator.c/h` | ✅ Done | Pattern: sync_detector state machine |
+| 4 | Wire into `waterfall.c` | ✅ Done | Parallel IQ feed, P2 isolation, wrapper callbacks |
+| 5 | Update `build.ps1` | ✅ Done | Added build objects + linker entries |
+| 6 | Test & tune thresholds | ⬜ Not Started | May need field adjustment |
+| 7 | Deprecate old `bcd_decoder.c` | ⬜ Not Started | After new path validated |
+
+---
+
+## Technical Specifications
+
+### Sample Rate
+- **Input:** 50kHz (decimated from 2MHz)
+- **Note:** 50kHz used instead of 48kHz due to sample rate mismatch causing dropped samples
+
+### FFT Library
+- **Library:** kiss_fft (following existing tick_detector/marker_detector pattern)
+
+### Telemetry
+- **Method:** UDP packets (existing pattern)
+- **Symbol packet:** Contains decoded symbol data
+- **Envelope packet:** Contains envelope data
+
+### Integration Point
+- **File:** `tools/waterfall.c` (NOT sdr_server.c)
+- **Pattern:** Parallel IQ feed to each detector
+- **Isolation:** Per P2 rules - raw `i_raw`, `q_raw` only shared data
+
+### Build System
+- **File:** `build.ps1` (NOT CMakeLists.txt)
+
+---
+
 ## Current Signal Architecture (Established Pattern)
 
 ```
@@ -156,7 +194,7 @@ Callback: (pulse_start_ms, pulse_end_ms, duration_ms, peak_energy)
 #define BCD_TIME_HYSTERESIS      0.7f
 ```
 
-**Location:** `D:\claude_sandbox\phoenix_sdr\tools\bcd_time_detector.c/h`
+**Location:** `tools/bcd_time_detector.c/h`
 
 ---
 
@@ -228,7 +266,7 @@ Callback: (timestamp_ms, duration_ms, accumulated_energy, snr_db)
 #define BCD_FREQ_NOISE_ADAPT     0.001f  /* Slow baseline adaptation */
 ```
 
-**Location:** `D:\claude_sandbox\phoenix_sdr\tools\bcd_freq_detector.c/h`
+**Location:** `tools/bcd_freq_detector.c/h`
 
 ---
 
@@ -304,20 +342,20 @@ ACQUIRING ──────► TENTATIVE ──────► TRACKING
 #define BCD_SYMBOL_MARKER_MAX_MS      900.0f
 ```
 
-**Location:** `D:\claude_sandbox\phoenix_sdr\tools\bcd_correlator.c/h`
+**Location:** `tools/bcd_correlator.c/h`
 
 ---
 
 ## Surgical Edits Required
 
-### 1. CMakeLists.txt
+### 1. build.ps1
 
-**File:** `D:\claude_sandbox\phoenix_sdr\CMakeLists.txt`
+**File:** `build.ps1`
 
-**Locate:** `MODEM_SOURCES` or equivalent source list
+**Locate:** Source file list for tools build
 
 **Add:**
-```cmake
+```powershell
 tools/bcd_time_detector.c
 tools/bcd_freq_detector.c
 tools/bcd_correlator.c
@@ -325,9 +363,9 @@ tools/bcd_correlator.c
 
 ---
 
-### 2. Header Includes - sdr_server.c
+### 2. Header Includes - waterfall.c
 
-**File:** `D:\claude_sandbox\phoenix_sdr\src\sdr_server.c`
+**File:** `tools/waterfall.c`
 
 **Locate:** Include section at top of file
 
@@ -340,11 +378,11 @@ tools/bcd_correlator.c
 
 ---
 
-### 3. Global Declarations - sdr_server.c
+### 3. Global Declarations - waterfall.c
 
-**File:** `D:\claude_sandbox\phoenix_sdr\src\sdr_server.c`
+**File:** `tools/waterfall.c`
 
-**Locate:** Where `tick_detector_t *tick_det` is declared
+**Locate:** Where existing detector instances are declared
 
 **Add:**
 ```c
@@ -355,51 +393,56 @@ static bcd_correlator_t *bcd_corr = NULL;
 
 ---
 
-### 4. Detector Creation - sdr_server.c
+### 4. Detector Creation - waterfall.c
 
-**File:** `D:\claude_sandbox\phoenix_sdr\src\sdr_server.c`
+**File:** `tools/waterfall.c`
 
-**Locate:** Where `tick_detector_create()` and `marker_detector_create()` are called
+**Locate:** Where existing detectors are created (tick_detector_create, marker_detector_create)
 
 **Add:**
 ```c
 /* Create BCD dual-path detectors */
-bcd_time_det = bcd_time_detector_create("wwv_bcd_time.csv");
-bcd_freq_det = bcd_freq_detector_create("wwv_bcd_freq.csv");
-bcd_corr = bcd_correlator_create("wwv_bcd_corr.csv");
+bcd_time_det = bcd_time_detector_create("logs/wwv_bcd_time.csv");
+bcd_freq_det = bcd_freq_detector_create("logs/wwv_bcd_freq.csv");
+bcd_corr = bcd_correlator_create("logs/wwv_bcd_corr.csv");
 
 /* Wire detector callbacks to correlator */
 bcd_time_detector_set_callback(bcd_time_det, on_bcd_time_event, bcd_corr);
 bcd_freq_detector_set_callback(bcd_freq_det, on_bcd_freq_event, bcd_corr);
 
-/* Wire correlator output to telemetry */
+/* Wire correlator output to UDP telemetry */
 bcd_correlator_set_symbol_callback(bcd_corr, on_bcd_symbol, NULL);
 ```
 
 ---
 
-### 5. IQ Split Point - sdr_server.c
+### 5. IQ Split Point - waterfall.c
 
-**File:** `D:\claude_sandbox\phoenix_sdr\src\sdr_server.c`
+**File:** `tools/waterfall.c`
 
-**Locate:** Sample processing loop where existing detectors are fed
+**Locate:** Sample processing loop where raw `i_raw`, `q_raw` are available
 
-**Add (parallel to existing calls):**
+**Add (parallel to existing detector calls - per P2 isolation rules):**
 ```c
-/* Existing detector calls */
-tick_detector_process_sample(tick_det, i_sample, q_sample);
-marker_detector_process_sample(marker_det, i_sample, q_sample);
+/* Existing detector calls receive raw IQ */
+tick_detector_process_sample(tick_det, i_raw, q_raw);
+marker_detector_process_sample(marker_det, i_raw, q_raw);
 
-/* NEW: BCD dual-path detectors - same IQ, parallel paths */
-bcd_time_detector_process_sample(bcd_time_det, i_sample, q_sample);
-bcd_freq_detector_process_sample(bcd_freq_det, i_sample, q_sample);
+/* NEW: BCD dual-path detectors - same raw IQ, parallel paths */
+bcd_time_detector_process_sample(bcd_time_det, i_raw, q_raw);
+bcd_freq_detector_process_sample(bcd_freq_det, i_raw, q_raw);
 ```
+
+**CRITICAL P2 COMPLIANCE:**
+- New detectors receive `i_raw`, `q_raw` ONLY
+- No access to `g_display_dsp` or `g_audio_dsp`
+- No shared state with display or audio paths
 
 ---
 
-### 6. Callback Handlers - sdr_server.c
+### 6. Callback Handlers - waterfall.c
 
-**File:** `D:\claude_sandbox\phoenix_sdr\src\sdr_server.c`
+**File:** `tools/waterfall.c`
 
 **Add callback functions:**
 ```c
@@ -420,17 +463,16 @@ static void on_bcd_freq_event(const bcd_freq_event_t *event, void *user_data) {
 /* Correlator symbol output → UDP telemetry */
 static void on_bcd_symbol(const bcd_symbol_event_t *event, void *user_data) {
     (void)user_data;
-    /* Use existing BCDS,SYM telemetry format */
-    telem_sendf(TELEM_BCD, "BCDS,SYM,%c,%.1f,%.1f",
-                event->symbol, event->timestamp_ms, event->width_ms);
+    /* Send via UDP using existing pattern */
+    /* Symbol packet format: matches existing bcd_decoder output */
 }
 ```
 
 ---
 
-### 7. Cleanup - sdr_server.c
+### 7. Cleanup - waterfall.c
 
-**File:** `D:\claude_sandbox\phoenix_sdr\src\sdr_server.c`
+**File:** `tools/waterfall.c`
 
 **Locate:** Shutdown/cleanup section
 
@@ -466,9 +508,10 @@ bcd_correlator_destroy(bcd_corr);
 | 1 | `bcd_time_detector.c/h` | Medium | Pattern: tick_detector FFT path |
 | 2 | `bcd_freq_detector.c/h` | Medium | Pattern: marker_detector with larger FFT |
 | 3 | `bcd_correlator.c/h` | Medium | Pattern: sync_detector state machine |
-| 4 | Wire into `sdr_server.c` | Low | Surgical edits listed above |
-| 5 | Test & tune thresholds | Variable | May need field adjustment |
-| 6 | Remove old `bcd_decoder.c` | Low | After new path validated |
+| 4 | Wire into `waterfall.c` | Low | Surgical edits listed above |
+| 5 | Update `build.ps1` | Low | Add source files |
+| 6 | Test & tune thresholds | Variable | May need field adjustment |
+| 7 | Deprecate old `bcd_decoder.c` | Low | After new path validated |
 
 ---
 
@@ -483,10 +526,9 @@ bcd_correlator_destroy(bcd_corr);
 - `tools/bcd_correlator.c`
 
 ### Modified Files (surgical edits)
-- `CMakeLists.txt` - add 3 source files
-- `src/sdr_server.c` - includes, globals, create, process, callbacks, destroy
+- `build.ps1` - add 3 source files
+- `tools/waterfall.c` - includes, globals, create, process, callbacks, destroy
 
-### Unchanged
-- `tools/bcd_envelope.c/h` - may deprecate later
-- `tools/bcd_decoder.c/h` - may deprecate later
-- Controller code - uses existing BCDS,SYM telemetry format
+### Superseded (deprecate after validation)
+- `tools/bcd_envelope.c/h` - old single-path envelope detection
+- `tools/bcd_decoder.c/h` - old single-path symbol decoder

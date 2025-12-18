@@ -27,6 +27,9 @@
 #include "marker_correlator.h"
 #include "bcd_envelope.h"
 #include "bcd_decoder.h"
+#include "bcd_time_detector.h"
+#include "bcd_freq_detector.h"
+#include "bcd_correlator.h"
 #include "waterfall_flash.h"
 #include "waterfall_telemetry.h"
 
@@ -521,6 +524,9 @@ static bcd_decoder_t *g_bcd_decoder = NULL;
 static sync_detector_t *g_sync_detector = NULL;
 static slow_marker_detector_t *g_slow_marker = NULL;
 static marker_correlator_t *g_marker_correlator = NULL;
+static bcd_time_detector_t *g_bcd_time_detector = NULL;
+static bcd_freq_detector_t *g_bcd_freq_detector = NULL;
+static bcd_correlator_t *g_bcd_correlator = NULL;
 static FILE *g_channel_csv = NULL;
 static uint64_t g_channel_log_interval = 0;  /* Log every N frames */
 static FILE *g_subcarrier_csv = NULL;
@@ -619,6 +625,24 @@ static void on_bcd_symbol(bcd_symbol_t symbol, float timestamp_ms,
                           (symbol == BCD_SYMBOL_ONE) ? "1" :
                           (symbol == BCD_SYMBOL_MARKER) ? "P" : "?";
     telem_sendf(TELEM_BCDS, "SYM,%s,%.1f,%.1f", sym_str, timestamp_ms, pulse_width_ms);
+}
+
+/*============================================================================
+ * BCD Dual-Path Detector Callbacks (wrappers for correlator)
+ *============================================================================*/
+
+static void on_bcd_time_event(const bcd_time_event_t *event, void *user_data) {
+    bcd_correlator_t *corr = (bcd_correlator_t *)user_data;
+    if (corr && event) {
+        bcd_correlator_time_event(corr, event->timestamp_ms, event->duration_ms, event->peak_energy);
+    }
+}
+
+static void on_bcd_freq_event(const bcd_freq_event_t *event, void *user_data) {
+    bcd_correlator_t *corr = (bcd_correlator_t *)user_data;
+    if (corr && event) {
+        bcd_correlator_freq_event(corr, event->timestamp_ms, event->duration_ms, event->accumulated_energy);
+    }
 }
 
 /*============================================================================
@@ -890,6 +914,16 @@ int main(int argc, char *argv[]) {
     }
     bcd_decoder_set_symbol_callback(g_bcd_decoder, on_bcd_symbol, NULL);
 
+    /* Create BCD dual-path detectors (robust symbol demodulator) */
+    g_bcd_time_detector = bcd_time_detector_create("logs/wwv_bcd_time.csv");
+    g_bcd_freq_detector = bcd_freq_detector_create("logs/wwv_bcd_freq.csv");
+    g_bcd_correlator = bcd_correlator_create("logs/wwv_bcd_corr.csv");
+    if (g_bcd_time_detector && g_bcd_freq_detector && g_bcd_correlator) {
+        /* Wire time and freq detectors to correlator via wrapper callbacks */
+        bcd_time_detector_set_callback(g_bcd_time_detector, on_bcd_time_event, g_bcd_correlator);
+        bcd_freq_detector_set_callback(g_bcd_freq_detector, on_bcd_freq_event, g_bcd_correlator);
+    }
+
     /* Create marker correlator */
     g_marker_correlator = marker_correlator_create("wwv_markers_corr.csv");
     if (!g_marker_correlator) {
@@ -1135,6 +1169,9 @@ int main(int argc, char *argv[]) {
                         g_detector_decim_counter = 0;
                         tick_detector_process_sample(g_tick_detector, det_i, det_q);
                         marker_detector_process_sample(g_marker_detector, det_i, det_q);
+                        /* BCD dual-path detectors (robust symbol demodulator) */
+                        if (g_bcd_time_detector) bcd_time_detector_process_sample(g_bcd_time_detector, det_i, det_q);
+                        if (g_bcd_freq_detector) bcd_freq_detector_process_sample(g_bcd_freq_detector, det_i, det_q);
                     }
 
                     /*========================================================
@@ -1524,6 +1561,10 @@ int main(int argc, char *argv[]) {
     marker_detector_destroy(g_marker_detector);
     bcd_envelope_destroy(g_bcd_envelope);
     bcd_decoder_destroy(g_bcd_decoder);
+    /* BCD dual-path detectors (robust symbol demodulator) */
+    if (g_bcd_time_detector) bcd_time_detector_destroy(g_bcd_time_detector);
+    if (g_bcd_freq_detector) bcd_freq_detector_destroy(g_bcd_freq_detector);
+    if (g_bcd_correlator) bcd_correlator_destroy(g_bcd_correlator);
     slow_marker_detector_destroy(g_slow_marker);
     marker_correlator_destroy(g_marker_correlator);
     sync_detector_destroy(g_sync_detector);

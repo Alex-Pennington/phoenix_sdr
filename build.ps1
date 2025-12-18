@@ -18,18 +18,55 @@ $BuildDir = "build"
 $BinDir = "bin"
 $VersionFile = "$IncludeDir\version.h"
 
-# SDRplay API paths
+# SDRplay API paths (optional - only needed for SDR tools)
 $SDRplayInclude = "C:\Program Files\SDRplay\API\inc"
 $SDRplayLib = "C:\Program Files\SDRplay\API\x64"
+$SDRplayAvailable = (Test-Path $SDRplayInclude) -and (Test-Path $SDRplayLib)
 
 # SDL2 paths
 $SDL2Dir = "$PSScriptRoot\libs\SDL2\SDL2-2.30.9\x86_64-w64-mingw32"
 $SDL2Include = "$SDL2Dir\include\SDL2"
 $SDL2Lib = "$SDL2Dir\lib"
 
-# Compiler (MinGW/GCC via winget)
-$MinGWBin = "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64\bin"
-$CC = "$MinGWBin\gcc.exe"
+# Compiler (MinGW/GCC) - MSYS2 setup
+$MSYS2BinDir = "C:\msys64\mingw64\bin"
+$UseMSYS2 = Test-Path $MSYS2BinDir
+
+if ($UseMSYS2) {
+    # MSYS2 detected - add to PATH and use gcc directly
+    $env:PATH = "$MSYS2BinDir;$env:PATH"
+    $CC = "$MSYS2BinDir\gcc.exe"
+    Write-Host "[phoenix_sdr] Using MSYS2 MinGW64 environment" -ForegroundColor Green
+} else {
+    # Fall back to direct gcc.exe paths
+    $possiblePaths = @(
+        "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64\bin\gcc.exe",
+        "C:\mingw64\bin\gcc.exe",
+        "C:\MinGW\bin\gcc.exe",
+        "C:\Program Files\mingw-w64\bin\gcc.exe"
+    )
+
+    $CC = $null
+    foreach ($path in $possiblePaths) {
+        if (Test-Path $path) {
+            $CC = $path
+            break
+        }
+    }
+
+    # Fall back to PATH
+    if (-not $CC) {
+        try {
+            $gccPath = (Get-Command gcc -ErrorAction Stop).Source
+            $CC = $gccPath
+        } catch {
+            Write-Host "ERROR: GCC compiler not found!" -ForegroundColor Red
+            Write-Host "Please install MinGW-w64 via MSYS2 from: https://www.msys2.org" -ForegroundColor Yellow
+            Write-Host "Then run: pacman -S mingw-w64-x86_64-toolchain" -ForegroundColor Yellow
+            exit 1
+        }
+    }
+}
 
 function Write-Status($msg) {
     Write-Host "[$ProjectName] " -ForegroundColor Cyan -NoNewline
@@ -159,12 +196,66 @@ function Build-Object($source, $extraFlags) {
 
     Write-Status "Compiling $source..."
     $allFlags = $CFLAGS + $extraFlags
-    $allArgs = $allFlags + @("-c", "-o", "`"$objPath`"", "`"$source`"")
-    $argString = $allArgs -join " "
+    $allArgs = $allFlags + @("-c", "-o", $objPath, $source)
 
-    $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
-    if ($process.ExitCode -ne 0) { throw "Compilation failed for $source" }
+    # Run compiler - use Start-Process to avoid PowerShell's stderr-as-error behavior
+    $tempOut = [System.IO.Path]::GetTempFileName()
+    $tempErr = [System.IO.Path]::GetTempFileName()
+    $proc = Start-Process -FilePath $CC -ArgumentList $allArgs -NoNewWindow -Wait -PassThru `
+        -RedirectStandardOutput $tempOut -RedirectStandardError $tempErr
+    $stdout = Get-Content $tempOut -ErrorAction SilentlyContinue
+    $stderr = Get-Content $tempErr -ErrorAction SilentlyContinue
+    Remove-Item $tempOut,$tempErr -ErrorAction SilentlyContinue
+
+    # Show warnings from stderr
+    if ($stderr -and $proc.ExitCode -eq 0) {
+        $stderr | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+    }
+
+    if ($proc.ExitCode -ne 0) {
+        Write-Host "Command: $CC $($allArgs -join ' ')" -ForegroundColor Yellow
+        Write-Host "Compiler stderr:" -ForegroundColor Red
+        if ($stderr) {
+            $stderr | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+        }
+        if ($stdout) {
+            $stdout | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+        }
+        throw "Compilation failed for $source with exit code $($proc.ExitCode)"
+    }
     return $objPath
+}
+
+function Link-Executable($outPath, $objects, $extraLDFLAGS) {
+    Write-Status "Linking $(Split-Path -Leaf $outPath)..."
+    $allArgs = @("-o", $outPath) + $objects + $LDFLAGS + $extraLDFLAGS
+
+    # Run linker - use Start-Process to avoid PowerShell's stderr-as-error behavior
+    $tempOut = [System.IO.Path]::GetTempFileName()
+    $tempErr = [System.IO.Path]::GetTempFileName()
+    $proc = Start-Process -FilePath $CC -ArgumentList $allArgs -NoNewWindow -Wait -PassThru `
+        -RedirectStandardOutput $tempOut -RedirectStandardError $tempErr
+    $stdout = Get-Content $tempOut -ErrorAction SilentlyContinue
+    $stderr = Get-Content $tempErr -ErrorAction SilentlyContinue
+    Remove-Item $tempOut,$tempErr -ErrorAction SilentlyContinue
+
+    # Show warnings from stderr
+    if ($stderr -and $proc.ExitCode -eq 0) {
+        $stderr | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+    }
+
+    if ($proc.ExitCode -ne 0) {
+        Write-Host "Command: $CC $($allArgs -join ' ')" -ForegroundColor Yellow
+        Write-Host "Linker stderr:" -ForegroundColor Red
+        if ($stderr) {
+            $stderr | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+        }
+        if ($stdout) {
+            $stdout | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+        }
+        throw "Linking failed for $outPath with exit code $($proc.ExitCode)"
+    }
+    Write-Host "Built: $outPath" -ForegroundColor Green
 }
 
 #============================================================================
@@ -185,6 +276,10 @@ try {
 
     # Update version (increments build number every time)
     $version = Update-Version
+
+    # Debug: Show library availability
+    Write-Host "[DEBUG] SDRplay: Include=$SDRplayInclude Lib=$SDRplayLib Available=$SDRplayAvailable" -ForegroundColor Magenta
+    Write-Host "[DEBUG] SDL2: Dir=$SDL2Dir Available=$(Test-Path $SDL2Dir)" -ForegroundColor Magenta
 
     # Set compiler flags
     $CFLAGS = @(
@@ -215,28 +310,35 @@ try {
     if (-not (Test-Path $BuildDir)) { New-Item -ItemType Directory -Path $BuildDir | Out-Null }
     if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir | Out-Null }
 
-    # Build simple_am_receiver
-    Write-Status "Building simple_am_receiver..."
-    $objects = @(
-        (Build-Object "tools\simple_am_receiver.c" @())
-    )
-
-    Write-Status "Linking simple_am_receiver.exe..."
-    $allArgs = @("-o", "`"$BinDir\simple_am_receiver.exe`"") + $objects + $LDFLAGS
-    $argString = $allArgs -join " "
-    $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
-    if ($process.ExitCode -ne 0) { throw "Linking failed" }
-
-    # Copy SDRplay DLL
-    $dllSrc = "$SDRplayLib\sdrplay_api.dll"
-    $dllDst = "$BinDir\sdrplay_api.dll"
-    if ((Test-Path $dllSrc) -and -not (Test-Path $dllDst)) {
-        Copy-Item $dllSrc $dllDst
+    # Check SDRplay availability
+    if (-not $SDRplayAvailable) {
+        Write-Host "WARNING: SDRplay API not found - skipping SDR-dependent tools" -ForegroundColor Yellow
+        Write-Host "  Install from: https://www.sdrplay.com/api/" -ForegroundColor Yellow
+        Write-Host "  Building WWV generator only..." -ForegroundColor Yellow
+        Write-Host ""
     }
-    Write-Status "Built: $BinDir\simple_am_receiver.exe"
 
-    # Build waterfall
-    Write-Status "Building waterfall..."
+    # Build simple_am_receiver (requires SDRplay)
+    if ($SDRplayAvailable) {
+        Write-Status "Building simple_am_receiver..."
+        $objects = @(
+            (Build-Object "tools\simple_am_receiver.c" @())
+        )
+
+        Link-Executable "$BinDir\simple_am_receiver.exe" $objects @()
+
+        # Copy SDRplay DLL
+        $dllSrc = "$SDRplayLib\sdrplay_api.dll"
+        $dllDst = "$BinDir\sdrplay_api.dll"
+        if ((Test-Path $dllSrc) -and -not (Test-Path $dllDst)) {
+            Copy-Item $dllSrc $dllDst
+        }
+        Write-Status "Built: $BinDir\simple_am_receiver.exe"
+    }
+
+    # Build waterfall (requires SDRplay and SDL2)
+    if ($SDRplayAvailable -and (Test-Path "$SDL2Dir")) {
+        Write-Status "Building waterfall..."
 
     $kissObj = Build-Object "src\kiss_fft.c" @()
     $wwvClockObj = Build-Object "tools\wwv_clock.c" @()
@@ -275,15 +377,17 @@ try {
     if ($process.ExitCode -ne 0) { throw "Linking failed for waterfall" }
 
     # Copy SDL2 DLL
-    $sdl2DllSrc = "$SDL2Dir\bin\SDL2.dll"
-    $sdl2DllDst = "$BinDir\SDL2.dll"
-    if ((Test-Path $sdl2DllSrc) -and -not (Test-Path $sdl2DllDst)) {
-        Copy-Item $sdl2DllSrc $sdl2DllDst
+        $sdl2DllSrc = "$SDL2Dir\bin\SDL2.dll"
+        $sdl2DllDst = "$BinDir\SDL2.dll"
+        if ((Test-Path $sdl2DllSrc) -and -not (Test-Path $sdl2DllDst)) {
+            Copy-Item $sdl2DllSrc $sdl2DllDst
+        }
+        Write-Status "Built: $BinDir\waterfall.exe"
     }
-    Write-Status "Built: $BinDir\waterfall.exe"
 
-    # Build wormhole (M110A constellation display)
-    Write-Status "Building wormhole..."
+    # Build wormhole (M110A constellation display) - requires SDL2
+    if (Test-Path "$SDL2Dir") {
+        Write-Status "Building wormhole..."
 
     $wormholeObj = Build-Object "tools\wormhole.c" @("-I`"$SDL2Include`"")
 
@@ -297,9 +401,10 @@ try {
     )
     $allArgs = @("-o", "`"$BinDir\wormhole.exe`"", "`"$wormholeObj`"") + $wormholeLdflags
     $argString = $allArgs -join " "
-    $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
-    if ($process.ExitCode -ne 0) { throw "Linking failed for wormhole" }
-    Write-Status "Built: $BinDir\wormhole.exe"
+        $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
+        if ($process.ExitCode -ne 0) { throw "Linking failed for wormhole" }
+        Write-Status "Built: $BinDir\wormhole.exe"
+    }
 
     # Build test_tcp_commands (TCP command parser unit tests)
     Write-Status "Building test_tcp_commands..."
@@ -341,7 +446,6 @@ try {
     $sdrServerObj = Build-Object "tools\sdr_server.c" @()
     # Reuse tcpCmdObj from above
 
-    Write-Status "Linking sdr_server.exe..."
     $serverLdflags = @(
         "-L`"$SDRplayLib`"",
         "-lsdrplay_api",
@@ -349,11 +453,23 @@ try {
         "-lm",
         "-lwinmm"
     )
-    $allArgs = @("-o", "`"$BinDir\sdr_server.exe`"", "`"$sdrServerObj`"", "`"$tcpCmdObj`"", "`"$sdrStreamObj`"", "`"$sdrDeviceObj`"") + $serverLdflags
-    $argString = $allArgs -join " "
-    $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
-    if ($process.ExitCode -ne 0) { throw "Linking failed for sdr_server" }
-    Write-Status "Built: $BinDir\sdr_server.exe"
+    $serverObjects = @($sdrServerObj, $tcpCmdObj, $sdrStreamObj, $sdrDeviceObj)
+    Link-Executable "$BinDir\sdr_server.exe" $serverObjects $serverLdflags
+
+    #===== WWV Test Signal Generator (no SDR dependencies) =====
+    Write-Status "Building wwv_gen..."
+    # Build IQ recorder objects (needed for .iqr file output)
+    $iqrMetaObj = Build-Object "src\iqr_meta.c" @()
+    $iqrObj = Build-Object "src\iq_recorder.c" @()
+
+    # Build WWV signal generator components
+    $oscillatorObj = Build-Object "tools\oscillator.c" @()
+    $bcdEncoderObj = Build-Object "tools\bcd_encoder.c" @()
+    $wwvSignalObj = Build-Object "tools\wwv_signal.c" @()
+    $wwvGenObj = Build-Object "tools\wwv_gen.c" @()
+
+    $wwvObjects = @($wwvGenObj, $wwvSignalObj, $oscillatorObj, $bcdEncoderObj, $iqrObj, $iqrMetaObj)
+    Link-Executable "$BinDir\wwv_gen.exe" $wwvObjects @("-lm")
 
     Write-Status "Done."
 }

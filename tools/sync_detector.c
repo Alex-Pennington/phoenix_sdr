@@ -35,7 +35,10 @@
 #define TICK_HOLE_MAX_GAP_MS         2200.0f
 #define TICK_DOUBLE_MAX_GAP_MS       100.0f
 
-#define SYNC_SIGNAL_LOSS_GAP_MS      2500.0f
+/* Marker-based signal health (markers reliable even on weak signals) */
+#define MARKER_GAP_WARNING_MS        75000.0f  /* 1.25 marker intervals */
+#define MARKER_GAP_CRITICAL_MS       90000.0f  /* 1.5 marker intervals = signal lost */
+
 #define SYNC_RETENTION_WINDOW_MS     120000.0f
 #define SYNC_RECOVERY_TIMEOUT_MS     10000.0f
 
@@ -643,13 +646,11 @@ void sync_detector_periodic_check(sync_detector_t *sd, float current_ms) {
                        CONFIDENCE_DECAY_RECOVERING : CONFIDENCE_DECAY_NORMAL;
     sd->confidence *= decay_rate;
 
-    /* Signal loss detection (only when LOCKED) */
+    /* Signal loss detection (only when LOCKED) - marker-based authority */
     if (sd->state == SYNC_LOCKED) {
-        float since_last_tick = current_ms - sd->tick_gap.last_tick_ms;
         float since_last_marker = current_ms - sd->last_confirmed_ms;
-        float since_last_evidence = fminf(since_last_tick, since_last_marker);
 
-        if (since_last_evidence > SYNC_SIGNAL_LOSS_GAP_MS) {
+        if (since_last_marker > MARKER_GAP_CRITICAL_MS) {
             sd->signal_weak_count++;
             if (sd->signal_weak_count >= SIGNAL_WEAK_DEBOUNCE) {
                 /* Enter recovery */

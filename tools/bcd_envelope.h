@@ -2,6 +2,10 @@
  * @file bcd_envelope.h
  * @brief WWV 100 Hz BCD envelope tracker
  *
+ * @deprecated This module is DEPRECATED. Use bcd_time_detector + bcd_freq_detector
+ *             + bcd_correlator for robust dual-path BCD symbol detection.
+ *             See BCD_Robust_Symbol_Demodulator_Roadmad.md for details.
+ *
  * Tracks the amplitude envelope of the 100 Hz tone used for BCD time code.
  * Uses Goertzel algorithm for efficient single-frequency detection with
  * explicit DC rejection.

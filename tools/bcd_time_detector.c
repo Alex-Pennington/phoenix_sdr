@@ -203,7 +203,7 @@ static void run_state_machine(bcd_time_detector_t *td) {
                 float timestamp_ms = td->pulse_start_frame * FRAME_DURATION_MS;
                 float snr_db = 10.0f * log10f(td->pulse_peak_energy / td->noise_floor);
 
-                if (duration_ms >= BCD_TIME_PULSE_MIN_MS && 
+                if (duration_ms >= BCD_TIME_PULSE_MIN_MS &&
                     duration_ms <= BCD_TIME_PULSE_MAX_MS) {
                     /* Valid pulse! */
                     td->pulses_detected++;
@@ -280,7 +280,7 @@ bcd_time_detector_t *bcd_time_detector_create(const char *csv_path) {
     td->i_buffer = (float *)malloc(BCD_TIME_FFT_SIZE * sizeof(float));
     td->q_buffer = (float *)malloc(BCD_TIME_FFT_SIZE * sizeof(float));
 
-    if (!td->fft_in || !td->fft_out || !td->window_func || 
+    if (!td->fft_in || !td->fft_out || !td->window_func ||
         !td->i_buffer || !td->q_buffer) {
         bcd_time_detector_destroy(td);
         return NULL;
@@ -315,7 +315,7 @@ bcd_time_detector_t *bcd_time_detector_create(const char *csv_path) {
             fprintf(td->csv_file, "# Phoenix SDR BCD Time Detector Log v%s\n", PHOENIX_VERSION_FULL);
             fprintf(td->csv_file, "# Started: %s\n", time_str);
             fprintf(td->csv_file, "# FFT: %d (%.2fms), Target: %dHz ±%dHz\n",
-                    BCD_TIME_FFT_SIZE, FRAME_DURATION_MS, 
+                    BCD_TIME_FFT_SIZE, FRAME_DURATION_MS,
                     BCD_TIME_TARGET_FREQ_HZ, BCD_TIME_BANDWIDTH_HZ);
             fprintf(td->csv_file, "time,timestamp_ms,pulse_num,peak_energy,duration_ms,noise_floor,snr_db\n");
             fflush(td->csv_file);
@@ -342,16 +342,16 @@ void bcd_time_detector_destroy(bcd_time_detector_t *td) {
     free(td);
 }
 
-void bcd_time_detector_set_callback(bcd_time_detector_t *td, 
-                                    bcd_time_callback_fn callback, 
+void bcd_time_detector_set_callback(bcd_time_detector_t *td,
+                                    bcd_time_callback_fn callback,
                                     void *user_data) {
     if (!td) return;
     td->callback = callback;
     td->callback_user_data = user_data;
 }
 
-bool bcd_time_detector_process_sample(bcd_time_detector_t *td, 
-                                      float i_sample, 
+bool bcd_time_detector_process_sample(bcd_time_detector_t *td,
+                                      float i_sample,
                                       float q_sample) {
     if (!td || !td->detection_enabled) return false;
 
@@ -418,12 +418,12 @@ void bcd_time_detector_print_stats(bcd_time_detector_t *td) {
     float elapsed = td->frame_count * FRAME_DURATION_MS / 1000.0f;
 
     printf("\n=== BCD TIME DETECTOR STATS ===\n");
-    printf("FFT: %d (%.2fms), Target: %d Hz ±%d Hz\n", 
+    printf("FFT: %d (%.2fms), Target: %d Hz ±%d Hz\n",
            BCD_TIME_FFT_SIZE, FRAME_DURATION_MS,
            BCD_TIME_TARGET_FREQ_HZ, BCD_TIME_BANDWIDTH_HZ);
     printf("Elapsed: %.1fs  Detected: %d  Rejected: %d\n",
            elapsed, td->pulses_detected, td->pulses_rejected);
-    printf("Noise floor: %.6f  Threshold: %.6f\n", 
+    printf("Noise floor: %.6f  Threshold: %.6f\n",
            td->noise_floor, td->threshold_high);
     printf("===============================\n");
 }

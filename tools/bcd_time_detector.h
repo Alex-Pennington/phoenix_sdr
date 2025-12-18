@@ -85,8 +85,8 @@ void bcd_time_detector_destroy(bcd_time_detector_t *td);
  * @param callback  Function to call when pulse detected
  * @param user_data Passed to callback
  */
-void bcd_time_detector_set_callback(bcd_time_detector_t *td, 
-                                    bcd_time_callback_fn callback, 
+void bcd_time_detector_set_callback(bcd_time_detector_t *td,
+                                    bcd_time_callback_fn callback,
                                     void *user_data);
 
 /**
@@ -97,8 +97,8 @@ void bcd_time_detector_set_callback(bcd_time_detector_t *td,
  * @param q_sample  Quadrature sample
  * @return          true if a pulse was detected this sample
  */
-bool bcd_time_detector_process_sample(bcd_time_detector_t *td, 
-                                      float i_sample, 
+bool bcd_time_detector_process_sample(bcd_time_detector_t *td,
+                                      float i_sample,
                                       float q_sample);
 
 /**

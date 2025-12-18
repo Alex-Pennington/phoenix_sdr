@@ -1,18 +1,19 @@
 /**
  * @file bcd_correlator.h
- * @brief WWV BCD correlator - combines time and freq detector outputs
+ * @brief WWV BCD Window-Based Symbol Demodulator
  *
- * Receives events from both bcd_time_detector (precise timing) and
- * bcd_freq_detector (confident 100Hz identification) and correlates them
- * to produce high-confidence BCD symbols.
- *
- * Pattern: Follows sync_detector.h structure
+ * ARCHITECTURE (v2 - Window-Based):
+ *   - Gates on sync_detector LOCKED state
+ *   - Uses minute anchor to define 1-second windows
+ *   - Integrates energy from time/freq detectors over each window
+ *   - Classifies ONCE per window at window close
+ *   - Emits exactly one symbol per second (when sync locked)
  *
  * State progression:
  *   ACQUIRING -> TENTATIVE -> TRACKING
  *
- * A confirmed symbol requires both detectors to fire within a correlation
- * window with matching pulse durations.
+ * Unlike event-correlation approach, this guarantees no duplicate symbols
+ * because classification happens once per window, not per event.
  */
 
 #ifndef BCD_CORRELATOR_H
@@ -22,6 +23,9 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+/* Forward declaration */
+typedef struct sync_detector sync_detector_t;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -30,14 +34,7 @@ extern "C" {
  * Configuration
  *============================================================================*/
 
-/* Correlation parameters */
-#define BCD_CORR_WINDOW_MS          100.0f  /* Detections within 100ms */
-#define BCD_CORR_DURATION_TOL       0.25f   /* 25% duration agreement tolerance */
-#define BCD_CORR_LOCKOUT_MS         200.0f  /* Prevent duplicate symbols */
-#define BCD_CORR_MIN_INTERVAL_MS    800.0f  /* Min time between symbols */
-#define BCD_CORR_PENDING_TIMEOUT_MS 500.0f  /* Clear pending if no partner */
-
-/* Symbol width thresholds (milliseconds) - same as bcd_decoder.h */
+/* Symbol width thresholds (milliseconds) */
 #define BCD_SYMBOL_ZERO_MAX_MS      350.0f  /* 100-350ms = binary 0 */
 #define BCD_SYMBOL_ONE_MAX_MS       650.0f  /* 350-650ms = binary 1 */
 #define BCD_SYMBOL_MARKER_MAX_MS    900.0f  /* 650-900ms = position marker */
@@ -46,7 +43,7 @@ extern "C" {
  * Types
  *============================================================================*/
 
-/* Symbol types - matches bcd_decoder.h */
+/* Symbol types */
 typedef enum {
     BCD_CORR_SYM_NONE = -1,
     BCD_CORR_SYM_ZERO = 0,
@@ -66,8 +63,8 @@ typedef struct {
     bcd_corr_symbol_t symbol;
     float timestamp_ms;
     float duration_ms;
-    float confidence;           /* 0-1, higher if both detectors agree */
-    const char *source;         /* "BOTH", "TIME", or "FREQ" */
+    float confidence;           /* 0-1, higher if both detectors contributed */
+    const char *source;         /* "BOTH", "TIME", "FREQ", or "NONE" */
 } bcd_symbol_event_t;
 
 typedef void (*bcd_corr_symbol_callback_fn)(const bcd_symbol_event_t *event, void *user_data);
@@ -92,6 +89,14 @@ bcd_correlator_t *bcd_correlator_create(const char *csv_path);
 void bcd_correlator_destroy(bcd_correlator_t *corr);
 
 /**
+ * Link sync detector as timing reference
+ * REQUIRED: Correlator will not emit symbols until sync is LOCKED
+ * @param corr   Correlator handle
+ * @param sync   Sync detector to use as timing reference
+ */
+void bcd_correlator_set_sync_source(bcd_correlator_t *corr, sync_detector_t *sync);
+
+/**
  * Set callback for confirmed symbol events
  */
 void bcd_correlator_set_callback(bcd_correlator_t *corr,
@@ -100,8 +105,9 @@ void bcd_correlator_set_callback(bcd_correlator_t *corr,
 
 /**
  * Report pulse from time detector
- * @param corr       Correlator handle
- * @param timestamp_ms Timestamp when pulse started
+ * Event is accumulated into current 1-second window
+ * @param corr         Correlator handle
+ * @param timestamp_ms Timestamp when pulse detected
  * @param duration_ms  Pulse duration
  * @param peak_energy  Peak energy during pulse
  */
@@ -112,8 +118,9 @@ void bcd_correlator_time_event(bcd_correlator_t *corr,
 
 /**
  * Report pulse from freq detector
+ * Event is accumulated into current 1-second window
  * @param corr            Correlator handle
- * @param timestamp_ms    Timestamp when pulse started
+ * @param timestamp_ms    Timestamp when pulse detected
  * @param duration_ms     Pulse duration
  * @param accum_energy    Accumulated energy
  */
@@ -133,17 +140,17 @@ bcd_corr_state_t bcd_correlator_get_state(bcd_correlator_t *corr);
 const char *bcd_corr_state_name(bcd_corr_state_t state);
 
 /**
- * Get symbol type as character
+ * Get symbol type as character ('0', '1', 'P', or '.' for none)
  */
 char bcd_corr_symbol_char(bcd_corr_symbol_t sym);
 
 /**
- * Get timestamp of last confirmed symbol
+ * Get timestamp of last emitted symbol
  */
 float bcd_correlator_get_last_symbol_ms(bcd_correlator_t *corr);
 
 /**
- * Get count of confirmed symbols
+ * Get count of emitted symbols
  */
 int bcd_correlator_get_symbol_count(bcd_correlator_t *corr);
 

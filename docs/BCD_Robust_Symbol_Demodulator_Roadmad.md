@@ -449,7 +449,7 @@ bcd_freq_detector_process_sample(bcd_freq_det, i_raw, q_raw);
 /* Time detector event → correlator */
 static void on_bcd_time_event(const bcd_time_event_t *event, void *user_data) {
     bcd_correlator_t *corr = (bcd_correlator_t *)user_data;
-    bcd_correlator_time_event(corr, event->timestamp_ms, 
+    bcd_correlator_time_event(corr, event->timestamp_ms,
                               event->duration_ms, event->peak_energy);
 }
 

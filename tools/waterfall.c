@@ -519,8 +519,8 @@ static void print_usage(const char *progname) {
 
 static tick_detector_t *g_tick_detector = NULL;
 static marker_detector_t *g_marker_detector = NULL;
-static bcd_envelope_t *g_bcd_envelope = NULL;
-static bcd_decoder_t *g_bcd_decoder = NULL;
+static bcd_envelope_t *g_bcd_envelope = NULL;  /* DEPRECATED: Use bcd_time/freq_detector + bcd_correlator */
+static bcd_decoder_t *g_bcd_decoder = NULL;    /* DEPRECATED: Use bcd_correlator */
 static sync_detector_t *g_sync_detector = NULL;
 static slow_marker_detector_t *g_slow_marker = NULL;
 static marker_correlator_t *g_marker_correlator = NULL;
@@ -899,20 +899,23 @@ int main(int argc, char *argv[]) {
     }
     slow_marker_detector_set_callback(g_slow_marker, on_slow_marker_frame, NULL);
 
-    /* Create BCD envelope tracker (100 Hz) */
+    /* DEPRECATED: Create BCD envelope tracker (100 Hz)
+     * Use bcd_time_detector + bcd_freq_detector + bcd_correlator instead */
     g_bcd_envelope = bcd_envelope_create("wwv_bcd.csv");
     if (!g_bcd_envelope) {
         fprintf(stderr, "Failed to create BCD envelope tracker\n");
         return 1;
     }
 
-    /* Create BCD decoder and wire to envelope tracker */
+    /* DEPRECATED: BCD decoder still created for legacy telemetry but callback DISABLED
+     * Symbol output now comes from bcd_correlator which gates on sync LOCKED */
     g_bcd_decoder = bcd_decoder_create();
     if (!g_bcd_decoder) {
         fprintf(stderr, "Failed to create BCD decoder\n");
         return 1;
     }
-    bcd_decoder_set_symbol_callback(g_bcd_decoder, on_bcd_symbol, NULL);
+    /* REMOVED: bcd_decoder_set_symbol_callback - was causing 2x symbol output
+     * bcd_decoder_set_symbol_callback(g_bcd_decoder, on_bcd_symbol, NULL); */
 
     /* Create BCD dual-path detectors (robust symbol demodulator) */
     g_bcd_time_detector = bcd_time_detector_create("logs/wwv_bcd_time.csv");
@@ -922,6 +925,7 @@ int main(int argc, char *argv[]) {
         /* Wire time and freq detectors to correlator via wrapper callbacks */
         bcd_time_detector_set_callback(g_bcd_time_detector, on_bcd_time_event, g_bcd_correlator);
         bcd_freq_detector_set_callback(g_bcd_freq_detector, on_bcd_freq_event, g_bcd_correlator);
+        /* NOTE: Sync source linked below after g_sync_detector is created */
     }
 
     /* Create marker correlator */
@@ -940,6 +944,12 @@ int main(int argc, char *argv[]) {
     tick_detector_set_marker_callback(g_tick_detector, on_tick_marker, NULL);
     tick_detector_set_callback(g_tick_detector, on_tick_event, NULL);
     marker_detector_set_callback(g_marker_detector, on_marker_event, NULL);
+
+    /* Link BCD correlator to sync detector for window-based demodulation
+     * Correlator will only emit symbols when sync is LOCKED */
+    if (g_bcd_correlator && g_sync_detector) {
+        bcd_correlator_set_sync_source(g_bcd_correlator, g_sync_detector);
+    }
 
     /* Create tick correlator */
     g_tick_correlator = tick_correlator_create("wwv_tick_corr.csv");
@@ -1195,11 +1205,12 @@ int main(int argc, char *argv[]) {
                         tone_tracker_process_sample(g_tone_carrier, disp_i, disp_q);
                         tone_tracker_process_sample(g_tone_500, disp_i, disp_q);
                         tone_tracker_process_sample(g_tone_600, disp_i, disp_q);
-                        bcd_envelope_process_sample(g_bcd_envelope, disp_i, disp_q);
+                        bcd_envelope_process_sample(g_bcd_envelope, disp_i, disp_q);  /* DEPRECATED */
 
-                        /* Feed BCD decoder with envelope data */
+                        /* DEPRECATED: Feed BCD decoder with envelope data
+                         * Use bcd_correlator callback instead */
                         if (g_bcd_decoder && g_bcd_envelope) {
-                            float timestamp_ms = (float)(frame_num * DISPLAY_EFFECTIVE_MS) + 
+                            float timestamp_ms = (float)(frame_num * DISPLAY_EFFECTIVE_MS) +
                                                  (float)g_display_new_samples * (1000.0f / DISPLAY_SAMPLE_RATE);
                             bcd_decoder_process_sample(g_bcd_decoder,
                                                        timestamp_ms,
@@ -1392,7 +1403,8 @@ int main(int argc, char *argv[]) {
                             tone_tracker_get_snr_db(g_tone_600));
             }
 
-            /* Send BCD 100 Hz envelope telemetry */
+            /* DEPRECATED: Send BCD 100 Hz envelope telemetry
+             * Use bcd_correlator BCDS telemetry instead */
             if (g_bcd_envelope) {
                 float snr = bcd_envelope_get_snr_db(g_bcd_envelope);
                 float envelope = bcd_envelope_get_envelope(g_bcd_envelope);

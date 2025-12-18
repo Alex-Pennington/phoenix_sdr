@@ -87,8 +87,8 @@ void bcd_freq_detector_destroy(bcd_freq_detector_t *fd);
  * @param callback  Function to call when pulse detected
  * @param user_data Passed to callback
  */
-void bcd_freq_detector_set_callback(bcd_freq_detector_t *fd, 
-                                    bcd_freq_callback_fn callback, 
+void bcd_freq_detector_set_callback(bcd_freq_detector_t *fd,
+                                    bcd_freq_callback_fn callback,
                                     void *user_data);
 
 /**
@@ -99,8 +99,8 @@ void bcd_freq_detector_set_callback(bcd_freq_detector_t *fd,
  * @param q_sample  Quadrature sample
  * @return          true if a pulse was detected this sample
  */
-bool bcd_freq_detector_process_sample(bcd_freq_detector_t *fd, 
-                                      float i_sample, 
+bool bcd_freq_detector_process_sample(bcd_freq_detector_t *fd,
+                                      float i_sample,
                                       float q_sample);
 
 /**

@@ -1,15 +1,26 @@
 /**
  * @file bcd_correlator.c
- * @brief WWV BCD correlator implementation
+ * @brief WWV BCD Window-Based Symbol Demodulator
  *
- * Correlates inputs from bcd_time_detector and bcd_freq_detector to confirm
- * BCD pulses with high confidence. Classifies pulses into symbols (0/1/P)
- * and outputs confirmed symbols via callback.
+ * ARCHITECTURE (v2 - Window-Based):
+ *   - Gates on sync_detector LOCKED state
+ *   - Uses minute anchor to define 1-second windows
+ *   - Integrates energy from time/freq detectors over each window
+ *   - Classifies ONCE per window at window close
+ *   - Emits exactly 60 symbols per minute (one per second)
  *
- * Pattern: Follows sync_detector.c structure
+ * Signal Flow:
+ *   sync_detector (LOCKED) provides anchor_ms
+ *   → second boundaries: anchor + 0s, anchor + 1s, ... anchor + 59s
+ *   → time_detector events accumulate energy in current window
+ *   → freq_detector events accumulate energy in current window
+ *   → at window close: integrate, classify, emit ONE symbol
+ *
+ * Pattern: Follows sync_detector.c state machine structure
  */
 
 #include "bcd_correlator.h"
+#include "sync_detector.h"
 #include "version.h"
 #include "waterfall_telemetry.h"
 #include <stdlib.h>
@@ -19,40 +30,59 @@
 #include <time.h>
 
 /*============================================================================
- * Internal Constants
+ * Configuration
  *============================================================================*/
 
-#define BCD_CORR_FLASH_FRAMES   10  /* Flash duration for UI (not used currently) */
+/* Window timing */
+#define WINDOW_DURATION_MS      1000.0f     /* 1 second per symbol */
+#define WINDOW_TOLERANCE_MS     50.0f       /* Tolerance for boundary detection */
+
+/* Energy integration thresholds */
+#define MIN_EVENTS_FOR_SYMBOL   2           /* Need at least 2 events to trust */
+#define ENERGY_THRESHOLD_LOW    0.001f      /* Below this = no signal */
+
+/* Pulse width estimation from energy profile */
+#define ENERGY_PER_MS           0.00001f    /* Rough calibration factor */
 
 /*============================================================================
  * Internal State
  *============================================================================*/
 
 struct bcd_correlator {
-    /* Pending event from time detector */
-    float pending_time_ms;
-    float pending_time_duration_ms;
-    float pending_time_energy;
-    bool time_pending;
-
-    /* Pending event from freq detector */
-    float pending_freq_ms;
-    float pending_freq_duration_ms;
-    float pending_freq_energy;
-    bool freq_pending;
-
-    /* Last confirmed symbol for lockout */
-    float last_symbol_ms;
-    int symbol_count;
-    int good_intervals;         /* Count of ~1s intervals */
-
-    /* State */
+    /* Sync source - provides timing reference */
+    sync_detector_t *sync_source;
+    
+    /* Current window state */
+    bool window_open;               /* Is a window currently active? */
+    int current_second;             /* Which second (0-59) */
+    float window_start_ms;          /* Timestamp when window opened */
+    float window_anchor_ms;         /* Minute anchor this window is based on */
+    
+    /* Energy accumulation for current window */
+    float time_energy_sum;          /* Sum of energy from time detector */
+    float time_duration_sum;        /* Sum of durations from time detector */
+    int time_event_count;           /* How many time events in window */
+    float time_first_ms;            /* First event timestamp in window */
+    float time_last_ms;             /* Last event timestamp in window */
+    
+    float freq_energy_sum;          /* Sum of energy from freq detector */
+    float freq_duration_sum;        /* Sum of durations from freq detector */
+    int freq_event_count;           /* How many freq events in window */
+    float freq_first_ms;            /* First event timestamp in window */
+    float freq_last_ms;             /* Last event timestamp in window */
+    
+    /* Symbol tracking */
+    float last_symbol_ms;           /* Timestamp of last emitted symbol */
+    int symbol_count;               /* Total symbols emitted */
+    int good_intervals;             /* Count of ~1s intervals */
+    
+    /* State machine */
     bcd_corr_state_t state;
-
+    
     /* Callback */
     bcd_corr_symbol_callback_fn callback;
     void *callback_user_data;
-
+    
     /* Logging */
     FILE *csv_file;
     time_t start_time;
@@ -69,149 +99,258 @@ static void get_wall_time_str(bcd_correlator_t *corr, float timestamp_ms, char *
 }
 
 /**
- * Classify pulse duration into symbol type
+ * Get the current minute anchor from sync detector
+ * Returns -1 if sync is not locked
  */
-static bcd_corr_symbol_t classify_symbol(float duration_ms) {
-    if (duration_ms < 100.0f) {
-        return BCD_CORR_SYM_NONE;  /* Too short */
-    } else if (duration_ms <= BCD_SYMBOL_ZERO_MAX_MS) {
-        return BCD_CORR_SYM_ZERO;
-    } else if (duration_ms <= BCD_SYMBOL_ONE_MAX_MS) {
-        return BCD_CORR_SYM_ONE;
-    } else if (duration_ms <= BCD_SYMBOL_MARKER_MAX_MS) {
-        return BCD_CORR_SYM_MARKER;
-    }
-    return BCD_CORR_SYM_NONE;  /* Too long */
+static float get_minute_anchor(bcd_correlator_t *corr) {
+    if (!corr->sync_source) return -1.0f;
+    if (sync_detector_get_state(corr->sync_source) != SYNC_LOCKED) return -1.0f;
+    return sync_detector_get_last_marker_ms(corr->sync_source);
 }
 
-static void confirm_symbol(bcd_correlator_t *corr, float timestamp_ms, 
-                           float duration_ms, float confidence,
-                           const char *source) {
-    /* Lockout check - ignore if too close to last symbol */
+/**
+ * Calculate which second (0-59) a timestamp falls into
+ * Returns -1 if cannot determine (sync not locked or out of range)
+ */
+static int get_second_for_timestamp(bcd_correlator_t *corr, float timestamp_ms, float anchor_ms) {
+    if (anchor_ms < 0) return -1;
+    
+    float offset_ms = timestamp_ms - anchor_ms;
+    
+    /* Handle wrap-around for new minute */
+    while (offset_ms < 0) offset_ms += 60000.0f;
+    while (offset_ms >= 60000.0f) offset_ms -= 60000.0f;
+    
+    int second = (int)(offset_ms / WINDOW_DURATION_MS);
+    if (second < 0) second = 0;
+    if (second > 59) second = 59;
+    
+    return second;
+}
+
+/**
+ * Calculate window start time for a given second
+ */
+static float get_window_start(float anchor_ms, int second) {
+    return anchor_ms + (second * WINDOW_DURATION_MS);
+}
+
+/**
+ * Estimate pulse duration from accumulated events
+ * Uses the span of event timestamps as a proxy for pulse width
+ */
+static float estimate_pulse_duration(bcd_correlator_t *corr) {
+    float time_span = 0.0f;
+    float freq_span = 0.0f;
+    
+    if (corr->time_event_count >= 2) {
+        time_span = corr->time_last_ms - corr->time_first_ms;
+    } else if (corr->time_event_count == 1) {
+        /* Single event - use reported duration */
+        time_span = corr->time_duration_sum;
+    }
+    
+    if (corr->freq_event_count >= 2) {
+        freq_span = corr->freq_last_ms - corr->freq_first_ms;
+    } else if (corr->freq_event_count == 1) {
+        freq_span = corr->freq_duration_sum;
+    }
+    
+    /* If we have both, average them; otherwise use whichever we have */
+    if (time_span > 0 && freq_span > 0) {
+        return (time_span + freq_span) / 2.0f;
+    } else if (time_span > 0) {
+        return time_span;
+    } else if (freq_span > 0) {
+        return freq_span;
+    }
+    
+    /* Fallback: estimate from average durations reported */
+    float avg_dur = 0.0f;
+    int count = 0;
+    if (corr->time_event_count > 0) {
+        avg_dur += corr->time_duration_sum / corr->time_event_count;
+        count++;
+    }
+    if (corr->freq_event_count > 0) {
+        avg_dur += corr->freq_duration_sum / corr->freq_event_count;
+        count++;
+    }
+    
+    return (count > 0) ? avg_dur / count : 0.0f;
+}
+
+/**
+ * Classify pulse duration into symbol type
+ */
+static bcd_corr_symbol_t classify_duration(float duration_ms) {
+    if (duration_ms < 100.0f) {
+        return BCD_CORR_SYM_NONE;  /* Too short - no signal */
+    } else if (duration_ms <= BCD_SYMBOL_ZERO_MAX_MS) {
+        return BCD_CORR_SYM_ZERO;  /* 100-350ms = binary 0 */
+    } else if (duration_ms <= BCD_SYMBOL_ONE_MAX_MS) {
+        return BCD_CORR_SYM_ONE;   /* 350-650ms = binary 1 */
+    } else if (duration_ms <= BCD_SYMBOL_MARKER_MAX_MS) {
+        return BCD_CORR_SYM_MARKER; /* 650-900ms = position marker */
+    }
+    return BCD_CORR_SYM_MARKER;  /* >900ms still counts as marker */
+}
+
+/**
+ * Open a new integration window
+ */
+static void open_window(bcd_correlator_t *corr, int second, float anchor_ms) {
+    corr->window_open = true;
+    corr->current_second = second;
+    corr->window_start_ms = get_window_start(anchor_ms, second);
+    corr->window_anchor_ms = anchor_ms;
+    
+    /* Reset accumulators */
+    corr->time_energy_sum = 0.0f;
+    corr->time_duration_sum = 0.0f;
+    corr->time_event_count = 0;
+    corr->time_first_ms = 0.0f;
+    corr->time_last_ms = 0.0f;
+    
+    corr->freq_energy_sum = 0.0f;
+    corr->freq_duration_sum = 0.0f;
+    corr->freq_event_count = 0;
+    corr->freq_first_ms = 0.0f;
+    corr->freq_last_ms = 0.0f;
+}
+
+/**
+ * Close current window and emit symbol
+ */
+static void close_window(bcd_correlator_t *corr) {
+    if (!corr->window_open) return;
+    
+    int total_events = corr->time_event_count + corr->freq_event_count;
+    float total_energy = corr->time_energy_sum + corr->freq_energy_sum;
+    
+    /* Determine confidence and source */
+    float confidence = 0.0f;
+    const char *source = "NONE";
+    
+    if (corr->time_event_count > 0 && corr->freq_event_count > 0) {
+        source = "BOTH";
+        confidence = 1.0f;
+    } else if (corr->time_event_count > 0) {
+        source = "TIME";
+        confidence = 0.6f;
+    } else if (corr->freq_event_count > 0) {
+        source = "FREQ";
+        confidence = 0.6f;
+    }
+    
+    /* Estimate pulse duration */
+    float duration_ms = estimate_pulse_duration(corr);
+    
+    /* Classify symbol */
+    bcd_corr_symbol_t symbol = BCD_CORR_SYM_NONE;
+    
+    if (total_events >= MIN_EVENTS_FOR_SYMBOL && total_energy > ENERGY_THRESHOLD_LOW) {
+        symbol = classify_duration(duration_ms);
+    } else if (total_events > 0) {
+        /* Some events but not enough confidence - still classify but lower confidence */
+        symbol = classify_duration(duration_ms);
+        confidence *= 0.5f;
+    }
+    /* If no events at all, symbol stays NONE (no 100Hz detected this second) */
+    
+    /* Calculate timestamp for this symbol (center of window) */
+    float symbol_timestamp_ms = corr->window_start_ms + (WINDOW_DURATION_MS / 2.0f);
+    
+    /* Track intervals */
+    float interval_ms = 0.0f;
     if (corr->last_symbol_ms > 0) {
-        float since_last = timestamp_ms - corr->last_symbol_ms;
-        if (since_last < BCD_CORR_MIN_INTERVAL_MS) {
-            printf("[BCD_CORR] Lockout: %.0fms since last (min %.0fms)\n",
-                   since_last, BCD_CORR_MIN_INTERVAL_MS);
-            corr->time_pending = false;
-            corr->freq_pending = false;
-            return;
+        interval_ms = symbol_timestamp_ms - corr->last_symbol_ms;
+        if (interval_ms >= 900.0f && interval_ms <= 1100.0f) {
+            corr->good_intervals++;
         }
     }
-
-    /* Classify symbol */
-    bcd_corr_symbol_t symbol = classify_symbol(duration_ms);
-    if (symbol == BCD_CORR_SYM_NONE) {
-        printf("[BCD_CORR] Rejected: dur=%.0fms (out of range)\n", duration_ms);
-        corr->time_pending = false;
-        corr->freq_pending = false;
-        return;
-    }
-
-    /* Calculate interval from previous symbol */
-    float interval_ms = (corr->last_symbol_ms > 0) ?
-        (timestamp_ms - corr->last_symbol_ms) : 0.0f;
-
-    /* Track good intervals (~1 second apart) */
-    if (interval_ms >= 900.0f && interval_ms <= 1100.0f) {
-        corr->good_intervals++;
-    }
-
-    /* Update state */
+    
+    /* Update state machine */
     if (corr->good_intervals >= 3) {
         corr->state = BCD_CORR_TRACKING;
     } else if (corr->symbol_count >= 1) {
         corr->state = BCD_CORR_TENTATIVE;
     }
-
-    /* Update last symbol tracking */
-    corr->last_symbol_ms = timestamp_ms;
+    
+    /* Update tracking */
+    corr->last_symbol_ms = symbol_timestamp_ms;
     corr->symbol_count++;
-
+    
     /* Log to CSV */
     if (corr->csv_file) {
         char time_str[16];
-        get_wall_time_str(corr, timestamp_ms, time_str, sizeof(time_str));
-        fprintf(corr->csv_file, "%s,%.1f,%d,%c,%s,%.0f,%.2f,%.1f,%s\n",
-                time_str, timestamp_ms, corr->symbol_count,
+        get_wall_time_str(corr, symbol_timestamp_ms, time_str, sizeof(time_str));
+        fprintf(corr->csv_file, "%s,%.1f,%d,%d,%c,%s,%.0f,%.2f,%.1f,%d,%d,%.4f,%.4f,%s\n",
+                time_str, symbol_timestamp_ms, corr->symbol_count, corr->current_second,
                 bcd_corr_symbol_char(symbol), source,
                 duration_ms, confidence, interval_ms / 1000.0f,
+                corr->time_event_count, corr->freq_event_count,
+                corr->time_energy_sum, corr->freq_energy_sum,
                 bcd_corr_state_name(corr->state));
         fflush(corr->csv_file);
     }
-
-    /* UDP telemetry */
-    telem_sendf(TELEM_BCDS, "BCDS,SYM,%c,%.1f,%.0f,%.2f,%s,%s",
-                bcd_corr_symbol_char(symbol), timestamp_ms,
-                duration_ms, confidence, source,
-                bcd_corr_state_name(corr->state));
-
-    /* Console output */
-    printf("[BCD_CORR] Symbol #%d: '%c' at %.1fms  dur=%.0fms  conf=%.2f  src=%s  int=%.1fs  state=%s\n",
-           corr->symbol_count, bcd_corr_symbol_char(symbol),
-           timestamp_ms, duration_ms, confidence, source,
-           interval_ms / 1000.0f, bcd_corr_state_name(corr->state));
-
-    /* Callback */
-    if (corr->callback) {
-        bcd_symbol_event_t event = {
-            .symbol = symbol,
-            .timestamp_ms = timestamp_ms,
-            .duration_ms = duration_ms,
-            .confidence = confidence,
-            .source = source
-        };
-        corr->callback(&event, corr->callback_user_data);
+    
+    /* Only emit if we detected something */
+    if (symbol != BCD_CORR_SYM_NONE) {
+        /* UDP telemetry */
+        telem_sendf(TELEM_BCDS, "SYM,%c,%.1f,%.0f",
+                    bcd_corr_symbol_char(symbol), symbol_timestamp_ms, duration_ms);
+        
+        /* Console output (verbose during development) */
+        printf("[BCD] Sec %02d: '%c' dur=%.0fms conf=%.2f src=%s events=%d+%d state=%s\n",
+               corr->current_second, bcd_corr_symbol_char(symbol),
+               duration_ms, confidence, source,
+               corr->time_event_count, corr->freq_event_count,
+               bcd_corr_state_name(corr->state));
+        
+        /* Callback */
+        if (corr->callback) {
+            bcd_symbol_event_t event = {
+                .symbol = symbol,
+                .timestamp_ms = symbol_timestamp_ms,
+                .duration_ms = duration_ms,
+                .confidence = confidence,
+                .source = source
+            };
+            corr->callback(&event, corr->callback_user_data);
+        }
     }
-
-    /* Clear both pending events */
-    corr->time_pending = false;
-    corr->freq_pending = false;
+    
+    /* Mark window closed */
+    corr->window_open = false;
 }
 
-static void try_correlate(bcd_correlator_t *corr, float current_ms) {
-    /* If both are pending, check if they correlate */
-    if (corr->time_pending && corr->freq_pending) {
-        float delta = fabsf(corr->pending_freq_ms - corr->pending_time_ms);
-
-        if (delta < BCD_CORR_WINDOW_MS) {
-            /* Check duration agreement */
-            float dur_diff = fabsf(corr->pending_time_duration_ms - corr->pending_freq_duration_ms);
-            float avg_dur = (corr->pending_time_duration_ms + corr->pending_freq_duration_ms) / 2.0f;
-            float dur_ratio = dur_diff / avg_dur;
-
-            if (dur_ratio <= BCD_CORR_DURATION_TOL) {
-                /* Both agree! High confidence. Use time detector timestamp (more precise) */
-                confirm_symbol(corr, corr->pending_time_ms, avg_dur, 1.0f, "BOTH");
-                return;
-            }
+/**
+ * Check if we need to close current window and open new one
+ */
+static void check_window_transition(bcd_correlator_t *corr, float timestamp_ms) {
+    float anchor_ms = get_minute_anchor(corr);
+    if (anchor_ms < 0) {
+        /* Sync not locked - close any open window and wait */
+        if (corr->window_open) {
+            printf("[BCD] Sync lost - closing window\n");
+            close_window(corr);
         }
-
-        /* Detectors don't agree - use the earlier one with lower confidence */
-        if (corr->pending_time_ms < corr->pending_freq_ms) {
-            confirm_symbol(corr, corr->pending_time_ms,
-                          corr->pending_time_duration_ms, 0.6f, "TIME");
-        } else {
-            confirm_symbol(corr, corr->pending_freq_ms,
-                          corr->pending_freq_duration_ms, 0.6f, "FREQ");
-        }
+        return;
     }
-}
-
-static void check_timeout(bcd_correlator_t *corr, float current_ms) {
-    /* If single detector fired and partner didn't arrive, confirm from single source */
-    if (corr->time_pending && !corr->freq_pending) {
-        if ((current_ms - corr->pending_time_ms) > BCD_CORR_PENDING_TIMEOUT_MS) {
-            confirm_symbol(corr, corr->pending_time_ms,
-                          corr->pending_time_duration_ms, 0.5f, "TIME");
-        }
+    
+    int new_second = get_second_for_timestamp(corr, timestamp_ms, anchor_ms);
+    if (new_second < 0) return;
+    
+    if (!corr->window_open) {
+        /* No window open - open one */
+        open_window(corr, new_second, anchor_ms);
+    } else if (new_second != corr->current_second) {
+        /* Moved to new second - close current and open new */
+        close_window(corr);
+        open_window(corr, new_second, anchor_ms);
     }
-    if (corr->freq_pending && !corr->time_pending) {
-        if ((current_ms - corr->pending_freq_ms) > BCD_CORR_PENDING_TIMEOUT_MS) {
-            confirm_symbol(corr, corr->pending_freq_ms,
-                          corr->pending_freq_duration_ms, 0.5f, "FREQ");
-        }
-    }
+    /* else: still in same second, keep accumulating */
 }
 
 /*============================================================================
@@ -221,10 +360,11 @@ static void check_timeout(bcd_correlator_t *corr, float current_ms) {
 bcd_correlator_t *bcd_correlator_create(const char *csv_path) {
     bcd_correlator_t *corr = (bcd_correlator_t *)calloc(1, sizeof(bcd_correlator_t));
     if (!corr) return NULL;
-
+    
     corr->state = BCD_CORR_ACQUIRING;
     corr->start_time = time(NULL);
-
+    corr->window_open = false;
+    
     if (csv_path) {
         corr->csv_file = fopen(csv_path, "w");
         if (corr->csv_file) {
@@ -233,23 +373,33 @@ bcd_correlator_t *bcd_correlator_create(const char *csv_path) {
             strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", localtime(&now));
             fprintf(corr->csv_file, "# Phoenix SDR BCD Correlator Log v%s\n", PHOENIX_VERSION_FULL);
             fprintf(corr->csv_file, "# Started: %s\n", time_str);
-            fprintf(corr->csv_file, "# Dual-path correlation: time (256-pt FFT) + freq (2048-pt FFT)\n");
-            fprintf(corr->csv_file, "time,timestamp_ms,symbol_num,symbol,source,duration_ms,confidence,interval_sec,state\n");
+            fprintf(corr->csv_file, "# Window-based integration: 1-second windows gated on sync LOCKED\n");
+            fprintf(corr->csv_file, "time,timestamp_ms,symbol_num,second,symbol,source,duration_ms,confidence,interval_sec,time_events,freq_events,time_energy,freq_energy,state\n");
             fflush(corr->csv_file);
         }
     }
-
-    printf("[BCD_CORR] Correlator created: window=%.0fms, dur_tol=%.0f%%\n",
-           BCD_CORR_WINDOW_MS, BCD_CORR_DURATION_TOL * 100.0f);
-
+    
+    printf("[BCD] Window-based correlator created (waits for sync LOCKED)\n");
+    
     return corr;
 }
 
 void bcd_correlator_destroy(bcd_correlator_t *corr) {
     if (!corr) return;
-
+    
+    /* Close any open window */
+    if (corr->window_open) {
+        close_window(corr);
+    }
+    
     if (corr->csv_file) fclose(corr->csv_file);
     free(corr);
+}
+
+void bcd_correlator_set_sync_source(bcd_correlator_t *corr, sync_detector_t *sync) {
+    if (!corr) return;
+    corr->sync_source = sync;
+    printf("[BCD] Sync source linked - will gate on LOCKED state\n");
 }
 
 void bcd_correlator_set_callback(bcd_correlator_t *corr,
@@ -265,18 +415,21 @@ void bcd_correlator_time_event(bcd_correlator_t *corr,
                                float duration_ms,
                                float peak_energy) {
     if (!corr) return;
-
-    /* Check timeout on existing pending events first */
-    check_timeout(corr, timestamp_ms);
-
-    /* Store new event */
-    corr->pending_time_ms = timestamp_ms;
-    corr->pending_time_duration_ms = duration_ms;
-    corr->pending_time_energy = peak_energy;
-    corr->time_pending = true;
-
-    /* Try to correlate */
-    try_correlate(corr, timestamp_ms);
+    
+    /* Check for window transition first */
+    check_window_transition(corr, timestamp_ms);
+    
+    /* If no window open (sync not locked), ignore event */
+    if (!corr->window_open) return;
+    
+    /* Accumulate into current window */
+    if (corr->time_event_count == 0) {
+        corr->time_first_ms = timestamp_ms;
+    }
+    corr->time_last_ms = timestamp_ms;
+    corr->time_energy_sum += peak_energy;
+    corr->time_duration_sum += duration_ms;
+    corr->time_event_count++;
 }
 
 void bcd_correlator_freq_event(bcd_correlator_t *corr,
@@ -284,18 +437,21 @@ void bcd_correlator_freq_event(bcd_correlator_t *corr,
                                float duration_ms,
                                float accum_energy) {
     if (!corr) return;
-
-    /* Check timeout on existing pending events first */
-    check_timeout(corr, timestamp_ms);
-
-    /* Store new event */
-    corr->pending_freq_ms = timestamp_ms;
-    corr->pending_freq_duration_ms = duration_ms;
-    corr->pending_freq_energy = accum_energy;
-    corr->freq_pending = true;
-
-    /* Try to correlate */
-    try_correlate(corr, timestamp_ms);
+    
+    /* Check for window transition first */
+    check_window_transition(corr, timestamp_ms);
+    
+    /* If no window open (sync not locked), ignore event */
+    if (!corr->window_open) return;
+    
+    /* Accumulate into current window */
+    if (corr->freq_event_count == 0) {
+        corr->freq_first_ms = timestamp_ms;
+    }
+    corr->freq_last_ms = timestamp_ms;
+    corr->freq_energy_sum += accum_energy;
+    corr->freq_duration_sum += duration_ms;
+    corr->freq_event_count++;
 }
 
 bcd_corr_state_t bcd_correlator_get_state(bcd_correlator_t *corr) {
@@ -316,7 +472,7 @@ char bcd_corr_symbol_char(bcd_corr_symbol_t sym) {
         case BCD_CORR_SYM_ZERO:   return '0';
         case BCD_CORR_SYM_ONE:    return '1';
         case BCD_CORR_SYM_MARKER: return 'P';
-        default:                  return '?';
+        default:                  return '.';  /* No signal = dot */
     }
 }
 
@@ -330,11 +486,15 @@ int bcd_correlator_get_symbol_count(bcd_correlator_t *corr) {
 
 void bcd_correlator_print_stats(bcd_correlator_t *corr) {
     if (!corr) return;
-
+    
     printf("\n=== BCD CORRELATOR STATS ===\n");
+    printf("Mode: Window-based (1-second integration)\n");
+    printf("Sync source: %s\n", corr->sync_source ? "linked" : "NOT LINKED");
     printf("State: %s\n", bcd_corr_state_name(corr->state));
-    printf("Symbols confirmed: %d\n", corr->symbol_count);
+    printf("Symbols emitted: %d\n", corr->symbol_count);
     printf("Good intervals (~1s): %d\n", corr->good_intervals);
     printf("Last symbol at: %.1fms\n", corr->last_symbol_ms);
+    printf("Current window: %s (second %d)\n", 
+           corr->window_open ? "OPEN" : "CLOSED", corr->current_second);
     printf("============================\n");
 }

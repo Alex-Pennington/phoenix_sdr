@@ -226,7 +226,7 @@ static void run_state_machine(bcd_freq_detector_t *fd) {
             if (fd->accumulated_energy < fd->threshold || timed_out) {
                 float start_timestamp_ms = fd->pulse_start_frame * FRAME_DURATION_MS;
 
-                if (duration_ms >= BCD_FREQ_PULSE_MIN_MS && 
+                if (duration_ms >= BCD_FREQ_PULSE_MIN_MS &&
                     duration_ms <= BCD_FREQ_PULSE_MAX_MS) {
                     /* Valid pulse! */
                     fd->pulses_detected++;
@@ -234,7 +234,7 @@ static void run_state_machine(bcd_freq_detector_t *fd) {
                     float snr_db = 10.0f * log10f(fd->pulse_peak_energy / fd->baseline_energy);
 
                     printf("[BCD_FREQ] Pulse #%d at %.1fms  dur=%.0fms  accum=%.4f  SNR=%.1fdB\n",
-                           fd->pulses_detected, start_timestamp_ms, duration_ms, 
+                           fd->pulses_detected, start_timestamp_ms, duration_ms,
                            fd->pulse_peak_energy, snr_db);
 
                     /* CSV logging */
@@ -370,16 +370,16 @@ void bcd_freq_detector_destroy(bcd_freq_detector_t *fd) {
     free(fd);
 }
 
-void bcd_freq_detector_set_callback(bcd_freq_detector_t *fd, 
-                                    bcd_freq_callback_fn callback, 
+void bcd_freq_detector_set_callback(bcd_freq_detector_t *fd,
+                                    bcd_freq_callback_fn callback,
                                     void *user_data) {
     if (!fd) return;
     fd->callback = callback;
     fd->callback_user_data = user_data;
 }
 
-bool bcd_freq_detector_process_sample(bcd_freq_detector_t *fd, 
-                                      float i_sample, 
+bool bcd_freq_detector_process_sample(bcd_freq_detector_t *fd,
+                                      float i_sample,
                                       float q_sample) {
     if (!fd || !fd->detection_enabled) return false;
 
@@ -450,12 +450,12 @@ void bcd_freq_detector_print_stats(bcd_freq_detector_t *fd) {
     float elapsed = fd->frame_count * FRAME_DURATION_MS / 1000.0f;
 
     printf("\n=== BCD FREQ DETECTOR STATS ===\n");
-    printf("FFT: %d (%.2fms), Window: %d frames (%.0fms)\n", 
+    printf("FFT: %d (%.2fms), Window: %d frames (%.0fms)\n",
            BCD_FREQ_FFT_SIZE, FRAME_DURATION_MS, WINDOW_FRAMES, BCD_FREQ_WINDOW_MS);
     printf("Target: %d Hz ±%d Hz\n", BCD_FREQ_TARGET_FREQ_HZ, BCD_FREQ_BANDWIDTH_HZ);
     printf("Elapsed: %.1fs  Detected: %d  Rejected: %d\n",
            elapsed, fd->pulses_detected, fd->pulses_rejected);
-    printf("Baseline: %.6f  Threshold: %.6f  Accumulated: %.6f\n", 
+    printf("Baseline: %.6f  Threshold: %.6f  Accumulated: %.6f\n",
            fd->baseline_energy, fd->threshold, fd->accumulated_energy);
     printf("===============================\n");
 }

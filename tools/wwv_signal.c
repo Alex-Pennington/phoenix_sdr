@@ -50,10 +50,6 @@ struct wwv_signal {
     // BCD encoder
     bcd_encoder_t *bcd_enc;
 
-    // BCD lowpass filter state (2nd order Butterworth at 150 Hz)
-    float bcd_lpf_x1, bcd_lpf_x2;  // Input history
-    float bcd_lpf_y1, bcd_lpf_y2;  // Output history
-
     // Tone schedule (500 Hz minutes)
     bool tone_500_minutes[60];
     bool tone_600_minutes[60];
@@ -117,10 +113,6 @@ wwv_signal_t *wwv_signal_create(int start_minute, int start_hour, int start_day,
 
     // Initialize BCD frame
     bcd_encoder_set_time(sig->bcd_enc, start_minute, start_hour, start_day, start_year);
-
-    // Initialize BCD lowpass filter state
-    sig->bcd_lpf_x1 = sig->bcd_lpf_x2 = 0.0f;
-    sig->bcd_lpf_y1 = sig->bcd_lpf_y2 = 0.0f;
 
     // Initialize tone schedule
     init_tone_schedule(sig);
@@ -251,26 +243,7 @@ void wwv_signal_get_sample_int16(wwv_signal_t *sig, int16_t *i, int16_t *q) {
     float bcd_i, bcd_q;
     oscillator_get_iq(sig->bcd_osc, &bcd_i, &bcd_q);
     float bcd_depth = bcd_encoder_get_modulation(sig->bcd_enc, second, sample_in_second);
-
-    // Apply 2nd order Butterworth lowpass at 150 Hz to kill harmonics
-    // Coefficients for fc=150Hz, fs=2MHz
-    // This removes the 10th harmonic (1000 Hz) that bleeds into tick detector
-    const float b0 = 1.7588e-7f;
-    const float b1 = 3.5176e-7f;
-    const float b2 = 1.7588e-7f;
-    const float a1 = -1.9991f;
-    const float a2 = 0.9991f;
-
-    float bcd_raw = bcd_depth * bcd_i;
-    float bcd_filt = b0 * bcd_raw + b1 * sig->bcd_lpf_x1 + b2 * sig->bcd_lpf_x2
-                   - a1 * sig->bcd_lpf_y1 - a2 * sig->bcd_lpf_y2;
-
-    sig->bcd_lpf_x2 = sig->bcd_lpf_x1;
-    sig->bcd_lpf_x1 = bcd_raw;
-    sig->bcd_lpf_y2 = sig->bcd_lpf_y1;
-    sig->bcd_lpf_y1 = bcd_filt;
-
-    total_modulation += bcd_filt;
+    total_modulation += bcd_depth * bcd_i;
 
     // Apply AM modulation to unit carrier (DC baseband)
     float envelope = 1.0f + total_modulation;

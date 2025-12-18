@@ -34,7 +34,7 @@
 
 /* Detection timing */
 #define TICK_MIN_DURATION_MS    2.0f
-#define TICK_MAX_DURATION_MS    50.0f
+#define TICK_MAX_DURATION_MS    25.0f   /* Tightened from 50ms to reject BCD harmonics (500ms) */
 #define MARKER_MAX_DURATION_MS  1000.0f  /* Allow up to 1s for minute markers */
 #define TICK_COOLDOWN_MS        500.0f
 
@@ -47,7 +47,7 @@
 #define TICK_THRESHOLD_MULT     2.0f
 
 /* Correlation thresholds */
-#define CORR_THRESHOLD_MULT     5.0f    /* Correlation must be 5x noise floor */
+#define CORR_THRESHOLD_MULT     8.0f    /* Increased from 5.0 to reject BCD harmonic transients */
 #define CORR_NOISE_ADAPT        0.01f   /* Noise floor adaptation rate */
 #define CORR_DECIMATION         8       /* Compute correlation every N samples */
 #define MARKER_CORR_RATIO       15.0f   /* Corr ratio above this = minute marker */

@@ -27,12 +27,17 @@ struct bcd_decoder {
     float pulse_snr_sum;            /* Sum of SNR during pulse (for averaging) */
     int pulse_sample_count;         /* Samples in current pulse */
     
+    /* Lockout to prevent duplicate detections */
+    float last_symbol_time_ms;      /* When last symbol was detected */
+    bool in_lockout;                /* Currently in lockout period */
+    
     /* Timing */
     float last_timestamp_ms;
     bool first_sample;
     
     /* Statistics */
     uint32_t total_symbols;
+    uint32_t rejected_lockout;      /* Symbols rejected due to lockout */
     
     /* Callback */
     bcd_symbol_callback_fn symbol_callback;
@@ -89,8 +94,17 @@ void bcd_decoder_process_sample(bcd_decoder_t *dec,
     /* Track timing */
     if (dec->first_sample) {
         dec->first_sample = false;
+        dec->last_symbol_time_ms = -1000;  /* Allow first symbol */
     }
     dec->last_timestamp_ms = timestamp_ms;
+    
+    /* Check/update lockout state */
+    if (dec->in_lockout) {
+        float since_last = timestamp_ms - dec->last_symbol_time_ms;
+        if (since_last >= BCD_SYMBOL_LOCKOUT_MS) {
+            dec->in_lockout = false;
+        }
+    }
     
     /* Hysteresis pulse detection */
     bool signal_present = (status >= BCD_STATUS_PRESENT) || 
@@ -98,8 +112,8 @@ void bcd_decoder_process_sample(bcd_decoder_t *dec,
     bool signal_gone = (status <= BCD_STATUS_WEAK) && 
                        (snr_db < BCD_SNR_THRESHOLD_OFF);
     
-    if (!dec->in_pulse && signal_present) {
-        /* Rising edge - start of pulse */
+    if (!dec->in_pulse && signal_present && !dec->in_lockout) {
+        /* Rising edge - start of pulse (only if not in lockout) */
         dec->in_pulse = true;
         dec->pulse_start_ms = timestamp_ms;
         dec->pulse_snr_sum = snr_db;
@@ -115,6 +129,8 @@ void bcd_decoder_process_sample(bcd_decoder_t *dec,
         
         if (symbol != BCD_SYMBOL_NONE) {
             dec->total_symbols++;
+            dec->last_symbol_time_ms = timestamp_ms;
+            dec->in_lockout = true;  /* Start lockout period */
             
             /* Fire callback */
             if (dec->symbol_callback) {
@@ -134,6 +150,9 @@ void bcd_decoder_process_sample(bcd_decoder_t *dec,
             /* Stuck high - reset */
             dec->in_pulse = false;
         }
+    } else if (!dec->in_pulse && signal_present && dec->in_lockout) {
+        /* Would have started pulse but in lockout - track for debugging */
+        dec->rejected_lockout++;
     }
 }
 

@@ -34,6 +34,9 @@ extern "C" {
 #define BCD_SNR_THRESHOLD_ON        6.0f    /* Pulse ON threshold */
 #define BCD_SNR_THRESHOLD_OFF       3.0f    /* Pulse OFF threshold (hysteresis) */
 
+/* Lockout to prevent multiple detections per second */
+#define BCD_SYMBOL_LOCKOUT_MS       200     /* Ignore new pulses for this long after symbol */
+
 /*============================================================================
  * Types
  *============================================================================*/

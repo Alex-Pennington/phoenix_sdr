@@ -609,6 +609,19 @@ static void on_tick_event(const tick_event_t *event, void *user_data) {
 }
 
 /*============================================================================
+ * BCD Symbol Callback
+ *============================================================================*/
+
+static void on_bcd_symbol(bcd_symbol_t symbol, float timestamp_ms,
+                          float pulse_width_ms, void *user_data) {
+    (void)user_data;
+    const char *sym_str = (symbol == BCD_SYMBOL_ZERO) ? "0" :
+                          (symbol == BCD_SYMBOL_ONE) ? "1" :
+                          (symbol == BCD_SYMBOL_MARKER) ? "P" : "?";
+    telem_sendf(TELEM_BCDS, "SYM,%s,%.1f,%.1f", sym_str, timestamp_ms, pulse_width_ms);
+}
+
+/*============================================================================
  * Color Mapping
  *============================================================================*/
 
@@ -875,6 +888,7 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Failed to create BCD decoder\n");
         return 1;
     }
+    bcd_decoder_set_symbol_callback(g_bcd_decoder, on_bcd_symbol, NULL);
 
     /* Create marker correlator */
     g_marker_correlator = marker_correlator_create("wwv_markers_corr.csv");

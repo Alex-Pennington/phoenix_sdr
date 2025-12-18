@@ -105,7 +105,7 @@ typedef void (*bcd_time_callback_fn)(const bcd_time_t *time,
 
 /** Callback for symbol events (for debugging/display) */
 typedef void (*bcd_symbol_callback_fn)(bcd_symbol_t symbol,
-                                       int frame_position,
+                                       float timestamp_ms,
                                        float pulse_width_ms,
                                        void *user_data);
 

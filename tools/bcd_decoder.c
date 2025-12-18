@@ -324,7 +324,7 @@ static void process_symbol(bcd_decoder_t *dec, bcd_symbol_t symbol,
     
     /* Fire symbol callback */
     if (dec->symbol_callback) {
-        dec->symbol_callback(symbol, dec->frame_position, width_ms, 
+        dec->symbol_callback(symbol, timestamp_ms, width_ms, 
                             dec->symbol_callback_data);
     }
     

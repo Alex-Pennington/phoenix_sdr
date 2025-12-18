@@ -22,6 +22,17 @@ struct subcarrier_detector {
     /* Decimation (12 kHz -> 2.4 kHz) */
     int decim_counter;
 
+    /* Anti-alias lowpass filter (applied at 12 kHz, before decimation)
+     * Cutoff 500 Hz rejects 1000 Hz tick energy that would otherwise
+     * alias into the 100 Hz detection bin when decimating to 2.4 kHz.
+     * Added to fix 100x signal loss - see Option A in signal path analysis. */
+    float aa_lpf_i_x1, aa_lpf_i_x2;  /* I channel filter state */
+    float aa_lpf_i_y1, aa_lpf_i_y2;
+    float aa_lpf_q_x1, aa_lpf_q_x2;  /* Q channel filter state */
+    float aa_lpf_q_y1, aa_lpf_q_y2;
+    float aa_lpf_b0, aa_lpf_b1, aa_lpf_b2;  /* Filter coefficients (shared) */
+    float aa_lpf_a1, aa_lpf_a2;
+
     /* DC blocker state (y[n] = x[n] - x[n-1] + alpha * y[n-1]) */
     float dc_prev_in_i;
     float dc_prev_in_q;
@@ -66,7 +77,73 @@ struct subcarrier_detector {
 };
 
 /*============================================================================
+ * Anti-Alias Lowpass Filter
+ *============================================================================*/
+
+/**
+ * Initialize 2nd-order Butterworth lowpass filter coefficients
+ * Called once at creation with cutoff=500 Hz, sample_rate=12000 Hz
+ */
+static void aa_lpf_init(subcarrier_detector_t *det, float cutoff_hz, float sample_rate) {
+    float w0 = 2.0f * M_PI * cutoff_hz / sample_rate;
+    float alpha = sinf(w0) / (2.0f * 0.7071f);  /* Q = 0.7071 for Butterworth */
+    float cos_w0 = cosf(w0);
+
+    float a0 = 1.0f + alpha;
+    det->aa_lpf_b0 = (1.0f - cos_w0) / 2.0f / a0;
+    det->aa_lpf_b1 = (1.0f - cos_w0) / a0;
+    det->aa_lpf_b2 = (1.0f - cos_w0) / 2.0f / a0;
+    det->aa_lpf_a1 = -2.0f * cos_w0 / a0;
+    det->aa_lpf_a2 = (1.0f - alpha) / a0;
+
+    /* Clear filter state */
+    det->aa_lpf_i_x1 = det->aa_lpf_i_x2 = 0.0f;
+    det->aa_lpf_i_y1 = det->aa_lpf_i_y2 = 0.0f;
+    det->aa_lpf_q_x1 = det->aa_lpf_q_x2 = 0.0f;
+    det->aa_lpf_q_y1 = det->aa_lpf_q_y2 = 0.0f;
+}
+
+/**
+ * Process one sample through anti-alias lowpass (I channel)
+ */
+static inline float aa_lpf_process_i(subcarrier_detector_t *det, float x) {
+    float y = det->aa_lpf_b0 * x
+            + det->aa_lpf_b1 * det->aa_lpf_i_x1
+            + det->aa_lpf_b2 * det->aa_lpf_i_x2
+            - det->aa_lpf_a1 * det->aa_lpf_i_y1
+            - det->aa_lpf_a2 * det->aa_lpf_i_y2;
+    det->aa_lpf_i_x2 = det->aa_lpf_i_x1;
+    det->aa_lpf_i_x1 = x;
+    det->aa_lpf_i_y2 = det->aa_lpf_i_y1;
+    det->aa_lpf_i_y1 = y;
+    return y;
+}
+
+/**
+ * Process one sample through anti-alias lowpass (Q channel)
+ */
+static inline float aa_lpf_process_q(subcarrier_detector_t *det, float x) {
+    float y = det->aa_lpf_b0 * x
+            + det->aa_lpf_b1 * det->aa_lpf_q_x1
+            + det->aa_lpf_b2 * det->aa_lpf_q_x2
+            - det->aa_lpf_a1 * det->aa_lpf_q_y1
+            - det->aa_lpf_a2 * det->aa_lpf_q_y2;
+    det->aa_lpf_q_x2 = det->aa_lpf_q_x1;
+    det->aa_lpf_q_x1 = x;
+    det->aa_lpf_q_y2 = det->aa_lpf_q_y1;
+    det->aa_lpf_q_y1 = y;
+    return y;
+}
+
+/*============================================================================
  * Goertzel Helpers
+ *
+ * NOTE: Option B correctness optimization - the current implementation runs
+ * separate Goertzel filters on I and Q channels, then combines magnitudes.
+ * For complex baseband I/Q, the 100 Hz BCD appears as a rotating phasor with
+ * energy at both +100 Hz and -100 Hz bins. A proper complex Goertzel would
+ * coherently capture this. The current approach works but is suboptimal.
+ * See signal path analysis for details.
  *============================================================================*/
 
 /**
@@ -166,6 +243,11 @@ subcarrier_detector_t *subcarrier_detector_create(const char *csv_path) {
 
     det->enabled = true;
 
+    /* Initialize anti-alias lowpass filter (500 Hz cutoff at 12 kHz input rate)
+     * This rejects 500/600/1000 Hz tones that would alias into the 100 Hz
+     * detection bin when decimating from 12 kHz to 2.4 kHz */
+    aa_lpf_init(det, 500.0f, 12000.0f);
+
     /* Initialize Goertzel coefficient */
     det->goertzel_coeff = goertzel_init_coeff(SUBCARRIER_BLOCK_SIZE,
                                                SUBCARRIER_TARGET_FREQ_HZ,
@@ -219,6 +301,12 @@ void subcarrier_detector_process_sample(subcarrier_detector_t *det,
                                         float i_sample, float q_sample) {
     if (!det || !det->enabled) return;
 
+    /* Anti-alias filter BEFORE decimation (at 12 kHz rate)
+     * This is critical - without it, 1000 Hz tick energy aliases into
+     * the 100 Hz bin when decimating to 2.4 kHz, causing 100x signal loss */
+    float i_filtered = aa_lpf_process_i(det, i_sample);
+    float q_filtered = aa_lpf_process_q(det, q_sample);
+
     /* Decimate: keep every 5th sample (12 kHz -> 2.4 kHz) */
     det->decim_counter++;
     if (det->decim_counter < SUBCARRIER_DECIMATION) {
@@ -227,7 +315,7 @@ void subcarrier_detector_process_sample(subcarrier_detector_t *det,
     det->decim_counter = 0;
 
     /* Process at 2.4 kHz */
-    subcarrier_detector_process_sample_2400(det, i_sample, q_sample);
+    subcarrier_detector_process_sample_2400(det, i_filtered, q_filtered);
 }
 
 /**

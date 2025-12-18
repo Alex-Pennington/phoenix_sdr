@@ -25,7 +25,8 @@
 #include "tick_correlator.h"
 #include "slow_marker_detector.h"
 #include "marker_correlator.h"
-#include "subcarrier_detector.h"
+#include "bcd_envelope.h"
+#include "bcd_decoder.h"
 #include "waterfall_flash.h"
 #include "waterfall_telemetry.h"
 
@@ -515,7 +516,8 @@ static void print_usage(const char *progname) {
 
 static tick_detector_t *g_tick_detector = NULL;
 static marker_detector_t *g_marker_detector = NULL;
-static subcarrier_detector_t *g_subcarrier_detector = NULL;
+static bcd_envelope_t *g_bcd_envelope = NULL;
+static bcd_decoder_t *g_bcd_decoder = NULL;
 static sync_detector_t *g_sync_detector = NULL;
 static slow_marker_detector_t *g_slow_marker = NULL;
 static marker_correlator_t *g_marker_correlator = NULL;
@@ -860,10 +862,18 @@ int main(int argc, char *argv[]) {
     }
     slow_marker_detector_set_callback(g_slow_marker, on_slow_marker_frame, NULL);
 
-    /* Create subcarrier detector (100 Hz BCD) */
-    g_subcarrier_detector = subcarrier_detector_create("wwv_bcd.csv");
-    if (!g_subcarrier_detector) {
-        fprintf(stderr, "Failed to create subcarrier detector\n");
+    /* Create BCD envelope tracker (100 Hz) */
+    g_bcd_envelope = bcd_envelope_create("wwv_bcd.csv");
+    if (!g_bcd_envelope) {
+        fprintf(stderr, "Failed to create BCD envelope tracker\n");
+        return 1;
+    }
+
+    /* Create BCD decoder and wire to envelope tracker */
+    g_bcd_decoder = bcd_decoder_create();
+    if (!g_bcd_decoder) {
+        fprintf(stderr, "Failed to create BCD decoder\n");
+        return 1;
     }
 
     /* Create marker correlator */
@@ -910,7 +920,7 @@ int main(int argc, char *argv[]) {
 
     /* Initialize UDP telemetry broadcast */
     telem_init(3005);
-    telem_enable(TELEM_CHANNEL | TELEM_CARRIER | TELEM_SUBCAR | TELEM_TONE500 | TELEM_TONE600 | TELEM_BCD100 | TELEM_MARKERS | TELEM_SYNC);
+    telem_enable(TELEM_CHANNEL | TELEM_CARRIER | TELEM_SUBCAR | TELEM_TONE500 | TELEM_TONE600 | TELEM_BCD_ENV | TELEM_BCDS | TELEM_MARKERS | TELEM_SYNC);
 
     /* Output initial sync state to console and telemetry */
     printf("[SYNC] Startup state: %s (markers=%d, good_intervals=%d)\n",
@@ -1134,7 +1144,18 @@ int main(int argc, char *argv[]) {
                         tone_tracker_process_sample(g_tone_carrier, disp_i, disp_q);
                         tone_tracker_process_sample(g_tone_500, disp_i, disp_q);
                         tone_tracker_process_sample(g_tone_600, disp_i, disp_q);
-                        subcarrier_detector_process_sample(g_subcarrier_detector, disp_i, disp_q);
+                        bcd_envelope_process_sample(g_bcd_envelope, disp_i, disp_q);
+
+                        /* Feed BCD decoder with envelope data */
+                        if (g_bcd_decoder && g_bcd_envelope) {
+                            float timestamp_ms = (float)(frame_num * DISPLAY_EFFECTIVE_MS) + 
+                                                 (float)g_display_new_samples * (1000.0f / DISPLAY_SAMPLE_RATE);
+                            bcd_decoder_process_sample(g_bcd_decoder,
+                                                       timestamp_ms,
+                                                       bcd_envelope_get_envelope(g_bcd_envelope),
+                                                       bcd_envelope_get_snr_db(g_bcd_envelope),
+                                                       (bcd_status_t)bcd_envelope_get_status(g_bcd_envelope));
+                        }
 
                         /* Note: marker_detector now tracks 500/600 Hz in its own FFT path
                          * (same units, no scaling mismatch). No cross-path integration needed. */
@@ -1258,9 +1279,9 @@ int main(int argc, char *argv[]) {
 
             g_bucket_energy[f] = pos_energy + neg_energy;
 
-            /* Use subcarrier detector SNR for 100 Hz bucket display */
-            if (f == 0 && g_subcarrier_detector) {
-                float snr = subcarrier_detector_get_snr_db(g_subcarrier_detector);
+            /* Use BCD envelope tracker SNR for 100 Hz bucket display */
+            if (f == 0 && g_bcd_envelope) {
+                float snr = bcd_envelope_get_snr_db(g_bcd_envelope);
                 /* Convert SNR to energy-like value for display scaling */
                 g_bucket_energy[0] = powf(10.0f, snr / 20.0f) * 0.001f;
             }
@@ -1320,25 +1341,45 @@ int main(int argc, char *argv[]) {
                             tone_tracker_get_snr_db(g_tone_600));
             }
 
-            /* Send BCD 100 Hz subcarrier telemetry */
-            if (g_subcarrier_detector) {
-                float snr = subcarrier_detector_get_snr_db(g_subcarrier_detector);
-                float envelope = subcarrier_detector_get_envelope(g_subcarrier_detector);
-                float noise = subcarrier_detector_get_noise_floor_db(g_subcarrier_detector);
-                subcarrier_status_t status = subcarrier_detector_get_status(g_subcarrier_detector);
+            /* Send BCD 100 Hz envelope telemetry */
+            if (g_bcd_envelope) {
+                float snr = bcd_envelope_get_snr_db(g_bcd_envelope);
+                float envelope = bcd_envelope_get_envelope(g_bcd_envelope);
+                float noise = bcd_envelope_get_noise_floor_db(g_bcd_envelope);
+                bcd_envelope_status_t status = bcd_envelope_get_status(g_bcd_envelope);
 
                 const char *status_str;
                 switch (status) {
-                    case SUBCARRIER_ABSENT:  status_str = "ABSENT";  break;
-                    case SUBCARRIER_WEAK:    status_str = "WEAK";    break;
-                    case SUBCARRIER_PRESENT: status_str = "PRESENT"; break;
-                    case SUBCARRIER_STRONG:  status_str = "STRONG";  break;
+                    case BCD_ENV_ABSENT:  status_str = "ABSENT";  break;
+                    case BCD_ENV_WEAK:    status_str = "WEAK";    break;
+                    case BCD_ENV_PRESENT: status_str = "PRESENT"; break;
+                    case BCD_ENV_STRONG:  status_str = "STRONG";  break;
                     default: status_str = "UNKNOWN";
                 }
 
-                telem_sendf(TELEM_BCD100, "%s,%.1f,%.6f,%.2f,%.2f,%s",
+                telem_sendf(TELEM_BCD_ENV, "%s,%.1f,%.6f,%.2f,%.2f,%s",
                             time_str, timestamp_ms,
                             envelope, snr, noise, status_str);
+            }
+
+            /* Send BCD decoder status telemetry */
+            if (g_bcd_decoder) {
+                bcd_sync_state_t sync_state = bcd_decoder_get_sync_state(g_bcd_decoder);
+                int frame_pos = bcd_decoder_get_frame_position(g_bcd_decoder);
+                uint32_t decoded, failed, symbols;
+                bcd_decoder_get_stats(g_bcd_decoder, &decoded, &failed, &symbols);
+
+                const char *sync_str;
+                switch (sync_state) {
+                    case BCD_SYNC_SEARCHING:  sync_str = "SEARCHING";  break;
+                    case BCD_SYNC_CONFIRMING: sync_str = "CONFIRMING"; break;
+                    case BCD_SYNC_LOCKED:     sync_str = "LOCKED";     break;
+                    default: sync_str = "UNKNOWN";
+                }
+
+                telem_sendf(TELEM_BCDS, "STATUS,%s,%.1f,%s,%d,%u,%u,%u",
+                            time_str, timestamp_ms,
+                            sync_str, frame_pos, decoded, failed, symbols);
             }
         }
 
@@ -1478,7 +1519,8 @@ int main(int argc, char *argv[]) {
     tick_correlator_print_stats(g_tick_correlator);
     tick_detector_destroy(g_tick_detector);
     marker_detector_destroy(g_marker_detector);
-    subcarrier_detector_destroy(g_subcarrier_detector);
+    bcd_envelope_destroy(g_bcd_envelope);
+    bcd_decoder_destroy(g_bcd_decoder);
     slow_marker_detector_destroy(g_slow_marker);
     marker_correlator_destroy(g_marker_correlator);
     sync_detector_destroy(g_sync_detector);

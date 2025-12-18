@@ -56,7 +56,8 @@ static const char *g_channel_prefixes[] = {
     "CORR",  /* TELEM_CORR */
     "T500",  /* TELEM_TONE500 */
     "T600",  /* TELEM_TONE600 */
-    "BCD1",  /* TELEM_BCD100 */
+    "BCDE",  /* TELEM_BCD_ENV (100 Hz envelope) */
+    "BCDS",  /* TELEM_BCDS (BCD symbols/time) */
 };
 
 /*============================================================================
@@ -74,7 +75,8 @@ static int get_channel_index(telem_channel_t channel) {
         case TELEM_CORR:    return 7;
         case TELEM_TONE500: return 8;
         case TELEM_TONE600: return 9;
-        case TELEM_BCD100:  return 10;
+        case TELEM_BCD_ENV: return 10;
+        case TELEM_BCDS:    return 11;
         default:            return 0;
     }
 }

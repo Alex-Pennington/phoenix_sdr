@@ -44,8 +44,9 @@ typedef enum {
     TELEM_CORR      = (1 << 6),  /* Tick correlation data */
     TELEM_TONE500   = (1 << 7),  /* 500 Hz tone tracker */
     TELEM_TONE600   = (1 << 8),  /* 600 Hz tone tracker */
-    TELEM_BCD100    = (1 << 9),  /* 100 Hz BCD subcarrier detector */
-    TELEM_ALL       = 0x3FF      /* All channels */
+    TELEM_BCD_ENV   = (1 << 9),  /* 100 Hz BCD envelope tracker */
+    TELEM_BCDS      = (1 << 10), /* BCD decoder symbols and time */
+    TELEM_ALL       = 0x7FF      /* All channels */
 } telem_channel_t;
 
 /*============================================================================

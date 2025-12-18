@@ -319,9 +319,9 @@ static void close_window(bcd_correlator_t *corr) {
     if (symbol != BCD_CORR_SYM_NONE) {
         /* Step 9: UDP telemetry with second position and confidence */
         telem_sendf(TELEM_BCDS, "SYM,%c,%d,%.0f,%.2f",
-                    bcd_corr_symbol_char(symbol), 
+                    bcd_corr_symbol_char(symbol),
                     corr->current_second,
-                    duration_ms, 
+                    duration_ms,
                     confidence);
 
         /* Console output (verbose during development) */

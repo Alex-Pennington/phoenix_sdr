@@ -1378,22 +1378,11 @@ int main(int argc, char *argv[]) {
 
             /* Send BCD decoder status telemetry */
             if (g_bcd_decoder) {
-                bcd_sync_state_t sync_state = bcd_decoder_get_sync_state(g_bcd_decoder);
-                int frame_pos = bcd_decoder_get_frame_position(g_bcd_decoder);
-                uint32_t decoded, failed, symbols;
-                bcd_decoder_get_stats(g_bcd_decoder, &decoded, &failed, &symbols);
+                uint32_t symbols = bcd_decoder_get_symbol_count(g_bcd_decoder);
 
-                const char *sync_str;
-                switch (sync_state) {
-                    case BCD_SYNC_SEARCHING:  sync_str = "SEARCHING";  break;
-                    case BCD_SYNC_CONFIRMING: sync_str = "CONFIRMING"; break;
-                    case BCD_SYNC_LOCKED:     sync_str = "LOCKED";     break;
-                    default: sync_str = "UNKNOWN";
-                }
-
-                telem_sendf(TELEM_BCDS, "STATUS,%s,%.1f,%s,%d,%u,%u,%u",
-                            time_str, timestamp_ms,
-                            sync_str, frame_pos, decoded, failed, symbols);
+                /* Modem only reports symbol count - sync/decode is controller's job */
+                telem_sendf(TELEM_BCDS, "STATUS,%s,%.1f,MODEM,-1,0,0,%u",
+                            time_str, timestamp_ms, symbols);
             }
         }
 

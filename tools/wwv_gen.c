@@ -142,7 +142,7 @@ static bool tcp_send_header(SOCKET sock, uint32_t sample_rate, uint64_t center_f
     return tcp_send_all(sock, &hdr, sizeof(hdr));
 }
 
-static bool tcp_send_frame(SOCKET sock, const short *i_buf, const short *q_buf, 
+static bool tcp_send_frame(SOCKET sock, const short *i_buf, const short *q_buf,
                            int num_samples, uint32_t *sequence) {
     iq_data_frame_t frame_hdr = {0};
     frame_hdr.magic = IQ_MAGIC_DATA;
@@ -332,7 +332,7 @@ int main(int argc, char *argv[]) {
                 int seconds = (int)(samples_sent / SAMPLE_RATE);
                 int minutes = seconds / 60;
                 seconds %= 60;
-                printf("\r  Streaming: %02d:%02d (%llu frames)...", 
+                printf("\r  Streaming: %02d:%02d (%llu frames)...",
                        minutes, seconds, (unsigned long long)frames_sent);
                 fflush(stdout);
             }

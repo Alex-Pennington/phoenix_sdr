@@ -1,7 +1,7 @@
 # SDR Waterfall Display and AM Demodulation
 
 > ✅ **CURRENT** - Good foundational reference
-> 
+>
 > This document accurately describes I/Q signal fundamentals, FFT processing, and AM demodulation theory.
 > The current implementation in waterfall.c follows these principles with dual signal paths (50kHz detector, 12kHz display).
 

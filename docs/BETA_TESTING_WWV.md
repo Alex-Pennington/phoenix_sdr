@@ -5,7 +5,7 @@
 ---
 
 > ⚠️ **PARTIALLY SUPERSEDED** - December 18, 2025
-> 
+>
 > **Needs updating:**
 > - Build version is now 0.3.x+
 > - Sample rate is now 50kHz for detectors, not 48kHz (avoids sample drops)
@@ -13,7 +13,7 @@
 > - Minute marker detection is now implemented (marker_detector.c)
 > - BCD time code detection added (bcd_time_detector.c, bcd_freq_detector.c)
 > - Sync state machine added (sync_detector.c)
-> 
+>
 > **Still accurate:** WWV signal description, general detection concepts, MARS motivation
 
 ---

@@ -45,7 +45,7 @@ tick_detector  marker_detector  bcd_*_detector              tone_tracker(s)     
 
 ```powershell
 .\build.ps1                    # Debug build
-.\build.ps1 -Release           # Optimized build  
+.\build.ps1 -Release           # Optimized build
 .\build.ps1 -Target tools      # Tools only
 .\build.ps1 -Clean             # Clean artifacts
 .\run_tests.ps1                # All unit tests

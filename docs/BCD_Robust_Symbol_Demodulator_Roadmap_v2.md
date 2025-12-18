@@ -58,7 +58,7 @@ But WWV BCD encoding works by **ABSENCE** of the 100Hz subcarrier:
 100Hz subcarrier is NORMALLY ON during each second
 Symbols encoded by how long subcarrier is OFF ("hole punch"):
   - Binary 0:  ~200ms absence (short hole)
-  - Binary 1:  ~500ms absence (medium hole)  
+  - Binary 1:  ~500ms absence (medium hole)
   - P marker:  ~800ms absence (long hole)
 ```
 
@@ -144,8 +144,8 @@ tick_detector  marker_detector  bcd_time_det   bcd_freq_det    (existing)
 
 ### Phase 8: Position-Based P-Marker Gating (Quick Win)
 
-**Effort:** Low  
-**Impact:** High  
+**Effort:** Low
+**Impact:** High
 **Location:** `bcd_decoder.c` (controller side)
 
 **Concept:** When frame sync is locked (we know which second we're in), only accept P-markers at valid positions.
@@ -176,8 +176,8 @@ if (symbol == BCD_SYMBOL_MARKER && sync_locked) {
 
 ### Phase 9: Minimum Duration Validation (Quick Win)
 
-**Effort:** Low  
-**Impact:** Medium-High  
+**Effort:** Low
+**Impact:** Medium-High
 **Location:** `bcd_time_detector.c` and/or `bcd_freq_detector.c`
 
 **Current problem:** Pulse ends as soon as energy drops below threshold_low - even a single-sample dip triggers end.
@@ -215,8 +215,8 @@ case STATE_IN_PULSE:
 
 ### Phase 10: Multi-Point Sampling (Medium Effort)
 
-**Effort:** Medium  
-**Impact:** High  
+**Effort:** Medium
+**Impact:** High
 **Location:** New module or enhancement to `bcd_correlator.c`
 
 **Concept:** Instead of continuous threshold detection, sample at strategic points within each second (NTP pattern).
@@ -250,7 +250,7 @@ if (e1 < noise_threshold) {
 }
 ```
 
-**Why this works:** 
+**Why this works:**
 1. Samples at known-good times rather than continuous edge detection
 2. Noise cancellation built into bipolar formula
 3. Less susceptible to brief glitches
@@ -259,8 +259,8 @@ if (e1 < noise_threshold) {
 
 ### Phase 11: Matched Filter Correlation (Higher Effort)
 
-**Effort:** High  
-**Impact:** Very High  
+**Effort:** High
+**Impact:** Very High
 **Location:** New module `bcd_matched_filter.c`
 
 **Concept:** Correlate incoming envelope against template of expected pulse shapes.
@@ -314,8 +314,8 @@ else symbol = NONE;
 
 ### Phase 12: Comb Filter Averaging (Higher Effort)
 
-**Effort:** High  
-**Impact:** High (especially for weak signals)  
+**Effort:** High
+**Impact:** High (especially for weak signals)
 **Location:** New module or enhancement to existing detectors
 
 **Concept:** Average corresponding samples across multiple 1-second frames to reinforce periodic signals and suppress random noise.
@@ -390,7 +390,7 @@ float comb_filter_get(int offset) {
 ### Phase 8
 - `src/bdc/bcd_decoder.c` (controller) - Add position validation in `bcd_decoder_process_symbol()`
 
-### Phase 9  
+### Phase 9
 - `tools/bcd_time_detector.c` - Add `consecutive_low_frames` to struct and state machine
 - `tools/bcd_freq_detector.c` - Same pattern
 

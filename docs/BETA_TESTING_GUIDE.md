@@ -1,13 +1,13 @@
 # Phoenix SDR — Beta Testing Guide
 
-**Version:** v0.2.6  
-**Date:** December 14, 2025  
+**Version:** v0.2.6
+**Date:** December 14, 2025
 **Contact:** KY4OLB
 
 ---
 
 > ⚠️ **PARTIALLY SUPERSEDED** - December 18, 2025
-> 
+>
 > **Needs updating:**
 > - Version is now 0.3.x+
 > - Display now has 7 bucket bars (100, 440, 500, 600, 1000, 1200, 1500 Hz)
@@ -15,7 +15,7 @@
 > - BCD time code detection added
 > - UDP telemetry output added (port 3005)
 > - Signal path now uses 50kHz detector path + 12kHz display path
-> 
+>
 > **Still accurate:** Hardware requirements, basic command line usage, general concepts
 
 ---
@@ -100,9 +100,9 @@ When the tick detector finds a tick, you'll see:
 
 ```
 [WARMUP] Complete. Noise=0.000342, Thresh=0.000684
-[   1.1s] TICK #1    int=     0ms  avg=     0ms  
-[   2.1s] TICK #2    int=  1002ms  avg= 1002ms  
-[   3.1s] TICK #3    int=   998ms  avg= 1000ms  
+[   1.1s] TICK #1    int=     0ms  avg=     0ms
+[   2.1s] TICK #2    int=  1002ms  avg= 1002ms
+[   3.1s] TICK #3    int=   998ms  avg= 1000ms
 ```
 
 - **[time]** — Elapsed time in seconds
@@ -224,7 +224,7 @@ Please report:
 
 **Thank you for testing!**
 
-Phoenix Nest MARS Suite  
+Phoenix Nest MARS Suite
 KY4OLB
 
 *"MARS funds WWV"*

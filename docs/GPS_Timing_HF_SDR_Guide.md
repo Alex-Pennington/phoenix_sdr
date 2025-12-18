@@ -1,7 +1,7 @@
 # GPS Precision Timing for HF SDR Applications
 
 > 📚 **REFERENCE** - Background information on GPS timing
-> 
+>
 > This is a chat history compilation about GPS timing concepts.
 > Not directly implemented in current codebase - gps_serial.c exists but GPS timing features are not yet integrated.
 
@@ -397,7 +397,7 @@ Bring the GPS PPS into the **same sample stream** as your signal. Then the PPS e
                                  │ (picks up both)
                                  ↓
 ┌─────────┐    ~1ft     ┌─────────┐
-│ NEO-6M  │──PPS──→ 🔘 │ Small   │  ← Just a wire stub or 
+│ NEO-6M  │──PPS──→ 🔘 │ Small   │  ← Just a wire stub or
 │   GPS   │    pulse    │ radiator│     loop near the antenna
 └─────────┘             └─────────┘
                              │
@@ -510,7 +510,7 @@ No splitters, no cables, no RF plumbing. Just radiate the PPS near your antenna.
                              │ (picks up both)
                              ↓
 ┌─────────┐    ~1ft     ┌─────────┐
-│ NEO-6M  │──PPS──→ 🔘 │ Small   │  ← Just a wire stub or 
+│ NEO-6M  │──PPS──→ 🔘 │ Small   │  ← Just a wire stub or
 │   GPS   │    pulse    │ radiator│     loop near the antenna
 └─────────┘             └─────────┘
                              │
@@ -597,18 +597,18 @@ def find_pps_edges(iq_samples, sample_rate, threshold=0.8):
     """Find PPS pulse locations in IQ stream"""
     # Compute envelope (magnitude)
     envelope = np.abs(iq_samples)
-    
+
     # Simple threshold detection
     peak = np.max(envelope)
     threshold_level = peak * threshold
-    
+
     # Find rising edges
     above = envelope > threshold_level
     edges = np.where(np.diff(above.astype(int)) == 1)[0]
-    
+
     # Convert sample indices to times
     times = edges / sample_rate
-    
+
     return edges, times
 
 # Usage:
@@ -709,7 +709,7 @@ void loop() {
     tone(TONE_PIN, 1800);
     delay(50);  // 50ms tick duration (like WWV)
     noTone(TONE_PIN);
-    
+
     // Wait for PPS to go low before re-arming
     while (digitalRead(PPS_PIN) == HIGH);
   }
@@ -808,21 +808,21 @@ from scipy import signal
 
 def detect_pps_ticks(iq_samples, sample_rate, tone_freq=1800, bandwidth=100):
     """Detect 1800 Hz PPS tick bursts in IQ stream"""
-    
+
     # Bandpass filter around 1800 Hz
     nyq = sample_rate / 2
     low = (tone_freq - bandwidth/2) / nyq
     high = (tone_freq + bandwidth/2) / nyq
     b, a = signal.butter(4, [low, high], btype='band')
     filtered = signal.filtfilt(b, a, np.abs(iq_samples))
-    
+
     # Envelope detection
     envelope = np.abs(signal.hilbert(filtered))
-    
+
     # Find peaks (tick locations)
     threshold = np.max(envelope) * 0.5
     peaks, _ = signal.find_peaks(envelope, height=threshold, distance=sample_rate*0.5)
-    
+
     return peaks  # Sample indices of each PPS tick
 
 # Usage:

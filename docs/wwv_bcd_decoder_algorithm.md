@@ -1,13 +1,13 @@
 # WWV BCD Time Code Decoder Algorithm
 
 > ⚠️ **PARTIALLY SUPERSEDED** - December 18, 2025
-> 
+>
 > **Superseded content:**
 > - Input sample rate is now 50kHz (not 48kHz) - avoids sample drops
 > - Goertzel approach replaced by FFT-based detection in bcd_time_detector.c and bcd_freq_detector.c
 > - Pulse classification now done via bcd_correlator.c with window-based integration
 > - Output sample rate and decimation factors have changed
-> 
+>
 > **Still valuable:** WWV BCD pulse encoding (200/500/800ms), frame structure, time code format
 
 ## Overview
@@ -114,10 +114,10 @@ coeff = 2 * cos(omega)
 def goertzel_magnitude(samples):
     """
     Compute magnitude of 100 Hz component using Goertzel algorithm.
-    
+
     Args:
         samples: Array of BLOCK_SIZE samples
-        
+
     Returns:
         Magnitude of 100 Hz component
     """
@@ -149,10 +149,10 @@ envelope_buffer = RingBuffer(100)  # 1 second history
 def update_envelope(goertzel_mag):
     """
     Apply exponential smoothing to Goertzel magnitude.
-    
+
     Args:
         goertzel_mag: Raw magnitude from Goertzel filter
-        
+
     Returns:
         Smoothed envelope value
     """
@@ -173,7 +173,7 @@ THRESHOLD_LOW = noise_floor + 3   # dB - Pulse OFF (hysteresis)
 
 # At 100 samples/sec (10 ms resolution):
 #   200 ms pulse = ~20 samples
-#   500 ms pulse = ~50 samples  
+#   500 ms pulse = ~50 samples
 #   800 ms pulse = ~80 samples
 
 state = IDLE
@@ -183,16 +183,16 @@ pulse_width = 0
 def detect_pulse(envelope_sample, sample_idx):
     """
     Detect pulse edges and measure width.
-    
+
     Args:
         envelope_sample: Current envelope value
         sample_idx: Current sample index (10 ms ticks)
-        
+
     Returns:
         Classified symbol (BIT_ZERO, BIT_ONE, POSITION_MARK) or None
     """
     global state, pulse_start
-    
+
     if state == IDLE and envelope_sample > THRESHOLD_HIGH:
         state = IN_PULSE
         pulse_start = sample_idx
@@ -215,7 +215,7 @@ Signal Level
      │         │     │
   +3 dB ──────┼─────┼───── THRESHOLD_LOW (turn OFF)
      │        │     │
-     │────────┘     └────── 
+     │────────┘     └──────
      │
   Noise Floor
      └─────────────────────► Time
@@ -230,15 +230,15 @@ Signal Level
 def classify_pulse(width_samples):
     """
     Classify pulse width into symbol type.
-    
+
     Args:
         width_samples: Pulse width in 10ms sample units
-        
+
     Returns:
         Symbol type (BIT_ZERO, BIT_ONE, or POSITION_MARK)
     """
     width_ms = width_samples * 10  # Convert to ms
-    
+
     if width_ms < 350:
         return BIT_ZERO      # ~200 ms nominal
     elif width_ms < 650:
@@ -305,34 +305,34 @@ P_POSITIONS = [0, 9, 19, 29, 39, 49, 59]
 def process_symbol(symbol, second_tick):
     """
     Process incoming symbol and maintain frame sync.
-    
+
     Args:
         symbol: Classified symbol (0, 1, or P)
         second_tick: Second boundary indicator
-        
+
     Returns:
         Decoded UTC time if frame complete, else None
     """
     global sync_state
-    
+
     symbol_buffer.push(symbol)
-    
+
     if sync_state == SEARCHING:
         # Look for P markers at expected positions
         if detect_frame_pattern(symbol_buffer):
             sync_state = SYNCED
             frame_offset = calculate_offset()
-    
+
     elif sync_state == SYNCED:
         if is_frame_complete():
             return decode_frame(symbol_buffer)
-    
+
     return None
 
 def detect_frame_pattern(buffer):
     """
     Check if buffer contains valid position marker pattern.
-    
+
     Returns:
         True if valid P marker pattern detected
     """
@@ -342,7 +342,7 @@ def detect_frame_pattern(buffer):
         if symbol == POSITION_MARK:
             # Check if this P is at expected offset from previous
             p_count += 1
-    
+
     # Need at least 3 consecutive P markers at correct spacing
     return p_count >= 3 and verify_spacing(buffer)
 ```
@@ -355,50 +355,50 @@ def detect_frame_pattern(buffer):
 def decode_frame(symbols):
     """
     Decode complete 60-symbol frame into UTC time.
-    
+
     Args:
         symbols: Array of 60 symbols (0, 1, or P)
-        
+
     Returns:
         UTC_Time object with hours, minutes, day of year
     """
-    # Minutes: seconds 1-8 
+    # Minutes: seconds 1-8
     # Bit weights: 40, 20, 10, (unused), 8, 4, 2, 1
-    minutes = (symbols[1] * 40 + 
-               symbols[2] * 20 + 
-               symbols[3] * 10 + 
+    minutes = (symbols[1] * 40 +
+               symbols[2] * 20 +
+               symbols[3] * 10 +
                # symbols[4] unused (always 0)
-               symbols[5] * 8 + 
-               symbols[6] * 4 + 
-               symbols[7] * 2 + 
+               symbols[5] * 8 +
+               symbols[6] * 4 +
+               symbols[7] * 2 +
                symbols[8] * 1)
-    
+
     # Hours: seconds 12-18
     # Bit weights: (unused), (unused), 20, 10, (unused), 8, 4, 2, 1
-    hours = (symbols[12] * 20 + 
-             symbols[13] * 10 + 
+    hours = (symbols[12] * 20 +
+             symbols[13] * 10 +
              # symbols[14] unused
-             symbols[15] * 8 + 
-             symbols[16] * 4 + 
-             symbols[17] * 2 + 
+             symbols[15] * 8 +
+             symbols[16] * 4 +
+             symbols[17] * 2 +
              symbols[18] * 1)
-    
+
     # Day of year: seconds 22-33
     # Hundreds and tens: 200, 100, (unused), 80, 40, 20, 10, (unused)
     # Units: 8, 4, 2, 1
-    doy = (symbols[22] * 200 + 
+    doy = (symbols[22] * 200 +
            symbols[23] * 100 +
            # symbols[24] unused
-           symbols[25] * 80 + 
+           symbols[25] * 80 +
            symbols[26] * 40 +
-           symbols[27] * 20 + 
+           symbols[27] * 20 +
            symbols[28] * 10 +
            # symbols[29] is P3
-           symbols[30] * 8 + 
+           symbols[30] * 8 +
            symbols[31] * 4 +
-           symbols[32] * 2 + 
+           symbols[32] * 2 +
            symbols[33] * 1)
-    
+
     return UTC_Time(hours=hours, minutes=minutes, day_of_year=doy)
 ```
 
@@ -521,7 +521,7 @@ Sec  | Bit Weight | Field
 def estimate_noise_floor(envelope_buffer, percentile=10):
     """
     Estimate noise floor from envelope history.
-    
+
     Uses lower percentile of recent values to avoid
     including pulse energy in estimate.
     """

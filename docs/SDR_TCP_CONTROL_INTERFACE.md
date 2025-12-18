@@ -2,9 +2,9 @@
 
 ## Design Specification for Remote SDR Control
 
-**Document Version:** 1.1  
-**Date:** December 18, 2025  
-**Status:** IMPLEMENTED  
+**Document Version:** 1.1
+**Date:** December 18, 2025
+**Status:** IMPLEMENTED
 **Authors:** Phoenix Nest Development Team
 
 ---

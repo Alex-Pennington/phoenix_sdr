@@ -1,6 +1,6 @@
 # Documentation Alignment Roadmap
 
-**Date:** December 18, 2025  
+**Date:** December 18, 2025
 **Purpose:** Analyze gaps between deprecated design docs and current implementation, provide update roadmap
 
 ---
@@ -36,9 +36,9 @@ Good news: **Both protocols are substantially implemented** in the current codeb
 1. **Header struct has extra fields:** Implementation adds `gain_reduction` and `lna_state` fields
    - Doc spec: 32 bytes with 2 reserved fields
    - Implementation: Uses reserved space for gain/LNA info
-   
+
 2. **Metadata struct has extra fields:** Same as above
-   - Doc spec: 32 bytes with 3 reserved fields  
+   - Doc spec: 32 bytes with 3 reserved fields
    - Implementation: Uses reserved space for gain/LNA info
 
 3. **Frame samples per frame:** Implementation uses 8192 samples

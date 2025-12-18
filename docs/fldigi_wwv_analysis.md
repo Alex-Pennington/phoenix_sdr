@@ -1,12 +1,12 @@
 # FLDIGI WWV Implementation Analysis
 
 > ⚠️ **PARTIALLY SUPERSEDED** - December 18, 2025
-> 
+>
 > **Superseded content:**
 > - `wwv_scan.c` references - this tool was experimental and is not in current build
 > - Proposed detection algorithm in "Proposed Phoenix Nest Detection Algorithm" section
 > - Build system bug references are obsolete
-> 
+>
 > **Still valuable:** FLDIGI analysis, moving average filter concept, threshold hysteresis concept
 
 ## Executive Summary
@@ -66,7 +66,7 @@ Added comprehensive diagnostics to understand edge detection failures:
 
 This shows:
 - `maxD@250ms` - where max derivative occurred (should be 0-100ms for tick window)
-- `env=` - envelope value when max derivative occurred  
+- `env=` - envelope value when max derivative occurred
 - `nf=` - noise floor estimate
 - `nf*3=` - envelope threshold (envelope must exceed this)
 - `deriv:PASS/FAIL` - did derivative exceed threshold?
@@ -75,7 +75,7 @@ This shows:
 
 ### Current Blocking Issue
 
-**Build system not rebuilding `wwv_scan.c`** - running `build.ps1 -Target tools` only builds `wwv_tick_detect` and `wwv_tick_detect2`, skipping other tools including `wwv_scan`. 
+**Build system not rebuilding `wwv_scan.c`** - running `build.ps1 -Target tools` only builds `wwv_tick_detect` and `wwv_tick_detect2`, skipping other tools including `wwv_scan`.
 
 To fix:
 ```powershell
@@ -204,7 +204,7 @@ Consider increasing Q for narrower bandwidth.
 float moving_average_process(float *buffer, int *index, float new_sample) {
     buffer[*index] = new_sample;
     *index = (*index + 1) % MA_LENGTH;
-    
+
     float sum = 0;
     for (int i = 0; i < MA_LENGTH; i++) {
         sum += buffer[i];
@@ -324,7 +324,7 @@ Quick improvement without changing architecture:
 #define BUCKET_MS   10   // 10ms per bucket
 
 // Or even better:
-#define NUM_BUCKETS 200  // 200 buckets × 5ms = 1000ms  
+#define NUM_BUCKETS 200  // 200 buckets × 5ms = 1000ms
 #define BUCKET_MS   5    // 5ms matches tick width exactly!
 ```
 

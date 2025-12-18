@@ -38,6 +38,7 @@ tick_detector  marker_detector  bcd_*_detector              tone_tracker(s)     
 | `tools/` | Executable tools and detector modules (`.c` + `.h` pairs) |
 | `include/` | Public headers, `phoenix_sdr.h` is main API |
 | `test/` | Unit tests using `test_framework.h` |
+| `docs/` | Protocol specifications (TCP, UDP telemetry, WWV generator) |
 
 ---
 
@@ -48,6 +49,7 @@ tick_detector  marker_detector  bcd_*_detector              tone_tracker(s)     
 .\build.ps1 -Release           # Optimized build
 .\build.ps1 -Target tools      # Tools only
 .\build.ps1 -Clean             # Clean artifacts
+.\build.ps1 -Increment patch   # Bump version
 .\run_tests.ps1                # All unit tests
 .\run_tests.ps1 -Filter "dsp"  # Specific tests
 ```
@@ -57,6 +59,12 @@ tick_detector  marker_detector  bcd_*_detector              tone_tracker(s)     
 ### Quick Run
 ```powershell
 cmd /c ".\bin\simple_am_receiver.exe -f 5.000450 -g 59 -l 0 -o | .\bin\waterfall.exe"
+```
+
+### WWV Generator
+```powershell
+.\bin\wwv_gen.exe -d 60 -o wwv_test.iqr  # Generate 60s test signal
+.\bin\iqr_play.exe wwv_test.iqr --tcp    # Play via TCP to waterfall
 ```
 
 ---
@@ -159,6 +167,57 @@ wwv_clock_t *clk = wwv_clock_create(WWV_STATION_WWV);
 wwv_time_t now = wwv_clock_now(clk);  // {second, minute, hour, expected_event, tick_expected}
 ```
 
+### P10 - WWV Signal Generator Pattern
+Test signal generation uses `wwv_signal.h` with precise timing at 2 Msps:
+```c
+// Generator follows docs/WWV_Test_Signal_Generator_Specification.md
+wwv_signal_t *sig = wwv_signal_create(0, 12, 1, 25, WWV_STATION_WWV);  // 12:00, day 1
+int16_t i, q;
+wwv_signal_get_sample_int16(sig, &i, &q);  // Get next sample pair
+```
+Key timing constraints from spec:
+- Guard zones: 10ms before pulse, 25ms after (silence enforced)
+- Tick: 5ms @ 1000Hz (WWV) or 1200Hz (WWVH), 100% modulation
+- Marker: 800ms @ 1000Hz or 1500Hz (hour), 100% modulation
+- Tones: 500Hz/600Hz/440Hz @ 50% modulation during non-guard periods
+- BCD: 100Hz subcarrier always active (18% mark, 3% space)
+
+### P11 - TCP I/Q Streaming Protocol
+Binary protocol defined in `docs/SDR_IQ_STREAMING_INTERFACE.md`:
+```c
+// PHXI handshake (one-time)
+typedef struct { uint32_t magic; uint32_t version; float sample_rate; /* ... */ } phxi_header_t;
+
+// IQDQ sample frames (continuous)
+typedef struct { uint32_t magic; uint32_t sample_count; int16_t samples[]; } iqdq_frame_t;
+```
+**Magic values:** `MAGIC_PHXI = 0x50485849`, `MAGIC_IQDQ = 0x49514451`
+**Default ports:** Control 4535, I/Q stream 4536
+
+### P12 - IQR File Format (I/Q Recording)
+Binary file format for offline analysis, defined in `include/iq_recorder.h`:
+```c
+// .iqr file structure
+typedef struct {
+    char     magic[4];      // "IQR1"
+    uint32_t version;       // 1
+    double   sample_rate_hz;
+    double   center_freq_hz;
+    uint32_t bandwidth_khz;
+    int32_t  gain_reduction;
+    uint32_t lna_state;
+    int64_t  start_time_us; // Unix microseconds
+    uint64_t sample_count;
+    // ... 64 bytes total
+} iqr_header_t;
+// Followed by: int16_t samples[] interleaved I,Q,I,Q,...
+```
+**Workflow:**
+- Generate: `wwv_gen.exe -d 60 -o test.iqr` (60s recording)
+- Play: `iqr_play.exe test.iqr --tcp` (stream to TCP port 4536)
+- Info: `iqr_play.exe test.iqr` (display file metadata)
+**Companion:** `.meta` file (human-readable JSON) created alongside `.iqr` with GPS timing if available
+
 ---
 
 ## Frozen Files
@@ -167,6 +226,7 @@ wwv_time_t now = wwv_clock_now(clk);  // {second, minute, hour, expected_event, 
 |------|--------|
 | `tools/waterfall.c` (signal chain) | Display path, detector path, FFT, decimation - working |
 | `tools/waterfall_dsp.c` | Lowpass filters, decimation logic - working |
+| `tools/waterfall_dsp.h` | DSP path API - stable |
 | `tools/marker_detector.c` | Minute marker detection - working |
 | `tools/marker_detector.h` | Minute marker API - stable |
 | `tools/marker_correlator.c` | Marker correlation - working |
@@ -182,18 +242,6 @@ wwv_time_t now = wwv_clock_now(clk);  // {second, minute, hour, expected_event, 
 - **Tick:** 5ms pulse of 1000 Hz tone every second (AM modulated)
 - **Minute marker:** 800ms pulse at second 0 of each minute
 - **BCD time code:** 100 Hz subcarrier with binary time data
-- **DC hole:** Zero-IF receivers have DC offset; tune 450 Hz off-center
-
----
-
-## Dependencies
-
-| Library | Location | Purpose |
-|---------|----------|---------|
-| SDRplay API 3.x | `C:\Program Files\SDRplay\API\` | Hardware access |
-| SDL2 2.30.9 | `libs/SDL2/` | Graphics/audio |
-| KissFFT | `src/kiss_fft.c` | FFT processing |
-| MinGW-w64 | winget install | GCC compiler |
 - **DC hole:** Zero-IF receivers have DC offset; tune 450 Hz off-center
 
 ---

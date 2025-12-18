@@ -1,13 +1,13 @@
 /**
  * @file sync_detector.c
- * @brief WWV sync detector implementation
+ * @brief WWV unified sync detector implementation
  *
- * Correlates inputs from tick detector and marker detector to confirm
- * minute markers with high confidence. Tracks sync state and outputs
- * confirmed markers to CSV log.
+ * Fuses evidence from multiple sources (ticks, markers, P-markers, tick-holes)
+ * to provide authoritative frame timing with confidence tracking and recovery.
  */
 
 #include "sync_detector.h"
+#include "wwv_clock.h"
 #include "version.h"
 #include "waterfall_telemetry.h"
 #include <stdlib.h>
@@ -17,28 +17,80 @@
 #include <time.h>
 
 /*============================================================================
- * Configuration
+ * Configuration - from spec
  *============================================================================*/
 
-#define CORRELATION_WINDOW_MS   1500.0f  /* Max time between tick/marker detections to correlate */
-#define MARKER_INTERVAL_MIN_MS  55000.0f /* Minimum valid interval between markers */
-#define MARKER_INTERVAL_MAX_MS  65000.0f /* Maximum valid interval between markers */
-#define MARKER_NOMINAL_MS       60000.0f /* Nominal marker interval */
-#define PENDING_TIMEOUT_MS      3000.0f  /* Clear pending event if not correlated in time */
-#define SYNC_FLASH_FRAMES       30       /* Flash duration for confirmed marker */
+/* Legacy correlation (backward compat) */
+#define CORRELATION_WINDOW_MS   1500.0f
+#define MARKER_INTERVAL_MIN_MS  55000.0f
+#define MARKER_INTERVAL_MAX_MS  65000.0f
+#define MARKER_NOMINAL_MS       60000.0f
+#define PENDING_TIMEOUT_MS      3000.0f
+#define SYNC_FLASH_FRAMES       30
+
+/* Timing thresholds */
+#define TICK_INTERVAL_MIN_MS         950.0f
+#define TICK_INTERVAL_MAX_MS         1050.0f
+#define TICK_HOLE_MIN_GAP_MS         1700.0f
+#define TICK_HOLE_MAX_GAP_MS         2200.0f
+#define TICK_DOUBLE_MAX_GAP_MS       100.0f
+
+#define SYNC_SIGNAL_LOSS_GAP_MS      2500.0f
+#define SYNC_RETENTION_WINDOW_MS     120000.0f
+#define SYNC_RECOVERY_TIMEOUT_MS     10000.0f
+
+/* Evidence weights */
+#define WEIGHT_TICK                  0.05f
+#define WEIGHT_MARKER                0.40f
+#define WEIGHT_P_MARKER              0.15f
+#define WEIGHT_TICK_HOLE             0.20f
+#define WEIGHT_COMBINED_HOLE_MARKER  0.50f
+
+/* Confidence thresholds */
+#define CONFIDENCE_LOCKED_THRESHOLD  0.70f
+#define CONFIDENCE_MIN_RETAIN        0.05f
+#define CONFIDENCE_TENTATIVE_INIT    0.30f
+#define CONFIDENCE_DECAY_NORMAL      0.995f
+#define CONFIDENCE_DECAY_RECOVERING  0.980f
+
+/* Validation tolerances */
+#define TICK_PHASE_TOLERANCE_MS      100.0f
+#define MARKER_TOLERANCE_MS          500.0f
+#define P_MARKER_TOLERANCE_MS        200.0f
+#define LEAP_SECOND_EXTRA_MS         1000.0f
+
+/* Debounce */
+#define MIN_TICKS_FOR_HOLE           20
+#define SIGNAL_WEAK_DEBOUNCE         3
 
 /*============================================================================
  * Internal State
  *============================================================================*/
 
+typedef struct {
+    int consecutive_tick_count;
+    float last_tick_ms;
+    float prev_hole_ms;
+    float last_hole_ms;
+    int hole_count;
+} tick_gap_tracker_t;
+
+typedef struct {
+    float retained_anchor_ms;
+    float signal_lost_ms;
+    float recovery_start_ms;
+    bool has_retained_state;
+    bool recovery_tick_seen;
+    bool recovery_marker_seen;
+    bool recovery_p_marker_seen;
+} recovery_state_t;
+
 struct sync_detector {
-    /* Pending event from tick detector */
+    /* Legacy pending events (backward compat) */
     float pending_tick_ms;
     float pending_tick_duration_ms;
     float pending_tick_corr_ratio;
     bool tick_pending;
-
-    /* Pending event from marker detector */
     float pending_marker_ms;
     float pending_marker_energy;
     float pending_marker_duration_ms;
@@ -48,10 +100,32 @@ struct sync_detector {
     float last_confirmed_ms;
     float prev_confirmed_ms;
     int confirmed_count;
-    int good_intervals;          /* Count of ~60s intervals */
+    int good_intervals;
 
-    /* State */
+    /* Enhanced state */
     sync_state_t state;
+    float confidence;
+    uint32_t evidence_mask;
+    float minute_anchor_ms;         /* Authoritative minute boundary */
+
+    /* Tick gap tracking */
+    tick_gap_tracker_t tick_gap;
+
+    /* Recovery state */
+    recovery_state_t recovery;
+
+    /* Signal loss detection */
+    int signal_weak_count;
+    bool expecting_marker_soon;
+    float expected_marker_ms;
+
+    /* Optional integrations */
+    wwv_clock_t *wwv_clock;
+    bool leap_second_pending;
+
+    /* Callbacks */
+    sync_state_callback_fn state_callback;
+    void *state_callback_user_data;
 
     /* UI feedback */
     int flash_frames_remaining;
@@ -64,6 +138,13 @@ struct sync_detector {
 /*============================================================================
  * Internal Functions
  *============================================================================*/
+
+/* Forward declarations */
+static void transition_state(sync_detector_t *sd, sync_state_t new_state);
+static void apply_evidence(sync_detector_t *sd, uint32_t evidence_type, float weight);
+static float get_evidence_weight(sync_detector_t *sd, uint32_t evidence_type);
+static void sync_detector_hole_detected(sync_detector_t *sd, float hole_timestamp_ms);
+static void sync_detector_full_reset(sync_detector_t *sd);
 
 static void get_wall_time_str(sync_detector_t *sd, float timestamp_ms, char *buf, size_t buflen) {
     time_t event_time = sd->start_time + (time_t)(timestamp_ms / 1000.0f);
@@ -119,6 +200,7 @@ static void confirm_marker(sync_detector_t *sd, float marker_time, float delta_m
         /* Update confirmed marker history */
         sd->prev_confirmed_ms = sd->last_confirmed_ms;
         sd->last_confirmed_ms = marker_time;
+        sd->minute_anchor_ms = marker_time;  /* Set authoritative anchor */
         sd->confirmed_count++;
 
         /* Track good intervals for lock confidence */
@@ -127,11 +209,24 @@ static void confirm_marker(sync_detector_t *sd, float marker_time, float delta_m
             sd->good_intervals++;
         }
 
-        /* Update state */
-        if (sd->good_intervals >= 2) {
-            sd->state = SYNC_LOCKED;
-        } else if (sd->confirmed_count >= 1) {
-            sd->state = SYNC_TENTATIVE;
+        /* Apply marker evidence */
+        float weight = get_evidence_weight(sd, EVIDENCE_MARKER);
+
+        /* Check if marker confirms :59 tick hole */
+        if (sd->expecting_marker_soon) {
+            float delta_from_expected = fabsf(marker_time - sd->expected_marker_ms);
+            if (delta_from_expected < 200.0f) {
+                printf("[SYNC] Marker confirms :59 tick hole - high confidence\n");
+                weight = WEIGHT_COMBINED_HOLE_MARKER;
+            }
+            sd->expecting_marker_soon = false;
+        }
+
+        apply_evidence(sd, EVIDENCE_MARKER, weight);
+
+        /* Legacy state transitions */
+        if (sd->state == SYNC_ACQUIRING) {
+            transition_state(sd, SYNC_TENTATIVE);
         }
 
         /* Flash for UI */
@@ -141,9 +236,9 @@ static void confirm_marker(sync_detector_t *sd, float marker_time, float delta_m
         log_confirmed_marker(sd, marker_time, interval_ms, delta_ms, source);
 
         /* Console output */
-        printf("[SYNC] *** CONFIRMED MARKER #%d *** src=%s delta=%.0fms interval=%.1fs state=%s\n",
+        printf("[SYNC] *** CONFIRMED MARKER #%d *** src=%s delta=%.0fms interval=%.1fs state=%s conf=%.2f\n",
                sd->confirmed_count, source, delta_ms, interval_ms / 1000.0f,
-               sync_state_name(sd->state));
+               sync_state_name(sd->state), sd->confidence);
     } else {
         printf("[SYNC] Marker rejected (%s): interval=%.1fs (out of range)\n",
                source, interval_ms / 1000.0f);
@@ -190,6 +285,135 @@ static void check_timeout(sync_detector_t *sd, float current_ms) {
         confirm_marker(sd, sd->pending_marker_ms, 0.0f, "MARK");
         return;
     }
+}
+
+/*============================================================================
+ * Enhanced Sync Functions
+ *============================================================================*/
+
+static float get_evidence_weight(sync_detector_t *sd, uint32_t evidence_type) {
+    float base_weight;
+
+    switch (evidence_type) {
+        case EVIDENCE_TICK:       base_weight = WEIGHT_TICK; break;
+        case EVIDENCE_MARKER:     base_weight = WEIGHT_MARKER; break;
+        case EVIDENCE_P_MARKER:   base_weight = WEIGHT_P_MARKER; break;
+        case EVIDENCE_TICK_HOLE:  base_weight = WEIGHT_TICK_HOLE; break;
+        default:                  base_weight = 0.10f; break;
+    }
+
+    /* Schedule-aware discount if wwv_clock available */
+    if (sd->wwv_clock && wwv_clock_is_special_minute(sd->wwv_clock)) {
+        base_weight *= 0.5f;
+    }
+
+    return base_weight;
+}
+
+static void apply_evidence(sync_detector_t *sd, uint32_t evidence_type, float weight) {
+    sd->evidence_mask |= evidence_type;
+
+    /* Boost confidence asymptotically toward 1.0 */
+    sd->confidence += weight * (1.0f - sd->confidence);
+    if (sd->confidence > 1.0f) sd->confidence = 1.0f;
+
+    /* State transitions based on confidence */
+    if (sd->state == SYNC_TENTATIVE && sd->confidence >= CONFIDENCE_LOCKED_THRESHOLD) {
+        transition_state(sd, SYNC_LOCKED);
+    }
+}
+
+static void transition_state(sync_detector_t *sd, sync_state_t new_state) {
+    if (sd->state == new_state) return;
+
+    sync_state_t old_state = sd->state;
+    sd->state = new_state;
+
+    /* State-specific initialization */
+    switch (new_state) {
+        case SYNC_ACQUIRING:
+            sd->confidence = 0.0f;
+            break;
+        case SYNC_TENTATIVE:
+            if (sd->confidence < CONFIDENCE_TENTATIVE_INIT) {
+                sd->confidence = CONFIDENCE_TENTATIVE_INIT;
+            }
+            break;
+        case SYNC_LOCKED:
+            /* Confidence already above threshold */
+            break;
+        case SYNC_RECOVERING:
+            /* Confidence retained, will decay faster */
+            sd->recovery.recovery_start_ms = sd->tick_gap.last_tick_ms;
+            break;
+    }
+
+    printf("[SYNC] State transition: %s → %s (conf=%.2f)\n",
+           sync_state_name(old_state), sync_state_name(new_state), sd->confidence);
+
+    /* UDP telemetry */
+    telem_sendf(TELEM_SYNC, "STATE,%s,%s,%.2f",
+                sync_state_name(old_state), sync_state_name(new_state), sd->confidence);
+
+    /* User callback */
+    if (sd->state_callback) {
+        sd->state_callback(old_state, new_state, sd->confidence, sd->state_callback_user_data);
+    }
+}
+
+static void sync_detector_hole_detected(sync_detector_t *sd, float hole_timestamp_ms) {
+    int probable_second = -1;
+
+    /* Determine position if locked */
+    if (sd->state == SYNC_LOCKED && sd->minute_anchor_ms > 0) {
+        float since_anchor = hole_timestamp_ms - sd->minute_anchor_ms;
+        while (since_anchor < 0) since_anchor += 60000.0f;
+        while (since_anchor >= 60000.0f) since_anchor -= 60000.0f;
+
+        int position = (int)(since_anchor / 1000.0f + 0.5f);
+
+        if (abs(position - 29) <= 1) {
+            probable_second = 29;
+        } else if (abs(position - 59) <= 1 || position <= 1) {
+            probable_second = 59;
+            sd->expecting_marker_soon = true;
+            sd->expected_marker_ms = hole_timestamp_ms + 1000.0f;
+        }
+    }
+
+    float weight = get_evidence_weight(sd, EVIDENCE_TICK_HOLE);
+
+    if (probable_second >= 0) {
+        printf("[SYNC] Tick hole at second %d (%.0fms)\n", probable_second, hole_timestamp_ms);
+        apply_evidence(sd, EVIDENCE_TICK_HOLE, weight);
+    } else if (sd->state == SYNC_ACQUIRING) {
+        /* During acquisition, look for double-hole pattern */
+        sd->tick_gap.hole_count++;
+        if (sd->tick_gap.hole_count >= 2 && sd->tick_gap.prev_hole_ms > 0) {
+            float hole_interval = hole_timestamp_ms - sd->tick_gap.prev_hole_ms;
+            if (fabsf(hole_interval - 30000.0f) < 500.0f) {
+                printf("[SYNC] Double tick-hole pattern confirmed (%.1fs apart)\n",
+                       hole_interval / 1000.0f);
+                apply_evidence(sd, EVIDENCE_TICK_HOLE, weight * 1.5f);
+            }
+        }
+        sd->tick_gap.prev_hole_ms = sd->tick_gap.last_hole_ms;
+        sd->tick_gap.last_hole_ms = hole_timestamp_ms;
+    }
+}
+
+static void sync_detector_full_reset(sync_detector_t *sd) {
+    printf("[SYNC] Full reset - clearing all state\n");
+
+    memset(&sd->tick_gap, 0, sizeof(tick_gap_tracker_t));
+    memset(&sd->recovery, 0, sizeof(recovery_state_t));
+
+    sd->confidence = 0.0f;
+    sd->evidence_mask = 0;
+    sd->signal_weak_count = 0;
+    sd->expecting_marker_soon = false;
+
+    transition_state(sd, SYNC_ACQUIRING);
 }
 
 /*============================================================================
@@ -278,10 +502,11 @@ sync_state_t sync_detector_get_state(sync_detector_t *sd) {
 
 const char *sync_state_name(sync_state_t state) {
     switch (state) {
-        case SYNC_ACQUIRING: return "ACQUIRING";
-        case SYNC_TENTATIVE: return "TENTATIVE";
-        case SYNC_LOCKED:    return "LOCKED";
-        default:             return "UNKNOWN";
+        case SYNC_ACQUIRING:  return "ACQUIRING";
+        case SYNC_TENTATIVE:  return "TENTATIVE";
+        case SYNC_LOCKED:     return "LOCKED";
+        case SYNC_RECOVERING: return "RECOVERING";
+        default:              return "UNKNOWN";
     }
 }
 
@@ -327,4 +552,205 @@ void sync_detector_broadcast_state(sync_detector_t *sd) {
                 interval_sec,
                 sd->pending_tick_duration_ms, sd->pending_marker_duration_ms,
                 sd->last_confirmed_ms);
+}
+
+/*============================================================================
+ * Enhanced API Implementation
+ *============================================================================*/
+
+void sync_detector_tick_event(sync_detector_t *sd, float timestamp_ms) {
+    if (!sd) return;
+
+    tick_gap_tracker_t *tg = &sd->tick_gap;
+
+    if (tg->last_tick_ms > 0) {
+        float gap_ms = timestamp_ms - tg->last_tick_ms;
+
+        if (gap_ms >= TICK_INTERVAL_MIN_MS && gap_ms <= TICK_INTERVAL_MAX_MS) {
+            /* Normal tick interval */
+            tg->consecutive_tick_count++;
+
+        } else if (gap_ms < TICK_DOUBLE_MAX_GAP_MS) {
+            /* DUT1 double-tick - ignore, don't reset counter */
+            return;
+
+        } else if (gap_ms >= TICK_HOLE_MIN_GAP_MS && gap_ms <= TICK_HOLE_MAX_GAP_MS) {
+            /* Tick hole detected */
+            if (tg->consecutive_tick_count >= MIN_TICKS_FOR_HOLE) {
+                sync_detector_hole_detected(sd, tg->last_tick_ms + 1000.0f);
+            }
+            tg->consecutive_tick_count = 1;
+
+        } else if (gap_ms > TICK_HOLE_MAX_GAP_MS) {
+            /* Signal loss */
+            printf("[SYNC] Tick gap %.0fms - signal loss\n", gap_ms);
+            tg->consecutive_tick_count = 1;
+        } else {
+            /* Short gap - noise */
+            return;
+        }
+    } else {
+        tg->consecutive_tick_count = 1;
+    }
+
+    tg->last_tick_ms = timestamp_ms;
+
+    /* Apply tick evidence */
+    if (sd->state >= SYNC_TENTATIVE) {
+        float weight = get_evidence_weight(sd, EVIDENCE_TICK);
+        apply_evidence(sd, EVIDENCE_TICK, weight);
+    }
+}
+
+void sync_detector_p_marker_event(sync_detector_t *sd, float timestamp_ms,
+                                   float duration_ms) {
+    if (!sd) return;
+
+    printf("[SYNC] P-marker: %.1fms dur=%.0fms\n", timestamp_ms, duration_ms);
+
+    /* Apply P-marker evidence */
+    if (sd->state >= SYNC_TENTATIVE) {
+        float weight = get_evidence_weight(sd, EVIDENCE_P_MARKER);
+        apply_evidence(sd, EVIDENCE_P_MARKER, weight);
+    }
+
+    /* Recovery validation */
+    if (sd->state == SYNC_RECOVERING && sd->recovery.has_retained_state) {
+        float since_anchor = timestamp_ms - sd->recovery.retained_anchor_ms;
+        while (since_anchor < 0) since_anchor += 60000.0f;
+        while (since_anchor >= 60000.0f) since_anchor -= 60000.0f;
+
+        int position = (int)(since_anchor / 1000.0f + 0.5f);
+
+        /* Check if at valid P position */
+        static const int valid_p[] = {0, 9, 19, 29, 39, 49, 59};
+        for (int i = 0; i < 7; i++) {
+            if (abs(position - valid_p[i]) <= 1) {
+                sd->recovery.recovery_p_marker_seen = true;
+                printf("[SYNC] Recovery: P-marker at second %d validates anchor\n", position);
+                break;
+            }
+        }
+    }
+}
+
+void sync_detector_periodic_check(sync_detector_t *sd, float current_ms) {
+    if (!sd) return;
+
+    /* Confidence decay */
+    float decay_rate = (sd->state == SYNC_RECOVERING) ?
+                       CONFIDENCE_DECAY_RECOVERING : CONFIDENCE_DECAY_NORMAL;
+    sd->confidence *= decay_rate;
+
+    /* Signal loss detection (only when LOCKED) */
+    if (sd->state == SYNC_LOCKED) {
+        float since_last_tick = current_ms - sd->tick_gap.last_tick_ms;
+        float since_last_marker = current_ms - sd->last_confirmed_ms;
+        float since_last_evidence = fminf(since_last_tick, since_last_marker);
+
+        if (since_last_evidence > SYNC_SIGNAL_LOSS_GAP_MS) {
+            sd->signal_weak_count++;
+            if (sd->signal_weak_count >= SIGNAL_WEAK_DEBOUNCE) {
+                /* Enter recovery */
+                sd->recovery.retained_anchor_ms = sd->minute_anchor_ms;
+                sd->recovery.signal_lost_ms = current_ms;
+                sd->recovery.has_retained_state = true;
+                sd->recovery.recovery_start_ms = current_ms;
+                sd->recovery.recovery_tick_seen = false;
+                sd->recovery.recovery_marker_seen = false;
+                sd->recovery.recovery_p_marker_seen = false;
+
+                transition_state(sd, SYNC_RECOVERING);
+            }
+        } else {
+            sd->signal_weak_count = 0;
+        }
+    }
+
+    /* Recovery state processing */
+    if (sd->state == SYNC_RECOVERING) {
+        float time_since_loss = current_ms - sd->recovery.signal_lost_ms;
+        float time_in_recovery = current_ms - sd->recovery.recovery_start_ms;
+
+        /* Check for full reset conditions */
+        if (time_since_loss > SYNC_RETENTION_WINDOW_MS ||
+            sd->confidence < CONFIDENCE_MIN_RETAIN) {
+            printf("[SYNC] Retention expired (%.0fs) - full reset\n", time_since_loss / 1000.0f);
+            sync_detector_full_reset(sd);
+            return;
+        }
+
+        /* Check recovery timeout */
+        if (time_in_recovery > SYNC_RECOVERY_TIMEOUT_MS) {
+            if (!sd->recovery.recovery_tick_seen && !sd->recovery.recovery_marker_seen) {
+                printf("[SYNC] Recovery timeout with no validation - full reset\n");
+                sync_detector_full_reset(sd);
+                return;
+            }
+        }
+
+        /* Check for successful recovery */
+        if (sd->recovery.recovery_tick_seen && sd->recovery.recovery_marker_seen) {
+            printf("[SYNC] Recovery validated - returning to LOCKED\n");
+            sd->minute_anchor_ms = sd->recovery.retained_anchor_ms;
+            apply_evidence(sd, EVIDENCE_TICK | EVIDENCE_MARKER, 0.3f);
+            transition_state(sd, SYNC_LOCKED);
+        }
+    }
+
+    /* State transition: TENTATIVE → LOCKED */
+    if (sd->state == SYNC_TENTATIVE && sd->confidence >= CONFIDENCE_LOCKED_THRESHOLD) {
+        transition_state(sd, SYNC_LOCKED);
+    }
+}
+
+frame_time_t sync_detector_get_frame_time(sync_detector_t *sd) {
+    frame_time_t ft = {0};
+
+    if (!sd || sd->state < SYNC_TENTATIVE || sd->minute_anchor_ms <= 0) {
+        ft.current_second = -1;
+        ft.state = sd ? sd->state : SYNC_ACQUIRING;
+        return ft;
+    }
+
+    /* Calculate current second from anchor */
+    float since_anchor = sd->tick_gap.last_tick_ms - sd->minute_anchor_ms;
+    while (since_anchor < 0) since_anchor += 60000.0f;
+    while (since_anchor >= 60000.0f) since_anchor -= 60000.0f;
+
+    ft.current_second = (int)(since_anchor / 1000.0f + 0.5f);
+    if (ft.current_second < 0) ft.current_second = 0;
+    if (ft.current_second > 59) ft.current_second = 59;
+
+    ft.second_start_ms = sd->minute_anchor_ms + (ft.current_second * 1000.0f);
+    ft.confidence = sd->confidence;
+    ft.evidence_mask = sd->evidence_mask;
+    ft.state = sd->state;
+
+    return ft;
+}
+
+float sync_detector_get_confidence(sync_detector_t *sd) {
+    return sd ? sd->confidence : 0.0f;
+}
+
+void sync_detector_set_wwv_clock(sync_detector_t *sd, wwv_clock_t *clk) {
+    if (sd) {
+        sd->wwv_clock = clk;
+    }
+}
+
+void sync_detector_set_leap_second_pending(sync_detector_t *sd, bool pending) {
+    if (sd) {
+        sd->leap_second_pending = pending;
+    }
+}
+
+void sync_detector_set_state_callback(sync_detector_t *sd,
+                                       sync_state_callback_fn callback,
+                                       void *user_data) {
+    if (sd) {
+        sd->state_callback = callback;
+        sd->state_callback_user_data = user_data;
+    }
 }

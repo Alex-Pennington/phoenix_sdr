@@ -56,6 +56,14 @@ typedef struct {
     bool tick_expected;     /* True if a tick should occur this second */
 } wwv_time_t;
 
+/**
+ * Clock mode determines how minute tracking works
+ */
+typedef enum {
+    WWV_CLOCK_MODE_ABSOLUTE,    /* System time drives clock (normal mode) */
+    WWV_CLOCK_MODE_RELATIVE     /* Disciplined by sync detector anchor */
+} wwv_clock_mode_t;
+
 typedef struct wwv_clock wwv_clock_t;
 
 /*============================================================================
@@ -101,6 +109,39 @@ const char *wwv_event_name(wwv_event_type_t type);
  * Get station name string
  */
 const char *wwv_station_name(wwv_station_t station);
+
+/*============================================================================
+ * Mode Switching (Unified Sync Integration)
+ *============================================================================*/
+
+/**
+ * Set clock mode (absolute vs relative)
+ */
+void wwv_clock_set_mode(wwv_clock_t *clk, wwv_clock_mode_t mode);
+
+/**
+ * Get current clock mode
+ */
+wwv_clock_mode_t wwv_clock_get_mode(wwv_clock_t *clk);
+
+/**
+ * Discipline clock to sync detector anchor (relative mode only)
+ * @param anchor_ms Minute marker timestamp in milliseconds
+ */
+void wwv_clock_set_anchor(wwv_clock_t *clk, float anchor_ms);
+
+/**
+ * Get frame phase - milliseconds since last minute marker (0-60000)
+ * Returns estimate based on system time in absolute mode,
+ * or disciplined position in relative mode.
+ */
+float wwv_clock_get_frame_phase_ms(wwv_clock_t *clk);
+
+/**
+ * Check if current minute is "special" (station ID, geoalert)
+ * Used by sync detector to discount evidence during noisy periods.
+ */
+bool wwv_clock_is_special_minute(wwv_clock_t *clk);
 
 #ifdef __cplusplus
 }

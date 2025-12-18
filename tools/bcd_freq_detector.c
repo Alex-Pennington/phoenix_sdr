@@ -86,6 +86,10 @@ struct bcd_freq_detector {
     int pulse_duration_frames;
     int cooldown_frames;
 
+    /* Phase 9: Minimum duration validation */
+    int consecutive_low_frames;  /* Debounce pulse end */
+    #define MIN_LOW_FRAMES 3         /* Require 3 frames below threshold */
+
     /* Statistics */
     int pulses_detected;
     int pulses_rejected;
@@ -210,6 +214,7 @@ static void run_state_machine(bcd_freq_detector_t *fd) {
                 fd->pulse_start_frame = frame;
                 fd->pulse_peak_energy = fd->accumulated_energy;
                 fd->pulse_duration_frames = 1;
+                fd->consecutive_low_frames = 0;
             }
             break;
 
@@ -223,7 +228,14 @@ static void run_state_machine(bcd_freq_detector_t *fd) {
             float duration_ms = fd->pulse_duration_frames * FRAME_DURATION_MS;
             bool timed_out = (duration_ms > BCD_FREQ_MAX_DURATION_MS);
 
-            if (fd->accumulated_energy < fd->threshold || timed_out) {
+            /* Phase 9: Require consecutive low frames before ending pulse */
+            if (fd->accumulated_energy < fd->threshold) {
+                fd->consecutive_low_frames++;
+            } else {
+                fd->consecutive_low_frames = 0;  /* Reset if signal returns */
+            }
+
+            if ((fd->consecutive_low_frames >= MIN_LOW_FRAMES) || timed_out) {
                 float start_timestamp_ms = fd->pulse_start_frame * FRAME_DURATION_MS;
 
                 if (duration_ms >= BCD_FREQ_PULSE_MIN_MS &&

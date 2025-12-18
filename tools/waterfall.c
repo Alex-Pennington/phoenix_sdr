@@ -226,6 +226,10 @@ static lowpass_t g_detector_lowpass_q;
 static bool g_detector_dsp_initialized = false;
 static int g_detector_decim_counter = 0;
 
+/* Periodic sync check tracking */
+#define PERIODIC_CHECK_INTERVAL_SAMPLES  5000  /* 100ms at 50kHz */
+static int g_periodic_check_counter = 0;
+
 /* DSP filter instances - DISPLAY PATH */
 static lowpass_t g_display_lowpass_i;
 static lowpass_t g_display_lowpass_q;
@@ -587,6 +591,21 @@ static void on_marker_event(const marker_event_t *event, void *user_data) {
 }
 
 /*============================================================================
+ * Marker Correlator Callback (Orphaned Markers -> P-markers)
+ *============================================================================*/
+
+static void on_orphaned_marker(const correlated_marker_t *marker, void *user_data) {
+    (void)user_data;
+
+    /* Feed orphaned markers to sync detector as P-marker evidence */
+    if (g_sync_detector && marker->confidence == MARKER_CONF_LOW) {
+        /* Low confidence = only one path triggered = orphaned = potential P-marker */
+        sync_detector_p_marker_event(g_sync_detector, marker->timestamp_ms,
+                                      marker->duration_ms);
+    }
+}
+
+/*============================================================================
  * Tick Correlator Callback
  *============================================================================*/
 
@@ -928,12 +947,13 @@ int main(int argc, char *argv[]) {
         /* NOTE: Sync source linked below after g_sync_detector is created */
     }
 
-    /* Create marker correlator */
+    /* Create marker correlator and wire orphaned marker callback */
     g_marker_correlator = marker_correlator_create("wwv_markers_corr.csv");
     if (!g_marker_correlator) {
         fprintf(stderr, "Failed to create marker correlator\n");
         return 1;
     }
+    marker_correlator_set_callback(g_marker_correlator, on_orphaned_marker, NULL);
 
     /* Create sync detector and wire up callbacks */
     g_sync_detector = sync_detector_create("wwv_sync.csv");
@@ -1182,6 +1202,16 @@ int main(int argc, char *argv[]) {
                         /* BCD dual-path detectors (robust symbol demodulator) */
                         if (g_bcd_time_detector) bcd_time_detector_process_sample(g_bcd_time_detector, det_i, det_q);
                         if (g_bcd_freq_detector) bcd_freq_detector_process_sample(g_bcd_freq_detector, det_i, det_q);
+
+                        /* Periodic signal check for sync detector */
+                        g_periodic_check_counter++;
+                        if (g_periodic_check_counter >= PERIODIC_CHECK_INTERVAL_SAMPLES) {
+                            g_periodic_check_counter = 0;
+                            if (g_sync_detector) {
+                                float timestamp_ms = (float)(frame_num * DISPLAY_EFFECTIVE_MS);
+                                sync_detector_periodic_check(g_sync_detector, timestamp_ms);
+                            }
+                        }
                     }
 
                     /*========================================================

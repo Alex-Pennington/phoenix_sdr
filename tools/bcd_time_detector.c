@@ -82,6 +82,10 @@ struct bcd_time_detector {
     int pulse_duration_frames;
     int cooldown_frames;
 
+    /* Phase 9: Minimum duration validation */
+    int consecutive_low_frames;  /* Debounce pulse end */
+    #define MIN_LOW_FRAMES 3         /* Require 3 frames below threshold */
+
     /* Statistics */
     int pulses_detected;
     int pulses_rejected;
@@ -188,6 +192,7 @@ static void run_state_machine(bcd_time_detector_t *td) {
                 td->pulse_start_frame = frame;
                 td->pulse_peak_energy = energy;
                 td->pulse_duration_frames = 1;
+                td->consecutive_low_frames = 0;
             }
             break;
 
@@ -197,7 +202,14 @@ static void run_state_machine(bcd_time_detector_t *td) {
                 td->pulse_peak_energy = energy;
             }
 
+            /* Phase 9: Require consecutive low frames before ending pulse */
             if (energy < td->threshold_low) {
+                td->consecutive_low_frames++;
+            } else {
+                td->consecutive_low_frames = 0;  /* Reset if signal returns */
+            }
+
+            if (td->consecutive_low_frames >= MIN_LOW_FRAMES) {
                 /* Pulse ended - check validity */
                 float duration_ms = td->pulse_duration_frames * FRAME_DURATION_MS;
                 float timestamp_ms = td->pulse_start_frame * FRAME_DURATION_MS;

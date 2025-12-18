@@ -1,17 +1,22 @@
 /**
  * @file sync_detector.h
- * @brief WWV sync detector - correlates tick and marker detector inputs
+ * @brief WWV unified sync detector - correlates all timing evidence
  *
- * This detector receives events from both the tick detector (duration-based)
- * and marker detector (energy accumulation-based) and correlates them to
- * confirm minute markers with high confidence.
+ * This detector receives events from multiple sources and fuses them into
+ * a single authoritative timing reference:
+ *   - tick_detector: 1000Hz pulses every second
+ *   - marker_detector: 800ms minute markers
+ *   - P-marker events: 800ms BCD position markers at known positions
+ *   - Tick holes: absence of ticks at seconds 29 and 59
  *
  * State progression:
- *   ACQUIRING -> TENTATIVE -> LOCKED
+ *   ACQUIRING -> TENTATIVE -> LOCKED <-> RECOVERING
  *
- * A confirmed marker requires both detectors to fire within a correlation
- * window. Once locked, the sync detector provides authoritative minute
- * marker timing for the rest of the system.
+ * Once locked, provides authoritative frame timing including current second
+ * within the minute, enabling downstream BCD decode without timestamp math.
+ *
+ * Evidence fusion with confidence tracking allows graceful handling of
+ * signal loss and recovery without full re-acquisition.
  */
 
 #ifndef SYNC_DETECTOR_H
@@ -20,16 +25,42 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/* Forward declaration for optional wwv_clock integration */
+struct wwv_clock;
+typedef struct wwv_clock wwv_clock_t;
+
+/*============================================================================
+ * Evidence Types
+ *============================================================================*/
+
+#define EVIDENCE_TICK        (1 << 0)   /* 1000Hz tick detected */
+#define EVIDENCE_MARKER      (1 << 1)   /* Minute marker detected */
+#define EVIDENCE_P_MARKER    (1 << 2)   /* BCD P-marker detected */
+#define EVIDENCE_TICK_HOLE   (1 << 3)   /* Tick absence at :29/:59 */
+
 /*============================================================================
  * Types
  *============================================================================*/
 
 /* Sync confidence states */
 typedef enum {
-    SYNC_ACQUIRING,    /* No confirmed markers yet */
-    SYNC_TENTATIVE,    /* 1 confirmed marker */
-    SYNC_LOCKED        /* 2+ markers with ~60s intervals */
+    SYNC_ACQUIRING,    /* No prior state, searching */
+    SYNC_TENTATIVE,    /* Some evidence, building confidence */
+    SYNC_LOCKED,       /* High confidence, tracking */
+    SYNC_RECOVERING    /* Signal lost, using retained state */
 } sync_state_t;
+
+/**
+ * Unified frame time - authoritative timing output
+ * Consumers use this instead of raw anchor timestamps
+ */
+typedef struct {
+    int current_second;         /* 0-59, authoritative position in minute */
+    float second_start_ms;      /* When this second began (stream timestamp) */
+    float confidence;           /* 0.0 - 1.0, sync quality indicator */
+    uint32_t evidence_mask;     /* Which signals contributed to this position */
+    sync_state_t state;         /* Current sync state */
+} frame_time_t;
 
 /* Opaque handle */
 typedef struct sync_detector sync_detector_t;
@@ -51,6 +82,13 @@ sync_detector_t *sync_detector_create(const char *csv_path);
 void sync_detector_destroy(sync_detector_t *sd);
 
 /**
+ * Report tick event for gap tracking and evidence fusion
+ * @param sd Detector handle
+ * @param timestamp_ms When tick occurred
+ */
+void sync_detector_tick_event(sync_detector_t *sd, float timestamp_ms);
+
+/**
  * Report minute marker from tick detector (duration-based detection)
  * @param sd Detector handle
  * @param timestamp_ms Timestamp when marker pulse ended
@@ -69,6 +107,39 @@ void sync_detector_tick_marker(sync_detector_t *sd, float timestamp_ms,
  */
 void sync_detector_marker_event(sync_detector_t *sd, float timestamp_ms,
                                  float accum_energy, float duration_ms);
+
+/**
+ * Get unified frame time - authoritative timing output
+ * @param sd Detector handle
+ * @return frame_time_t with current second, confidence, evidence
+ */
+frame_time_t sync_detector_get_frame_time(sync_detector_t *sd);
+
+/**
+ * Get confidence value (0.0 - 1.0)
+ * @param sd Detector handle
+ * @return Current confidence
+ */
+float sync_detector_get_confidence(sync_detector_t *sd);
+
+/**
+ * Get state as string for display
+ */
+const char *sync_state_name(sync_state_t state);
+
+/**
+ * Get timestamp of last confirmed marker (backward compatibility)se (~800ms)
+ */
+void sync_detector_p_marker_event(sync_detector_t *sd, float timestamp_ms,
+                                   float duration_ms);
+
+/**
+ * Periodic maintenance - check for signal loss, decay confidence
+ * Call every ~100ms from sample processing loop
+ * @param sd Detector handle
+ * @param current_ms Current stream timestamp
+ */
+void sync_detector_periodic_check(sync_detector_t *sd, float current_ms);
 
 /**
  * Get current sync state
@@ -99,6 +170,32 @@ int sync_detector_get_flash_frames(sync_detector_t *sd);
  * Decrement flash counter (call each frame)
  */
 void sync_detector_decrement_flash(sync_detector_t *sd);
+
+/**
+ * Set optional wwv_clock for schedule-aware evidence weighting
+ * @param sd Detector handle
+ * @param clk WWV clock instance (NULL to disable)
+ */
+void sync_detector_set_wwv_clock(sync_detector_t *sd, wwv_clock_t *clk);
+
+/**
+ * Set leap second pending flag (affects timing tolerances)
+ * @param sd Detector handle
+ * @param pending True if leap second is pending
+ */
+void sync_detector_set_leap_second_pending(sync_detector_t *sd, bool pending);
+
+/**
+ * Set callback for state transitions
+ * @param sd Detector handle
+ * @param callback Function to call on state change
+ * @param user_data User data passed to callback
+ */
+typedef void (*sync_state_callback_fn)(sync_state_t old_state, sync_state_t new_state,
+                                        float confidence, void *user_data);
+void sync_detector_set_state_callback(sync_detector_t *sd,
+                                       sync_state_callback_fn callback,
+                                       void *user_data);
 
 /**
  * Broadcast current sync state via UDP telemetry

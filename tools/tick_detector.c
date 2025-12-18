@@ -18,6 +18,7 @@
 
 #include "tick_detector.h"
 #include "wwv_clock.h"
+#include "tick_comb_filter.h"
 #include "kiss_fft.h"
 #include "version.h"
 #include <stdlib.h>
@@ -78,6 +79,15 @@ typedef enum {
     STATE_IN_TICK,
     STATE_COOLDOWN
 } detector_state_t;
+
+/* Timing gate for exploiting NIST 40ms protected zone */
+#define TICK_GATE_START_MS   5.0f    /* Open gate 5ms before expected tick */
+#define TICK_GATE_END_MS    25.0f    /* Close gate 10ms after expected tick */
+
+typedef struct {
+    float epoch_ms;          /* Second boundary offset (from marker) */
+    bool enabled;            /* Gate is active */
+} tick_gate_t;
 
 struct tick_detector {
     /* FFT resources */
@@ -150,11 +160,34 @@ struct tick_detector {
 
     /* WWV broadcast clock */
     wwv_clock_t *wwv_clock;
+
+    /* Timing gate */
+    tick_gate_t gate;
+
+    /* Comb filter for weak signal detection */
+    comb_filter_t *comb_filter;
 };
 
 /*============================================================================
  * Internal Functions
  *============================================================================*/
+
+/**
+ * Check if timing gate is open (tick expected in this window)
+ */
+static bool is_gate_open(tick_detector_t *td, float current_ms) {
+    if (!td->gate.enabled) {
+        return true;  /* Gate disabled - always open */
+    }
+
+    float ms_into_second = fmodf(current_ms - td->gate.epoch_ms, 1000.0f);
+    if (ms_into_second < 0) {
+        ms_into_second += 1000.0f;
+    }
+
+    return (ms_into_second >= TICK_GATE_START_MS &&
+            ms_into_second <= TICK_GATE_END_MS);
+}
 
 /**
  * Generate matched filter template: windowed 1000Hz tone
@@ -292,6 +325,13 @@ static void run_state_machine(tick_detector_t *td) {
     switch (td->state) {
         case STATE_IDLE:
             if (energy > td->threshold_high) {
+                /* Check timing gate before transitioning */
+                float current_ms = frame * FRAME_DURATION_MS;
+                if (!is_gate_open(td, current_ms)) {
+                    /* Gate closed - ignore this detection (BCD harmonic) */
+                    break;
+                }
+
                 td->state = STATE_IN_TICK;
                 td->tick_start_frame = frame;
                 td->tick_peak_energy = energy;
@@ -514,8 +554,19 @@ tick_detector_t *tick_detector_create(const char *csv_path) {
     td->warmup_complete = false;
     td->start_time = time(NULL);  /* Record wall clock start time */
 
+    /* Initialize timing gate (disabled until marker sets epoch) */
+    td->gate.epoch_ms = 0.0f;
+    td->gate.enabled = false;
+
     /* Create WWV clock tracker */
     td->wwv_clock = wwv_clock_create(WWV_STATION_WWV);
+
+    /* Create comb filter */
+    td->comb_filter = comb_create();
+    if (!td->comb_filter) {
+        tick_detector_destroy(td);
+        return NULL;
+    }
 
     /* Open CSV file */
     if (csv_path) {
@@ -544,6 +595,7 @@ void tick_detector_destroy(tick_detector_t *td) {
     if (!td) return;
 
     if (td->wwv_clock) wwv_clock_destroy(td->wwv_clock);
+    if (td->comb_filter) comb_destroy(td->comb_filter);
     if (td->csv_file) fclose(td->csv_file);
     if (td->fft_cfg) kiss_fft_free(td->fft_cfg);
     free(td->fft_in);
@@ -735,4 +787,35 @@ void tick_detector_log_display_gain(tick_detector_t *td, float display_gain_db) 
 
 float tick_detector_get_frame_duration_ms(void) {
     return FRAME_DURATION_MS;
+}
+
+/*============================================================================
+ * Timing Gate API (Step 2: WWV Tick/BCD Separation)
+ *============================================================================*/
+
+void tick_detector_set_epoch(tick_detector_t *td, float epoch_ms) {
+    if (!td) return;
+    td->gate.epoch_ms = fmodf(epoch_ms, 1000.0f);
+    if (td->gate.epoch_ms < 0) {
+        td->gate.epoch_ms += 1000.0f;
+    }
+}
+
+void tick_detector_set_gating_enabled(tick_detector_t *td, bool enabled) {
+    if (!td) return;
+    td->gate.enabled = enabled;
+    if (enabled) {
+        printf("[TICK] Timing gate ENABLED (window: %.0f-%.0fms into second)\n",
+               TICK_GATE_START_MS, TICK_GATE_END_MS);
+    } else {
+        printf("[TICK] Timing gate DISABLED\n");
+    }
+}
+
+float tick_detector_get_epoch(tick_detector_t *td) {
+    return td ? td->gate.epoch_ms : 0.0f;
+}
+
+bool tick_detector_is_gating_enabled(tick_detector_t *td) {
+    return td ? td->gate.enabled : false;
 }

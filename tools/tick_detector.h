@@ -172,6 +172,15 @@ void tick_detector_log_display_gain(tick_detector_t *td, float display_gain_db);
  */
 float tick_detector_get_frame_duration_ms(void);
 
+/**
+ * Timing gate control (for marker-based epoch bootstrap)
+ * Set epoch from marker timestamp: epoch_ms = marker_timestamp - 10.0
+ */
+void tick_detector_set_epoch(tick_detector_t *td, float epoch_ms);
+void tick_detector_set_gating_enabled(tick_detector_t *td, bool enabled);
+float tick_detector_get_epoch(tick_detector_t *td);
+bool tick_detector_is_gating_enabled(tick_detector_t *td);
+
 #ifdef __cplusplus
 }
 #endif

@@ -177,7 +177,11 @@ MARK,14:33:00,145320.0,M3,0,MINUTE_MARKER,0.045623,823.5,60.02,0.000123,0.001234
 
 ### SYNC - Synchronization State
 
-Broadcast when sync state changes, markers are confirmed, or on startup.
+The sync detector broadcasts two different message formats: marker confirmation messages and state transition messages.
+
+#### SYNC Marker Confirmation
+
+Broadcast when markers are confirmed (~every 60 seconds) and during periodic status updates (every 100ms when in periodic check).
 
 **Format:** `SYNC,time,timestamp_ms,marker_num,state,good_intervals,interval_sec,delta_ms,tick_dur_ms,marker_dur_ms,last_confirmed_ms\n`
 
@@ -189,7 +193,7 @@ Broadcast when sync state changes, markers are confirmed, or on startup.
 | `state` | string | Sync state: `ACQUIRING`, `TENTATIVE`, `LOCKED` |
 | `good_intervals` | int | Count of valid ~60s intervals (confidence indicator) |
 | `interval_sec` | float | Interval between markers (seconds) |
-| `delta_ms` | float | Timing error (ms) from expected |
+| `delta_ms` | float | Timing error (ms) from expected (0 in periodic broadcasts) |
 | `tick_dur_ms` | float | Last tick pulse duration (ms) |
 | `marker_dur_ms` | float | Last marker pulse duration (ms) |
 | `last_confirmed_ms` | float | Timestamp of last confirmed marker (ms) |
@@ -199,15 +203,38 @@ Broadcast when sync state changes, markers are confirmed, or on startup.
 - `TENTATIVE` - 1 confirmed marker, waiting for confirmation
 - `LOCKED` - 2+ markers with valid ~60s intervals
 
-**Example (startup):**
+**Example (marker confirmation):**
 ```
-SYNC,14:30:00,0.0,0,ACQUIRING,0,0.0,0,0.0,0.0,0.0
+SYNC,14:33:00,145320.0,3,LOCKED,2,60.0,12.3,5.1,823.5,145320.0
 ```
 
-**Example (locked):**
+**Example (periodic status with no new marker):**
 ```
-SYNC,14:33:00,145320.0,3,LOCKED,2,60.0,12,5.1,823.5,145320.0
+SYNC,14:33:05,145325.0,3,LOCKED,2,60.0,0,5.1,823.5,145320.0
 ```
+Note: `delta_ms` is 0 in periodic broadcasts when no new marker has been detected.
+
+#### SYNC State Transition
+
+Broadcast whenever the sync state machine transitions between states (ACQUIRING ↔ TENTATIVE ↔ LOCKED).
+
+**Format:** `STATE,old_state,new_state,confidence\n`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `old_state` | string | Previous sync state |
+| `new_state` | string | New sync state |
+| `confidence` | float | Current confidence level (0.0-1.0) |
+
+**Example:**
+```
+STATE,TENTATIVE,LOCKED,0.95
+```
+
+**Broadcast Timing:**
+- Marker confirmation format: Sent when markers are detected (~60s intervals)
+- Periodic status format: Sent during periodic checks (every 100ms) when no new markers
+- State transition format: Sent immediately on any state change
 
 ---
 

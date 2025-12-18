@@ -32,6 +32,7 @@
 #include "bcd_correlator.h"
 #include "waterfall_flash.h"
 #include "waterfall_telemetry.h"
+#include "channel_filters.h"
 
 /*============================================================================
  * WWV Subcarrier Tone Schedule (minutes past the hour)
@@ -226,6 +227,20 @@ static lowpass_t g_detector_lowpass_q;
 static bool g_detector_dsp_initialized = false;
 static int g_detector_decim_counter = 0;
 
+/* Channel filters - Parallel sync/data architecture */
+static sync_channel_t g_sync_channel_i;
+static sync_channel_t g_sync_channel_q;
+static data_channel_t g_data_channel_i;
+static data_channel_t g_data_channel_q;
+
+/* Signal normalizer - Slow AGC for gain-independent operation */
+typedef struct {
+    float level;
+    int warmup;
+} normalizer_t;
+
+static normalizer_t g_normalizer = {0.01f, 0};
+
 /* Periodic sync check tracking */
 #define PERIODIC_CHECK_INTERVAL_SAMPLES  5000  /* 100ms at 50kHz */
 static int g_periodic_check_counter = 0;
@@ -322,6 +337,19 @@ static float g_bucket_energy[NUM_TICK_FREQS];
 static int g_selected_param = 0;
 
 static int g_effective_sample_rate = SAMPLE_RATE;
+
+/*============================================================================
+ * Signal Normalization (Step 5: WWV Tick/BCD Separation)
+ *============================================================================*/
+
+static float normalize(normalizer_t *n, float i, float q) {
+    float mag = sqrtf(i*i + q*q);
+    float alpha = (n->warmup < 50000) ? 0.01f : 0.0001f;  /* Fast warmup, then slow */
+    n->level += alpha * (mag - n->level);
+    n->warmup++;
+    if (n->level < 0.0001f) n->level = 0.0001f;
+    return 1.0f / n->level;
+}
 
 /*============================================================================
  * TCP Helper Functions
@@ -425,6 +453,10 @@ static bool tcp_reconnect(void) {
     g_display_dsp_initialized = false;
     g_detector_decim_counter = 0;
     g_display_decim_counter = 0;
+
+    /* Reset normalizer */
+    g_normalizer.level = 0.01f;
+    g_normalizer.warmup = 0;
 
     printf("\n*** CONNECTION LOST - Reconnecting to %s:%d ***\n", g_tcp_host, g_iq_port);
 
@@ -583,10 +615,22 @@ static void on_marker_event(const marker_event_t *event, void *user_data) {
                                       event->duration_ms);
     }
 
-    /* Also feed sync detector as before */
+    /* Feed sync detector */
     if (g_sync_detector) {
         sync_detector_marker_event(g_sync_detector, event->timestamp_ms,
                                     event->accumulated_energy, event->duration_ms);
+    }
+
+    /* Feed tick detector timing gate (marker bootstrap) */
+    if (g_tick_detector) {
+        /* Marker starts at second :00 + 10ms, so epoch = marker_timestamp - 10ms */
+        float epoch_ms = event->timestamp_ms - 10.0f;
+        tick_detector_set_epoch(g_tick_detector, epoch_ms);
+
+        /* Enable gate after first marker */
+        if (!tick_detector_is_gating_enabled(g_tick_detector)) {
+            tick_detector_set_gating_enabled(g_tick_detector, true);
+        }
     }
 }
 
@@ -1156,8 +1200,13 @@ int main(int argc, char *argv[]) {
                 if (!g_detector_dsp_initialized) {
                     lowpass_init(&g_detector_lowpass_i, DETECTOR_FILTER_CUTOFF, (float)g_tcp_sample_rate);
                     lowpass_init(&g_detector_lowpass_q, DETECTOR_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                    sync_channel_init(&g_sync_channel_i);
+                    sync_channel_init(&g_sync_channel_q);
+                    data_channel_init(&g_data_channel_i);
+                    data_channel_init(&g_data_channel_q);
                     g_detector_dsp_initialized = true;
                     printf("Detector DSP: lowpass @ %.0f Hz\n", DETECTOR_FILTER_CUTOFF);
+                    printf("Channel filters: Sync 800-1400 Hz, Data 0-150 Hz\n");
                 }
                 if (!g_display_dsp_initialized) {
                     lowpass_init(&g_display_lowpass_i, DISPLAY_FILTER_CUTOFF, (float)g_tcp_sample_rate);
@@ -1189,7 +1238,7 @@ int main(int argc, char *argv[]) {
 
                     /*========================================================
                      * DETECTOR PATH (48 kHz)
-                     * Feeds tick detector with samples optimized for pulses
+                     * Parallel filter architecture - WWV Tick/BCD Separation
                      *========================================================*/
                     float det_i = lowpass_process(&g_detector_lowpass_i, i_raw);
                     float det_q = lowpass_process(&g_detector_lowpass_q, q_raw);
@@ -1197,11 +1246,27 @@ int main(int argc, char *argv[]) {
                     g_detector_decim_counter++;
                     if (g_detector_decim_counter >= g_detector_decimation) {
                         g_detector_decim_counter = 0;
-                        tick_detector_process_sample(g_tick_detector, det_i, det_q);
-                        marker_detector_process_sample(g_marker_detector, det_i, det_q);
-                        /* BCD dual-path detectors (robust symbol demodulator) */
-                        if (g_bcd_time_detector) bcd_time_detector_process_sample(g_bcd_time_detector, det_i, det_q);
-                        if (g_bcd_freq_detector) bcd_freq_detector_process_sample(g_bcd_freq_detector, det_i, det_q);
+
+                        /* Signal normalization (slow AGC) */
+                        float norm_factor = normalize(&g_normalizer, det_i, det_q);
+                        det_i *= norm_factor;
+                        det_q *= norm_factor;
+
+                        /* SYNC CHANNEL: 800-1400 Hz bandpass for ticks/markers */
+                        float sync_i = sync_channel_process(&g_sync_channel_i, det_i);
+                        float sync_q = sync_channel_process(&g_sync_channel_q, det_q);
+
+                        /* DATA CHANNEL: 0-150 Hz lowpass for BCD subcarrier */
+                        float data_i = data_channel_process(&g_data_channel_i, det_i);
+                        float data_q = data_channel_process(&g_data_channel_q, det_q);
+
+                        /* Feed sync channel to tick/marker detectors (1000 Hz tones) */
+                        tick_detector_process_sample(g_tick_detector, sync_i, sync_q);
+                        marker_detector_process_sample(g_marker_detector, sync_i, sync_q);
+
+                        /* Feed data channel to BCD detectors (100 Hz subcarrier) */
+                        if (g_bcd_time_detector) bcd_time_detector_process_sample(g_bcd_time_detector, data_i, data_q);
+                        if (g_bcd_freq_detector) bcd_freq_detector_process_sample(g_bcd_freq_detector, data_i, data_q);
 
                         /* Periodic signal check for sync detector */
                         g_periodic_check_counter++;

@@ -240,6 +240,8 @@ try {
 
     $kissObj = Build-Object "src\kiss_fft.c" @()
     $wwvClockObj = Build-Object "tools\wwv_clock.c" @()
+    $channelFiltersObj = Build-Object "tools\channel_filters.c" @()
+    $tickCombFilterObj = Build-Object "tools\tick_comb_filter.c" @()
     $tickDetectorObj = Build-Object "tools\tick_detector.c" @()
     $markerDetectorObj = Build-Object "tools\marker_detector.c" @()
     $slowMarkerDetectorObj = Build-Object "tools\slow_marker_detector.c" @()
@@ -269,7 +271,7 @@ try {
         "-lws2_32",
         "-lwinmm"
     )
-    $allArgs = @("-o", "`"$BinDir\waterfall.exe`"", "`"$waterfallObj`"", "`"$tickDetectorObj`"", "`"$markerDetectorObj`"", "`"$slowMarkerDetectorObj`"", "`"$markerCorrelatorObj`"", "`"$syncDetectorObj`"", "`"$toneTrackerObj`"", "`"$tickCorrelatorObj`"", "`"$subcarrierDetectorObj`"", "`"$bcdEnvelopeObj`"", "`"$bcdDecoderObj`"", "`"$bcdTimeDetectorObj`"", "`"$bcdFreqDetectorObj`"", "`"$bcdCorrelatorObj`"", "`"$waterfallFlashObj`"", "`"$wwvClockObj`"", "`"$waterfallDspObj`"", "`"$waterfallAudioObj`"", "`"$waterfallTelemObj`"", "`"$kissObj`"") + $waterfallLdflags
+    $allArgs = @("-o", "`"$BinDir\waterfall.exe`"", "`"$waterfallObj`"", "`"$channelFiltersObj`"", "`"$tickCombFilterObj`"", "`"$tickDetectorObj`"", "`"$markerDetectorObj`"", "`"$slowMarkerDetectorObj`"", "`"$markerCorrelatorObj`"", "`"$syncDetectorObj`"", "`"$toneTrackerObj`"", "`"$tickCorrelatorObj`"", "`"$subcarrierDetectorObj`"", "`"$bcdEnvelopeObj`"", "`"$bcdDecoderObj`"", "`"$bcdTimeDetectorObj`"", "`"$bcdFreqDetectorObj`"", "`"$bcdCorrelatorObj`"", "`"$waterfallFlashObj`"", "`"$wwvClockObj`"", "`"$waterfallDspObj`"", "`"$waterfallAudioObj`"", "`"$waterfallTelemObj`"", "`"$kissObj`"") + $waterfallLdflags
     $argString = $allArgs -join " "
     $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
     if ($process.ExitCode -ne 0) { throw "Linking failed for waterfall" }

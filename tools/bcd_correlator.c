@@ -317,10 +317,12 @@ static void close_window(bcd_correlator_t *corr) {
 
     /* Only emit if we detected something */
     if (symbol != BCD_CORR_SYM_NONE) {
-        /* Step 9: UDP telemetry with second position */
-        telem_sendf(TELEM_BCDS, "SYM,%c,%d,%.1f,%.0f",
-                    bcd_corr_symbol_char(symbol), corr->current_second,
-                    symbol_timestamp_ms, duration_ms);
+        /* Step 9: UDP telemetry with second position and confidence */
+        telem_sendf(TELEM_BCDS, "SYM,%c,%d,%.0f,%.2f",
+                    bcd_corr_symbol_char(symbol), 
+                    corr->current_second,
+                    duration_ms, 
+                    confidence);
 
         /* Console output (verbose during development) */
         printf("[BCD] Sec %02d: '%c' dur=%.0fms conf=%.2f src=%s events=%d+%d state=%s\n",

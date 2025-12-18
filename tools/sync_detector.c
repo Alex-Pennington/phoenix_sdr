@@ -50,7 +50,8 @@
 #define CONFIDENCE_LOCKED_THRESHOLD  0.70f
 #define CONFIDENCE_MIN_RETAIN        0.05f
 #define CONFIDENCE_TENTATIVE_INIT    0.30f
-#define CONFIDENCE_DECAY_NORMAL      0.995f
+/* Changed from 0.995f (95% decay in 60s) to 0.9999f (6% decay in 60s) - allows accumulation */
+#define CONFIDENCE_DECAY_NORMAL      0.9999f
 #define CONFIDENCE_DECAY_RECOVERING  0.980f
 
 /* Validation tolerances */

@@ -505,7 +505,7 @@ static bool tcp_reconnect(void) {
 
 static void print_usage(const char *progname) {
     printf("Usage: %s [options]\n", progname);
-    printf("  --tcp HOST[:PORT]   Connect to SDR server I/Q port (default localhost:%d)\n", DEFAULT_IQ_PORT);
+    printf("  -t, --tcp HOST[:PORT]   Connect to SDR server I/Q port (default localhost:%d)\n", DEFAULT_IQ_PORT);
     printf("  --stdin             Read from stdin instead of TCP\n");
     printf("  -h, --help          Show this help\n");
 }
@@ -704,7 +704,7 @@ static void magnitude_to_rgb(float mag, float peak_db, float floor_db, uint8_t *
 
 int main(int argc, char *argv[]) {
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--tcp") == 0 && i + 1 < argc) {
+        if ((strcmp(argv[i], "--tcp") == 0 || strcmp(argv[i], "-t") == 0) && i + 1 < argc) {
             g_tcp_mode = true;
             g_stdin_mode = false;
             parse_tcp_arg(argv[++i]);

@@ -1,5 +1,7 @@
 # Phoenix SDR - Build Instructions
 
+> ✅ **CURRENT** - Build instructions are accurate
+
 This document describes how to set up your development environment and build Phoenix SDR from source.
 
 ## Prerequisites

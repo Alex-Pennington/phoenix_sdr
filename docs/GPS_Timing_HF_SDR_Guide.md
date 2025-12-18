@@ -1,5 +1,10 @@
 # GPS Precision Timing for HF SDR Applications
 
+> 📚 **REFERENCE** - Background information on GPS timing
+> 
+> This is a chat history compilation about GPS timing concepts.
+> Not directly implemented in current codebase - gps_serial.c exists but GPS timing features are not yet integrated.
+
 ## Complete Chat Reference Guide
 
 ---

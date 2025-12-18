@@ -1,5 +1,14 @@
 # FLDIGI WWV Implementation Analysis
 
+> ⚠️ **PARTIALLY SUPERSEDED** - December 18, 2025
+> 
+> **Superseded content:**
+> - `wwv_scan.c` references - this tool was experimental and is not in current build
+> - Proposed detection algorithm in "Proposed Phoenix Nest Detection Algorithm" section
+> - Build system bug references are obsolete
+> 
+> **Still valuable:** FLDIGI analysis, moving average filter concept, threshold hysteresis concept
+
 ## Executive Summary
 
 After researching FLDIGI's WWV implementation, I've discovered that **FLDIGI's WWV mode is NOT an automatic tick detection system**. It's a **visual sound card calibration tool** that displays the tick as a FAX-like scan line and relies on human observation to detect sample rate errors.

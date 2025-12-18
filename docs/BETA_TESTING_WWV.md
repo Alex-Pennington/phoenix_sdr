@@ -4,6 +4,20 @@
 
 ---
 
+> ⚠️ **PARTIALLY SUPERSEDED** - December 18, 2025
+> 
+> **Needs updating:**
+> - Build version is now 0.3.x+
+> - Sample rate is now 50kHz for detectors, not 48kHz (avoids sample drops)
+> - Tick detection now uses FFT-based approach, not just Goertzel
+> - Minute marker detection is now implemented (marker_detector.c)
+> - BCD time code detection added (bcd_time_detector.c, bcd_freq_detector.c)
+> - Sync state machine added (sync_detector.c)
+> 
+> **Still accurate:** WWV signal description, general detection concepts, MARS motivation
+
+---
+
 ## Why WWV Detection?
 
 Before we build the full MIL-STD-188-110A HF modem, we need to prove our hardware and software chain actually works. WWV provides the perfect smoke test.

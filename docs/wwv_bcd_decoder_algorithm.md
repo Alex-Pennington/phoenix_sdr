@@ -1,5 +1,15 @@
 # WWV BCD Time Code Decoder Algorithm
 
+> ⚠️ **PARTIALLY SUPERSEDED** - December 18, 2025
+> 
+> **Superseded content:**
+> - Input sample rate is now 50kHz (not 48kHz) - avoids sample drops
+> - Goertzel approach replaced by FFT-based detection in bcd_time_detector.c and bcd_freq_detector.c
+> - Pulse classification now done via bcd_correlator.c with window-based integration
+> - Output sample rate and decimation factors have changed
+> 
+> **Still valuable:** WWV BCD pulse encoding (200/500/800ms), frame structure, time code format
+
 ## Overview
 
 This document describes the algorithm for decoding the Binary Coded Decimal (BCD) time code transmitted by WWV and WWVH on a 100 Hz subcarrier. The time code presents UTC information in serial fashion at a rate of 1 pulse per second, including the current minute, hour, and day of year.

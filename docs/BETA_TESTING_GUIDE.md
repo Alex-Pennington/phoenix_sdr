@@ -6,6 +6,20 @@
 
 ---
 
+> ⚠️ **PARTIALLY SUPERSEDED** - December 18, 2025
+> 
+> **Needs updating:**
+> - Version is now 0.3.x+
+> - Display now has 7 bucket bars (100, 440, 500, 600, 1000, 1200, 1500 Hz)
+> - Minute marker detection added (800ms pulses flash differently)
+> - BCD time code detection added
+> - UDP telemetry output added (port 3005)
+> - Signal path now uses 50kHz detector path + 12kHz display path
+> 
+> **Still accurate:** Hardware requirements, basic command line usage, general concepts
+
+---
+
 ## Overview
 
 Thank you for testing Phoenix SDR! This beta focuses on **WWV tick detection** — receiving the 1000 Hz timing pulses broadcast by WWV/WWVH and measuring their intervals.

@@ -1,185 +1,208 @@
 # Phoenix SDR - Copilot Instructions
 
-## P0 - CRITICAL RULES (READ BEFORE DOING ANYTHING)
+## P0 - CRITICAL RULES
 
-1. **DO NOT add features, flags, modes, or functionality without explicit user instruction.**
-   - No new command-line flags (like `-n`, `--debug`, etc.)
-   - No new operating modes (like "no hardware mode", "test mode", etc.)
-   - No new files unless explicitly requested
-   - If something seems needed but wasn't requested, **ASK FIRST**
-
-2. **When in doubt, ASK.** Do not assume. Do not "improve" things proactively.
-
-3. **Stick to the exact scope of the request.** If asked to fix X, fix X only.
-
-4. **ONE CHANGE AT A TIME.** Do not batch multiple changes together.
-   - Make one change, let user test it
-   - If it doesn't work or causes problems, it's easy to revert
-   - Never make 6 changes when user asked for 1
-
-5. **SUGGEST, THEN ASK.** Before implementing anything:
-   - Explain what you think needs to happen
-   - Ask the user if they want you to proceed
-   - Wait for confirmation before touching any code
-
-6. **KNOW BEFORE YOU ACT.** Before using git commands or editing files:
-   - Check the current state first (git status, git log, read the file)
-   - Verify what you're reverting TO, not just FROM
-   - Never run destructive commands blindly
+1. **NO unauthorized additions.** Do not add features, flags, modes, or files without explicit instruction. ASK FIRST.
+2. **Minimal scope.** Fix only what's requested. One change at a time.
+3. **Suggest before acting.** Explain your plan, wait for confirmation.
+4. **Verify before modifying.** Run `git status`, read files before editing. Never run destructive commands blindly.
 
 ---
 
-## P1 - FROZEN FILES
+## Architecture Overview
 
-**Do not alter any frozen files.** These files are working correctly and must not be changed.
+**Phoenix SDR** is a Windows C application for receiving WWV/WWVH time signals via SDRplay RSP2 Pro hardware.
 
-| File | Reason |
-|------|--------|
-| *(none currently)* | |
+### Signal Flow
+```
+SDR Hardware (2 MHz I/Q) → sdr_stream.c → TCP → waterfall.c
+                                                     │
+                    ┌────────────────────────────────┴────────────────────────────────┐
+                    │                          i_raw, q_raw                            │
+                    ▼                                                                  ▼
+            DETECTOR PATH (50 kHz)                                          DISPLAY PATH (12 kHz)
+            lowpass → decimate                                              lowpass → decimate
+                    │                                                                  │
+    ┌───────────────┼───────────────┐                               ┌──────────────────┤
+    ▼               ▼               ▼                               ▼                  ▼
+tick_detector  marker_detector  bcd_*_detector              tone_tracker(s)     FFT waterfall
+    │               │               │                               │
+    ▼               ▼               ▼                               ▼
+ callbacks →   CSV logging  +  UDP telemetry
+```
+
+### Key Components
+| Path | Purpose |
+|------|---------|
+| `src/` | Core SDR interface (`sdr_*.c`), decimation, I/Q recording |
+| `tools/` | Executable tools and detector modules (`.c` + `.h` pairs) |
+| `include/` | Public headers, `phoenix_sdr.h` is main API |
+| `test/` | Unit tests using `test_framework.h` |
 
 ---
-
-## P2 - WATERFALL/AUDIO ISOLATION
-
-In `tools/waterfall.c`, the **display path** and **audio path** must never share variables or filters.
-
-- Display path uses: `g_display_dsp` (wf_dsp_path_t instance)
-- Audio path uses: `g_audio_dsp` (wf_dsp_path_t instance)
-- Audio output uses: `tools/waterfall_audio.c` module (modifiable)
-- Both paths receive the same raw `i_raw`, `q_raw` input - that is the ONLY shared data
-- **Never** let audio code touch display variables or vice versa
-
----
-
-## READ THIS FIRST
-
-You are helping debug a **WWV signal detection problem**. This is part of a larger project (MIL-STD-188-110A HF modem), but right now the ONLY goal is:
-
-**Find why our code sees 0 dB SNR when SDRuno sees 35 dB SNR on the same hardware.**
-
-## The Immediate Problem
-
-### What Should Happen
-1. wwv_scan tunes to WWV (e.g., 15 MHz)
-2. WWV broadcasts a 5ms pulse of 1000 Hz tone every second
-3. We measure energy during the tick (0-50ms) vs between ticks (200-800ms)
-4. SNR should be 20-35 dB (tick is MUCH louder than noise)
-
-### What Actually Happens
-- SNR ≈ 0 dB (tick energy ≈ noise energy)
-- This means we're NOT detecting the 1000 Hz modulation
-
-### What's Proven Working
-- DSP math (unit tests pass in test/test_dsp.c)
-- SDRuno on same hardware sees the signal fine
-- GPS timing works
-
-## Your Task
-
-**Find where the signal disappears in the processing chain.**
-
-The chain is in `tools/wwv_scan.c`, function `on_samples()`:
-
-```c
-// STEP 1: Raw samples from SDR
-xi[0], xq[0]  // Should be non-zero, varying int16 values
-
-// STEP 2: Decimation (2MHz → 48kHz)
-g_decim_buffer[i].i, .q  // Should be non-zero floats
-
-// STEP 3: Envelope detection
-float mag = sqrtf(I*I + Q*Q);  // Should be > 0
-
-// STEP 4: DC blocking (remove carrier, keep modulation)
-float ac = dc_block_process(&g_dc_block, mag);
-// During tick: should show 1000 Hz oscillation
-// Between ticks: should be ~0
-
-// STEP 5: Bandpass filter (extract 1000 Hz)
-float filtered = biquad_process(&g_bp_1000hz, ac);
-// During tick: should be large
-// Between ticks: should be ~0
-
-// STEP 6: Energy accumulation
-// tick_energy should be >> noise_energy
-```
-
-**Add debug printf at each step to find where it breaks.**
-
-## Key Files
-
-| File | What It Does | Debug Priority |
-|------|--------------|----------------|
-| `tools/wwv_scan.c` | Main scanner, has the bug | **HIGH** |
-| `src/decimator.c` | Sample rate conversion | Medium |
-| `src/sdr_stream.c` | SDR configuration | Medium |
-| `test/test_dsp.c` | Unit tests (all pass) | Reference |
-
-## Quick Debug Code
-
-Add this to `on_samples()` in wwv_scan.c:
-
-```c
-static int debug_samples = 0;
-if (debug_samples++ < 100 && debug_samples % 10 == 0) {
-    // Check raw samples
-    printf("RAW[%d]: xi=%d xq=%d count=%u\n",
-           debug_samples, xi[0], xq[0], count);
-}
-
-// After decimation, inside the for loop:
-static int debug_decim = 0;
-if (debug_decim++ < 20) {
-    printf("DECIM: I=%.1f Q=%.1f mag=%.4f ac=%.6f filt=%.6f\n",
-           g_decim_buffer[i].i, g_decim_buffer[i].q,
-           mag, ac, filtered);
-}
-```
-
-## What Good Values Look Like
-
-```
-# Raw samples (int16, should vary)
-RAW: xi=-1234 xq=567 count=65536
-
-# After decimation (floats, should be non-trivial)
-DECIM: I=0.0234 Q=-0.0156
-
-# Envelope (always positive)
-mag=0.0280
-
-# After DC block (oscillates during tick, ~0 otherwise)
-ac=0.000123  # or during tick: ac=0.015 (varying)
-
-# After bandpass (big during tick, tiny otherwise)
-filt=0.000001  # noise
-filt=0.012345  # during 1000 Hz tick
-```
 
 ## Build & Test
 
 ```powershell
-.\build.ps1 -Target tools
-.\bin\wwv_scan.exe -scantime 5
+.\build.ps1                    # Debug build
+.\build.ps1 -Release           # Optimized build  
+.\build.ps1 -Target tools      # Tools only
+.\build.ps1 -Clean             # Clean artifacts
+.\run_tests.ps1                # All unit tests
+.\run_tests.ps1 -Filter "dsp"  # Specific tests
 ```
 
-## DO NOT
+**Outputs:** `bin/*.exe`, `bin/test/*.exe`
 
-- Rewrite the whole architecture
-- Change the DSP algorithms (they're proven correct)
-- Add new features
+### Quick Run
+```powershell
+cmd /c ".\bin\simple_am_receiver.exe -f 5.000450 -g 59 -l 0 -o | .\bin\waterfall.exe"
+```
 
-## DO
+---
 
-- Add debug output to find where signal is lost
-- Check if raw samples look valid
-- Check if decimator output is reasonable
-- Find the exact step where modulation disappears
+## Critical Patterns
 
-## Context You Need
+### P1 - Signal Path Divergence
+All signal processors receive samples from the SAME divergence point in `waterfall.c`:
+```c
+// Raw samples normalized to [-1, 1]
+float i_raw = (float)samples[s * 2] / 32768.0f;
+float q_raw = (float)samples[s * 2 + 1] / 32768.0f;
 
-- **WWV** = NIST time station, broadcasts 1000 Hz tick every second
-- **Zero-IF** = Signal is centered at 0 Hz (DC), carrier shows as magnitude
-- **AM demodulation** = sqrt(I² + Q²) gives envelope
-- **The tick** = 5ms burst of 1000 Hz tone amplitude-modulated on carrier
-- **GPS sync** = We know exactly when each second starts
+// DETECTOR PATH (50 kHz) - for pulse detection
+float det_i = lowpass_process(&g_detector_lowpass_i, i_raw);
+float det_q = lowpass_process(&g_detector_lowpass_q, i_raw);
+// → tick_detector, marker_detector, bcd_*_detector
+
+// DISPLAY PATH (12 kHz) - for visualization
+float disp_i = lowpass_process(&g_display_lowpass_i, i_raw);
+float disp_q = lowpass_process(&g_display_lowpass_q, q_raw);
+// → tone_tracker, bcd_envelope, FFT waterfall
+```
+**Never cross paths.** Detectors use `det_i/det_q`. Display uses `disp_i/disp_q`.
+
+### P2 - Detector Module Pattern
+All detectors follow the same structure (see `tick_detector.h/.c` as template):
+```c
+// Header pattern
+typedef struct xxx_detector xxx_detector_t;           // Opaque type
+typedef void (*xxx_callback_fn)(const xxx_event_t *event, void *user_data);
+
+xxx_detector_t *xxx_detector_create(const char *csv_path);  // NULL disables CSV
+void xxx_detector_destroy(xxx_detector_t *det);
+void xxx_detector_set_callback(xxx_detector_t *det, xxx_callback_fn cb, void *user_data);
+bool xxx_detector_process_sample(xxx_detector_t *det, float i, float q);
+```
+Each detector owns: own FFT, own sample buffer, own state machine.
+
+### P3 - CSV/UDP Telemetry Pattern
+Detectors support dual output:
+1. **CSV file** - passed to `_create(csv_path)`, logged with `fprintf()` + `fflush()`
+2. **UDP telemetry** - via `telem_sendf(TELEM_CHANNEL, "format", ...)` from `waterfall_telemetry.h`
+
+```c
+// CSV header pattern (written in _create)
+fprintf(csv_file, "# Phoenix SDR %s Log v%s\n", detector_name, PHOENIX_VERSION_FULL);
+fprintf(csv_file, "time,timestamp_ms,field1,field2,...\n");
+
+// UDP telemetry pattern (from callbacks)
+telem_sendf(TELEM_TICKS, "%s,%.1f,T%d,%d,...", time_str, timestamp_ms, tick_num, ...);
+```
+Channel prefixes: `TICK`, `MARK`, `SYNC`, `BCDS`, `CARR`, `T500`, `T600`
+
+### P4 - Display/Audio Isolation
+Display and audio paths in `waterfall.c` must NEVER share variables or filters:
+- Display: `g_display_dsp`
+- Audio: `g_audio_dsp` (in `waterfall_audio.c`)
+
+### P5 - DSP Filter Pattern
+Filters use inline structs. Reference: `test/test_dsp.c`
+```c
+biquad_t bp; biquad_init_bp(&bp, 48000.0f, 1000.0f, 5.0f);  // bandpass
+dc_block_t dc; dc_block_init(&dc, 0.9999f);                  // DC blocker
+```
+
+### P6 - Test Framework
+Tests use `test/test_framework.h`:
+```c
+TEST(my_test) { ASSERT(condition, "message"); PASS(); }
+```
+
+### P7 - Callback Event Structs
+Each detector defines an event struct passed to callbacks:
+```c
+typedef struct {
+    float timestamp_ms;     // When event occurred
+    float duration_ms;      // Pulse/event duration
+    float peak_energy;      // Signal strength
+    // ... detector-specific fields
+} xxx_event_t;
+```
+Examples: `tick_event_t`, `marker_event_t`, `bcd_time_event_t`, `bcd_symbol_event_t`
+
+### P8 - UI Flash Feedback Pattern
+Detectors provide flash state for visual feedback via `waterfall_flash.h`:
+```c
+int xxx_detector_get_flash_frames(xxx_detector_t *det);   // Frames remaining (0 = not flashing)
+void xxx_detector_decrement_flash(xxx_detector_t *det);   // Call once per display frame
+```
+Flash sources register with `flash_source_register()` for waterfall band markers and bar panel flashes.
+
+### P9 - WWV Broadcast Clock
+`wwv_clock.h` provides WWV/WWVH broadcast schedule knowledge:
+- Knows tick/marker/silence schedule (seconds 29, 59 have no tick)
+- Predicts expected events from system time
+- Station-aware (WWV=1000Hz, WWVH=1200Hz)
+```c
+wwv_clock_t *clk = wwv_clock_create(WWV_STATION_WWV);
+wwv_time_t now = wwv_clock_now(clk);  // {second, minute, hour, expected_event, tick_expected}
+```
+
+---
+
+## Frozen Files
+
+| File | Reason |
+|------|--------|
+| `tools/waterfall.c` (signal chain) | Display path, detector path, FFT, decimation - working |
+| `tools/waterfall_dsp.c` | Lowpass filters, decimation logic - working |
+| `tools/marker_detector.c` | Minute marker detection - working |
+| `tools/marker_detector.h` | Minute marker API - stable |
+| `tools/marker_correlator.c` | Marker correlation - working |
+| `tools/marker_correlator.h` | Marker correlator API - stable |
+| `tools/sync_detector.c` | Sync state machine - working |
+| `tools/sync_detector.h` | Sync detector API - stable |
+
+---
+
+## Domain Knowledge
+
+- **WWV/WWVH:** NIST time stations at 5/10/15/20 MHz
+- **Tick:** 5ms pulse of 1000 Hz tone every second (AM modulated)
+- **Minute marker:** 800ms pulse at second 0 of each minute
+- **BCD time code:** 100 Hz subcarrier with binary time data
+- **DC hole:** Zero-IF receivers have DC offset; tune 450 Hz off-center
+
+---
+
+## Dependencies
+
+| Library | Location | Purpose |
+|---------|----------|---------|
+| SDRplay API 3.x | `C:\Program Files\SDRplay\API\` | Hardware access |
+| SDL2 2.30.9 | `libs/SDL2/` | Graphics/audio |
+| KissFFT | `src/kiss_fft.c` | FFT processing |
+| MinGW-w64 | winget install | GCC compiler |
+- **DC hole:** Zero-IF receivers have DC offset; tune 450 Hz off-center
+
+---
+
+## Dependencies
+
+| Library | Location | Purpose |
+|---------|----------|---------|
+| SDRplay API 3.x | `C:\Program Files\SDRplay\API\` | Hardware access |
+| SDL2 2.30.9 | `libs/SDL2/` | Graphics/audio |
+| KissFFT | `src/kiss_fft.c` | FFT processing |
+| MinGW-w64 | winget install | GCC compiler |

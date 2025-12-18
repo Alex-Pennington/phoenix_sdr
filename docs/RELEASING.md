@@ -1,5 +1,7 @@
 # Phoenix SDR - Build and Release Guide
 
+> ✅ **CURRENT** - Release workflow documentation is accurate
+
 This document describes the versioning, build, and release workflow for Phoenix SDR.
 
 ## Version Format

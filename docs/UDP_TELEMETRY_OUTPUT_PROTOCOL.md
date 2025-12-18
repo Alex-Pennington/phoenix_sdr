@@ -1,5 +1,7 @@
 # UDP Telemetry Output Protocol
 
+> ✅ **CURRENT** - Telemetry protocol documentation is accurate
+
 Phoenix SDR waterfall broadcasts real-time telemetry data via UDP broadcast on port 3005.
 
 ## Overview

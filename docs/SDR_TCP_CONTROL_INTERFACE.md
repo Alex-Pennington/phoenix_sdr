@@ -2,10 +2,24 @@
 
 ## Design Specification for Remote SDR Control
 
-**Document Version:** 1.0
-**Date:** December 14, 2025
-**Status:** DRAFT
+**Document Version:** 1.1  
+**Date:** December 18, 2025  
+**Status:** IMPLEMENTED  
 **Authors:** Phoenix Nest Development Team
+
+---
+
+> ✅ **IMPLEMENTED** - See [ALIGNMENT_ROADMAP.md](ALIGNMENT_ROADMAP.md) for minor update needs
+>
+> **Implementation Files:**
+> - Command definitions: [include/tcp_server.h](../include/tcp_server.h)
+> - Command parser: [src/tcp_commands.c](../src/tcp_commands.c)
+> - Server: [tools/sdr_server.c](../tools/sdr_server.c)
+>
+> **Undocumented commands in implementation:**
+> - SET_DECIM/GET_DECIM, SET_IFMODE/GET_IFMODE, SET_DCOFFSET/GET_DCOFFSET
+> - SET_IQCORR/GET_IQCORR, SET_AGC_SETPOINT/GET_AGC_SETPOINT
+> - Async notifications: `! GAIN_CHANGE`, `! OVERLOAD`
 
 ---
 
@@ -368,7 +382,146 @@ OK\n
 
 ---
 
-### 5.5 Streaming Control
+### 5.5 Advanced Hardware Settings
+
+#### SET_DECIM - Set Decimation Factor
+
+```
+SET_DECIM <factor>\n
+```
+
+**Parameters:**
+- `factor`: 1, 2, 4, 8, 16, or 32
+
+**Note:** Reduces effective sample rate by specified factor. Cannot be changed while streaming.
+
+**Response:**
+```
+OK\n
+```
+
+#### GET_DECIM - Get Current Decimation Factor
+
+```
+GET_DECIM\n
+```
+
+**Response:**
+```
+OK <factor>\n
+```
+
+#### SET_IFMODE - Set IF Mode
+
+```
+SET_IFMODE <mode>\n
+```
+
+**Parameters:**
+- `mode`: `ZERO` (Zero-IF) or `LOW` (Low-IF)
+
+**Note:** ZERO is default for most applications. LOW-IF may reduce DC offset issues.
+
+**Response:**
+```
+OK\n
+```
+
+#### GET_IFMODE - Get Current IF Mode
+
+```
+GET_IFMODE\n
+```
+
+**Response:**
+```
+OK <mode>\n
+```
+
+#### SET_DCOFFSET - Enable/Disable DC Offset Correction
+
+```
+SET_DCOFFSET <state>\n
+```
+
+**Parameters:**
+- `state`: `ON` or `OFF`
+
+**Note:** When enabled, the SDR hardware performs automatic DC offset compensation.
+
+**Response:**
+```
+OK\n
+```
+
+#### GET_DCOFFSET - Get DC Offset Correction State
+
+```
+GET_DCOFFSET\n
+```
+
+**Response:**
+```
+OK <state>\n
+```
+
+#### SET_IQCORR - Enable/Disable IQ Imbalance Correction
+
+```
+SET_IQCORR <state>\n
+```
+
+**Parameters:**
+- `state`: `ON` or `OFF`
+
+**Note:** When enabled, the SDR hardware performs automatic IQ imbalance compensation.
+
+**Response:**
+```
+OK\n
+```
+
+#### GET_IQCORR - Get IQ Imbalance Correction State
+
+```
+GET_IQCORR\n
+```
+
+**Response:**
+```
+OK <state>\n
+```
+
+#### SET_AGC_SETPOINT - Set AGC Target Level
+
+```
+SET_AGC_SETPOINT <level_dbfs>\n
+```
+
+**Parameters:**
+- `level_dbfs`: AGC setpoint in dBFS (-72 to 0)
+
+**Note:** When AGC is enabled, it will try to maintain signal at this level.
+
+**Response:**
+```
+OK\n
+```
+
+#### GET_AGC_SETPOINT - Get AGC Target Level
+
+```
+GET_AGC_SETPOINT\n
+```
+
+**Response:**
+```
+OK <level_dbfs>\n
+```
+
+---
+
+### 5.6 Streaming Control
 
 #### START - Start I/Q Streaming
 
@@ -410,17 +563,17 @@ STATUS\n
 
 **Response (not streaming):**
 ```
-OK STREAMING=0 FREQ=15000000 GAIN=40 LNA=4 AGC=OFF SRATE=2000000 BW=200\n
+OK STREAMING=0 FREQ=15000000 GAIN=40 LNA=4 AGC=OFF SRATE=2000000 BW=200 DECIM=1 IFMODE=ZERO\n
 ```
 
 **Response (streaming):**
 ```
-OK STREAMING=1 FREQ=15000000 GAIN=40 LNA=4 AGC=OFF SRATE=2000000 BW=200 OVERLOAD=0\n
+OK STREAMING=1 FREQ=15000000 GAIN=40 LNA=4 AGC=OFF SRATE=2000000 BW=200 DECIM=1 IFMODE=ZERO OVERLOAD=0\n
 ```
 
 ---
 
-### 5.6 Utility Commands
+### 5.7 Utility Commands
 
 #### PING - Connection Keepalive
 
@@ -463,6 +616,10 @@ SRATE_MAX=10000000
 BW=200,300,600,1536,5000,6000,7000,8000
 ANTENNA=A,B,HIZ
 AGC=OFF,5HZ,50HZ,100HZ
+DECIM=1,2,4,8,16,32
+IFMODE=ZERO,LOW
+AGC_SETPOINT_MIN=-72
+AGC_SETPOINT_MAX=0
 END
 ```
 
@@ -474,7 +631,7 @@ HELP\n
 
 **Response:**
 ```
-OK COMMANDS: SET_FREQ GET_FREQ SET_GAIN GET_GAIN SET_LNA GET_LNA SET_AGC GET_AGC SET_SRATE GET_SRATE SET_BW GET_BW SET_ANTENNA GET_ANTENNA SET_BIAST SET_NOTCH START STOP STATUS PING VER CAPS HELP QUIT\n
+OK COMMANDS: SET_FREQ GET_FREQ SET_GAIN GET_GAIN SET_LNA GET_LNA SET_AGC GET_AGC SET_SRATE GET_SRATE SET_BW GET_BW SET_ANTENNA GET_ANTENNA SET_BIAST SET_NOTCH SET_DECIM GET_DECIM SET_IFMODE GET_IFMODE SET_DCOFFSET GET_DCOFFSET SET_IQCORR GET_IQCORR SET_AGC_SETPOINT GET_AGC_SETPOINT START STOP STATUS PING VER CAPS HELP QUIT\n
 ```
 
 #### QUIT - Disconnect
@@ -519,10 +676,10 @@ Sent when ADC overload condition changes. Client should reduce gain.
 #### GAIN_CHANGE - AGC Adjusted Gain
 
 ```
-! GAIN_CHANGE GAIN=35 LNA=4\n
+! GAIN_CHANGE GR_ACTUAL=35 LNA_GR=12\n
 ```
 
-Sent when AGC adjusts gain (only if AGC enabled).
+Sent when AGC adjusts gain (only if AGC enabled). Note: `GR_ACTUAL` is the gain reduction reported by hardware, `LNA_GR` is the LNA gain reduction in dB.
 
 #### DISCONNECT - Server Shutting Down
 

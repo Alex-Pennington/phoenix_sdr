@@ -1,3 +1,10 @@
+# Phoenix SDR Signal Path Diagram
+
+> ✅ **CURRENT** - December 18, 2025
+> 
+> This diagram shows the current signal path architecture with detector and display paths.
+
+```
 ┌─────────────────────────────────────────────────────────────────────────┐
 
 │                        SDR SERVER (2MHz IQ)                             │

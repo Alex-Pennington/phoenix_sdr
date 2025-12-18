@@ -1,5 +1,9 @@
 # BCD Robust Detection - Implementation Roadmap
 
+> ⚠️ **SUPERSEDED** by [BCD_Robust_Symbol_Demodulator_Roadmap_v2.md](BCD_Robust_Symbol_Demodulator_Roadmap_v2.md)
+>
+> This is the original roadmap. v2 includes P-marker false positive analysis and additional phases 8-12 for noise rejection.
+
 ## Document Info
 - **Date:** 2024-12-18
 - **Project:** Phoenix SDR WWV Decoder

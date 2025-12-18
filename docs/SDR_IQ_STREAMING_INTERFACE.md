@@ -2,10 +2,22 @@
 
 ## Design Specification for TCP I/Q Sample Delivery
 
-**Document Version:** 1.0
-**Date:** December 14, 2025
-**Status:** DRAFT
+**Document Version:** 1.1  
+**Date:** December 18, 2025  
+**Status:** IMPLEMENTED  
 **Authors:** Phoenix Nest Development Team
+
+---
+
+> ✅ **IMPLEMENTED** - See [ALIGNMENT_ROADMAP.md](ALIGNMENT_ROADMAP.md) for minor update needs
+>
+> **Implementation Files:**
+> - Server: [tools/sdr_server.c](../tools/sdr_server.c) lines 45-549
+> - Client: [tools/waterfall.c](../tools/waterfall.c) lines 80-130
+>
+> **Minor differences from spec:**
+> - Header struct uses reserved fields for `gain_reduction` and `lna_state`
+> - Frame size is 8192 samples (not specified in original doc)
 
 ---
 
@@ -15,7 +27,7 @@ This document specifies a TCP/IP interface for streaming raw I/Q samples from th
 
 **Key Design:**
 - **Port 4535**: Control commands (text protocol) - existing
-- **Port 4536**: I/Q sample stream (binary protocol) - NEW
+- **Port 4536**: I/Q sample stream (binary protocol)
 
 ---
 
@@ -98,7 +110,8 @@ struct iq_stream_header {
     uint32_t sample_format;   // Format code (see below)
     uint32_t center_freq_lo;  // Center frequency low 32 bits
     uint32_t center_freq_hi;  // Center frequency high 32 bits
-    uint32_t reserved[2];     // Future use (0)
+    uint32_t gain_reduction;  // IF gain reduction in dB (20-59)
+    uint32_t lna_state;       // LNA state index (0-8)
 };  // Total: 32 bytes
 ```
 
@@ -135,9 +148,16 @@ struct iq_data_frame {
 | 2 | `GAIN_CHANGE` | Gain was changed by AGC |
 | 3-31 | Reserved | Must be 0 |
 
+**Frame Size:**
+
+The server sends frames of `IQ_FRAME_SAMPLES = 8192` sample pairs. At 2 MSPS with IQ_S16 format:
+- Frame size = 8192 × 4 bytes = 32,768 bytes
+- Frame rate = 2,000,000 / 8192 ≈ 244 frames/second
+- Frame interval ≈ 4.1 ms
+
 ### 4.3 Metadata Update (sent when parameters change)
 
-When frequency, sample rate, or format changes mid-stream:
+When frequency, sample rate, format, or gain changes mid-stream:
 
 ```c
 struct iq_metadata_update {
@@ -146,7 +166,9 @@ struct iq_metadata_update {
     uint32_t sample_format;   // New format code
     uint32_t center_freq_lo;  // New center frequency low 32 bits
     uint32_t center_freq_hi;  // New center frequency high 32 bits
-    uint32_t reserved[3];     // Future use (0)
+    uint32_t gain_reduction;  // IF gain reduction in dB
+    uint32_t lna_state;       // LNA state index (0-8)
+    uint32_t reserved;        // Future use (0)
 };  // Total: 32 bytes
 ```
 

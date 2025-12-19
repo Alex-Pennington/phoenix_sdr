@@ -267,6 +267,85 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
+        // In continuous mode, keep accepting connections
+        while (continuous) {
+            printf("Waiting for client connection...\n");
+            SOCKET client_sock = accept(listen_sock, NULL, NULL);
+            if (client_sock == INVALID_SOCKET) {
+                fprintf(stderr, "Error: accept() failed\n");
+                break;
+            }
+
+            printf("Client connected! Streaming samples...\n");
+
+            // Send protocol header
+            if (!tcp_send_header(client_sock, SAMPLE_RATE, 5000000ULL)) {
+                fprintf(stderr, "Error: Failed to send header\n");
+                closesocket(client_sock);
+                continue;  // Wait for next client
+            }
+
+            // Allocate frame buffers
+            short *i_buffer = (short *)malloc(IQ_FRAME_SAMPLES * sizeof(short));
+            short *q_buffer = (short *)malloc(IQ_FRAME_SAMPLES * sizeof(short));
+            if (!i_buffer || !q_buffer) {
+                fprintf(stderr, "Error: Failed to allocate buffers\n");
+                free(i_buffer);
+                free(q_buffer);
+                closesocket(client_sock);
+                continue;  // Wait for next client
+            }
+
+            uint32_t sequence = 0;
+            uint64_t frames_sent = 0;
+
+            // Stream frames continuously
+            while (continuous) {
+                // Generate frame
+                for (int i = 0; i < IQ_FRAME_SAMPLES; i++) {
+                    int16_t i_sample, q_sample;
+                    wwv_signal_get_sample_int16(sig, &i_sample, &q_sample);
+                    i_buffer[i] = i_sample;
+                    q_buffer[i] = q_sample;
+                }
+
+                // Send frame
+                if (!tcp_send_frame(client_sock, i_buffer, q_buffer, IQ_FRAME_SAMPLES, &sequence)) {
+                    printf("\nClient disconnected\n");
+                    break;
+                }
+
+                frames_sent++;
+
+                // Progress update every second
+                if ((frames_sent % (SAMPLE_RATE / IQ_FRAME_SAMPLES)) == 0) {
+                    int total_seconds = (int)(frames_sent * IQ_FRAME_SAMPLES / SAMPLE_RATE);
+                    int minutes = total_seconds / 60;
+                    int seconds = total_seconds % 60;
+                    printf("\r  Streaming: %02d:%02d (%llu frames)...",
+                           minutes, seconds, (unsigned long long)frames_sent);
+                    fflush(stdout);
+                }
+            }
+
+            printf("\n");
+            free(i_buffer);
+            free(q_buffer);
+            closesocket(client_sock);
+        }
+
+        closesocket(listen_sock);
+        WSACleanup();
+
+    } else if (use_tcp && !continuous) {
+        // TCP STREAMING MODE - 2-minute loop (non-continuous)
+        printf("\nStarting TCP server on port %d...\n", tcp_port);
+        SOCKET listen_sock = tcp_listen(tcp_port);
+        if (listen_sock == INVALID_SOCKET) {
+            wwv_signal_destroy(sig);
+            return 1;
+        }
+
         printf("Waiting for client connection...\n");
         SOCKET client_sock = accept(listen_sock, NULL, NULL);
         if (client_sock == INVALID_SOCKET) {
@@ -277,7 +356,7 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
-        printf("Client connected! Streaming samples...\n");
+        printf("Client connected! Streaming 2-minute loop...\n");
 
         // Send protocol header
         if (!tcp_send_header(client_sock, SAMPLE_RATE, 5000000ULL)) {
@@ -305,10 +384,10 @@ int main(int argc, char *argv[]) {
 
         uint32_t sequence = 0;
         uint64_t frames_sent = 0;
-        uint64_t total_samples = continuous ? UINT64_MAX : (2 * SAMPLES_PER_MINUTE);
+        uint64_t total_samples = 2 * SAMPLES_PER_MINUTE;
         uint64_t samples_sent = 0;
 
-        // Stream frames
+        // Stream 2-minute loop
         while (samples_sent < total_samples) {
             // Generate frame
             for (int i = 0; i < IQ_FRAME_SAMPLES; i++) {
@@ -336,18 +415,9 @@ int main(int argc, char *argv[]) {
                        minutes, seconds, (unsigned long long)frames_sent);
                 fflush(stdout);
             }
-
-            // Loop back to start after 2 minutes if not continuous
-            if (!continuous && samples_sent >= 2 * SAMPLES_PER_MINUTE) {
-                printf("\n  Looping back to start...\n");
-                samples_sent = 0;
-                // Recreate signal generator to reset to start time
-                wwv_signal_destroy(sig);
-                sig = wwv_signal_create(start_minute, start_hour, day_of_year, year, station);
-            }
         }
 
-        printf("\nStreaming stopped\n");
+        printf("\n2-minute stream complete\n");
         free(i_buffer);
         free(q_buffer);
         closesocket(client_sock);

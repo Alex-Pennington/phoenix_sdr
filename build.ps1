@@ -469,7 +469,7 @@ try {
     $wwvGenObj = Build-Object "tools\wwv_gen.c" @()
 
     $wwvObjects = @($wwvGenObj, $wwvSignalObj, $oscillatorObj, $bcdEncoderObj, $iqrObj, $iqrMetaObj)
-    Link-Executable "$BinDir\wwv_gen.exe" $wwvObjects @("-lm")
+    Link-Executable "$BinDir\wwv_gen.exe" $wwvObjects @("-lws2_32", "-lm")
 
     Write-Status "Done."
 }

@@ -125,24 +125,30 @@ CHAN,14:32:17,87320.0,-45.0,18.7,-52.0,-58.2,-38.2,-56.9,GOOD
 
 ## Graceful Shutdown
 
-Press `Ctrl+C` to stop the logger. It will:
+**From system tray:** Right-click the icon and select "Exit Telemetry Logger"
+
+**From console (--no-tray mode):** Press `Ctrl+C`
+
+On shutdown, the logger will:
 1. Close all CSV files with footer comments
 2. Print a summary of messages logged per channel
 3. Exit cleanly
 
 ## Typical Workflow
 
-### Long-term Signal Monitoring
+### Background Logging (Recommended)
 
 ```powershell
 # Create logs directory
 New-Item -ItemType Directory -Path logs -Force
 
-# Start logger (runs in background)
+# Start logger (runs in system tray)
 Start-Process -FilePath .\bin\telem_logger.exe -ArgumentList "-o logs/"
 
 # Start waterfall
 cmd /c ".\bin\simple_am_receiver.exe -f 5.000450 -g 59 -l 0 -o | .\bin\waterfall.exe"
+
+# Logger runs in background - right-click tray icon to manage/exit
 ```
 
 ### Analyzing Sync Performance

@@ -208,4 +208,13 @@ void sync_detector_broadcast_state(sync_detector_t *sd);
  */
 int sync_detector_get_good_intervals(sync_detector_t *sd);
 
+/**
+ * Get pending tick marker info (for precise epoch calculation)
+ * @param sd Detector handle
+ * @param timestamp_ms Output: tick marker trailing edge timestamp (can be NULL)
+ * @param duration_ms Output: tick marker duration (can be NULL)
+ * @return true if tick marker is pending, false otherwise
+ */
+bool sync_detector_get_pending_tick(sync_detector_t *sd, float *timestamp_ms, float *duration_ms);
+
 #endif /* SYNC_DETECTOR_H */

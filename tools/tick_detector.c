@@ -81,12 +81,17 @@ typedef enum {
 } detector_state_t;
 
 /* Timing gate for exploiting NIST 40ms protected zone */
-#define TICK_GATE_START_MS   5.0f    /* Open gate 5ms before expected tick */
-#define TICK_GATE_END_MS    25.0f    /* Close gate 10ms after expected tick */
+#define TICK_GATE_START_MS   0.0f    /* Open gate at second boundary */
+#define TICK_GATE_END_MS   100.0f   /* Close gate 100ms into second (was 25ms - too narrow for HF) */
+
+/* Gate recovery - disable gate if no ticks for too long */
+#define GATE_RECOVERY_MS   5000.0f  /* 5 seconds without tick = disable gate temporarily */
 
 typedef struct {
     float epoch_ms;          /* Second boundary offset (from marker) */
     bool enabled;            /* Gate is active */
+    uint64_t last_tick_frame_gated; /* Frame when last tick detected with gate enabled */
+    bool recovery_mode;      /* True when gate temporarily disabled for recovery */
 } tick_gate_t;
 
 struct tick_detector {
@@ -178,6 +183,10 @@ struct tick_detector {
 static bool is_gate_open(tick_detector_t *td, float current_ms) {
     if (!td->gate.enabled) {
         return true;  /* Gate disabled - always open */
+    }
+    
+    if (td->gate.recovery_mode) {
+        return true;  /* Recovery mode - gate bypassed to re-acquire ticks */
     }
 
     float ms_into_second = fmodf(current_ms - td->gate.epoch_ms, 1000.0f);
@@ -308,6 +317,17 @@ static void run_state_machine(tick_detector_t *td) {
         return;
     }
 
+    /* Gate recovery check - if gating enabled but no ticks for too long, enter recovery mode */
+    if (td->gate.enabled && !td->gate.recovery_mode && td->state == STATE_IDLE) {
+        float since_last_gated_tick_ms = (td->gate.last_tick_frame_gated > 0) ?
+            (frame - td->gate.last_tick_frame_gated) * FRAME_DURATION_MS : 0.0f;
+        if (td->gate.last_tick_frame_gated > 0 && since_last_gated_tick_ms >= GATE_RECOVERY_MS) {
+            td->gate.recovery_mode = true;
+            printf("[TICK] Gate recovery mode ENABLED (%.1fs without tick)\n",
+                   since_last_gated_tick_ms / 1000.0f);
+        }
+    }
+
     /* Adaptive noise floor - asymmetric: fast down, slow up */
     if (td->state == STATE_IDLE && energy < td->threshold_high) {
         if (energy < td->noise_floor) {
@@ -415,6 +435,15 @@ static void run_state_machine(tick_detector_t *td) {
                     /* Normal tick */
                     td->ticks_detected++;
                     td->flash_frames_remaining = TICK_FLASH_FRAMES;
+                    
+                    /* Update gated tick tracking for recovery logic */
+                    if (td->gate.enabled) {
+                        td->gate.last_tick_frame_gated = frame;
+                        if (td->gate.recovery_mode) {
+                            td->gate.recovery_mode = false;
+                            printf("[TICK] Gate recovery mode DISABLED (tick acquired)\n");
+                        }
+                    }
 
                     float avg_interval_ms = calculate_avg_interval(td, timestamp_ms);
 
@@ -805,9 +834,13 @@ void tick_detector_set_gating_enabled(tick_detector_t *td, bool enabled) {
     if (!td) return;
     td->gate.enabled = enabled;
     if (enabled) {
+        /* Initialize recovery tracking when gate is enabled */
+        td->gate.last_tick_frame_gated = td->frame_count;  /* Start counting from now */
+        td->gate.recovery_mode = false;
         printf("[TICK] Timing gate ENABLED (window: %.0f-%.0fms into second)\n",
                TICK_GATE_START_MS, TICK_GATE_END_MS);
     } else {
+        td->gate.recovery_mode = false;
         printf("[TICK] Timing gate DISABLED\n");
     }
 }

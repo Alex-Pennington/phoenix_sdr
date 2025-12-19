@@ -756,3 +756,12 @@ void sync_detector_set_state_callback(sync_detector_t *sd,
         sd->state_callback_user_data = user_data;
     }
 }
+
+bool sync_detector_get_pending_tick(sync_detector_t *sd, float *timestamp_ms, float *duration_ms) {
+    if (!sd || !sd->tick_pending) {
+        return false;
+    }
+    if (timestamp_ms) *timestamp_ms = sd->pending_tick_ms;
+    if (duration_ms) *duration_ms = sd->pending_tick_duration_ms;
+    return true;
+}

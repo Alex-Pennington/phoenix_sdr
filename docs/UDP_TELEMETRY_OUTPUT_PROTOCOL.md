@@ -238,10 +238,81 @@ STATE,TENTATIVE,LOCKED,0.95
 
 ---
 
-### BCD1 - 100 Hz BCD Subcarrier DetectorBroadcast every ~1 second (or as configured). Reports the 100 Hz subcarrier envelope and SNR for BCD time code decoding.**Format:**  `BCD1,time,timestamp_ms,envelope,snr_db,noise_floor_db,status\n`| Field           | Type   | Description                                   ||-----------------|--------|-----------------------------------------------|| `time`          | string | Wall clock time `HH:MM:SS`                    || `timestamp_ms`  | float  | Milliseconds since waterfall start            || `envelope`      | float  | Detected 100 Hz envelope (linear)             || `snr_db`        | float  | SNR of 100 Hz subcarrier (dB)                 || `noise_floor_db`| float  | Estimated noise floor (dB)                    || `status`        | string | Detector status: `ABSENT`, `WEAK`, `PRESENT`, `STRONG` |**Example:**
-BCD1,14:32:15,85320.0,0.002345,18.7,-56.2,PRESENT
+### BCDE - 100 Hz BCD Envelope Tracker
+
+> ⚠️ **DEPRECATED** - This channel is deprecated. Use BCDS (BCD symbols) instead.
+
+Broadcast every ~1 second. Reports the 100 Hz subcarrier envelope and SNR for BCD time code decoding.
+
+**Format:** `BCDE,time,timestamp_ms,envelope,snr_db,noise_floor_db,status\n`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `time` | string | Wall clock time `HH:MM:SS` |
+| `timestamp_ms` | float | Milliseconds since waterfall start |
+| `envelope` | float | Detected 100 Hz envelope (linear amplitude) |
+| `snr_db` | float | SNR of 100 Hz subcarrier (dB) |
+| `noise_floor_db` | float | Estimated noise floor (dB) |
+| `status` | string | Detector status: `ABSENT`, `WEAK`, `PRESENT`, `STRONG` |
+
+**Example:**
+```
+BCDE,14:32:15,85320.0,0.002345,18.7,-56.2,PRESENT
+```
 
 ---
+
+### BCDS - BCD Symbol Decoder
+
+Broadcast when BCD symbols (0, 1, position marker) are decoded. The BCD correlator uses dual-path detection (time-domain and frequency-domain) to emit high-confidence symbol decisions.
+
+#### BCDS Symbol Event
+
+Broadcast when a BCD symbol is decoded with sufficient confidence.
+
+**Format:** `SYM,symbol,second,duration_ms,confidence\n`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `symbol` | char | Decoded symbol: `0` (zero), `1` (one), `P` (position marker), `?` (unknown) |
+| `second` | int | WWV second position (0-59) when symbol occurred |
+| `duration_ms` | float | Pulse duration in milliseconds (200ms=0, 500ms=1, 800ms=marker) |
+| `confidence` | float | Detection confidence (0.0-1.0) |
+
+**Example:**
+```
+SYM,1,15,498.5,0.92
+SYM,0,16,203.2,0.87
+SYM,P,0,821.0,0.95
+```
+
+#### BCDS Status
+
+Broadcast every ~1 second. Reports decoder modem status.
+
+**Format:** `STATUS,time,timestamp_ms,mode,frame,parity,timecode,symbol_count\n`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `time` | string | Wall clock time `HH:MM:SS` |
+| `timestamp_ms` | float | Milliseconds since waterfall start |
+| `mode` | string | Decoder mode: `MODEM` (symbol-only), `DECODE` (full frame decode) |
+| `frame` | int | Current frame number (-1 if not tracking frames) |
+| `parity` | int | Frame parity status (0=unknown, 1=good, -1=bad) |
+| `timecode` | int | Decoded timecode validity (0=none, 1=valid) |
+| `symbol_count` | uint | Total symbols decoded since start |
+
+**Example:**
+```
+STATUS,14:32:15,85320.0,MODEM,-1,0,0,127
+```
+
+**Broadcast Timing:**
+- Symbol events: Sent immediately when decoded (max 1/second per WWV schedule)
+- Status: Sent every ~1 second with cumulative statistics
+
+---
+
 ## Reserved Channels (Not Yet Implemented)
 
 | Prefix | Channel Enum | Description |
@@ -263,18 +334,20 @@ telem_enable(TELEM_CHANNEL | TELEM_CARRIER | TELEM_SUBCAR | TELEM_TONE500 | TELE
 ```
 
 Channel bitmask values:
-| Channel | Bit | Value |
-|---------|-----|-------|
-| `TELEM_CHANNEL` | 0 | 0x001 |
-| `TELEM_TICKS` | 1 | 0x002 |
-| `TELEM_MARKERS` | 2 | 0x004 |
-| `TELEM_CARRIER` | 3 | 0x008 |
-| `TELEM_SYNC` | 4 | 0x010 |
-| `TELEM_SUBCAR` | 5 | 0x020 |
-| `TELEM_CORR` | 6 | 0x040 |
-| `TELEM_TONE500` | 7 | 0x080 |
-| `TELEM_TONE600` | 8 | 0x100 |
-| `TELEM_ALL` | - | 0x1FF |
+| Channel | Bit | Value | Prefix |
+|---------|-----|-------|--------|
+| `TELEM_CHANNEL` | 0 | 0x001 | `CHAN` |
+| `TELEM_TICKS` | 1 | 0x002 | `TICK` |
+| `TELEM_MARKERS` | 2 | 0x004 | `MARK` |
+| `TELEM_CARRIER` | 3 | 0x008 | `CARR` |
+| `TELEM_SYNC` | 4 | 0x010 | `SYNC` |
+| `TELEM_SUBCAR` | 5 | 0x020 | `SUBC` |
+| `TELEM_CORR` | 6 | 0x040 | `CORR` |
+| `TELEM_TONE500` | 7 | 0x080 | `T500` |
+| `TELEM_TONE600` | 8 | 0x100 | `T600` |
+| `TELEM_BCD_ENV` | 9 | 0x200 | `BCDE` (deprecated) |
+| `TELEM_BCDS` | 10 | 0x400 | `BCDS` |
+| `TELEM_ALL` | - | 0x7FF | - |
 
 ---
 

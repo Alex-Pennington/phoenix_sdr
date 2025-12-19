@@ -36,10 +36,10 @@
 **Console output:**
 ```
 [WARMUP] Complete. Noise=0.000342, Thresh=0.000684
-[   1.1s] TICK #1    int=     0ms  avg=     0ms  
-[   2.1s] TICK #2    int=  1002ms  avg= 1002ms  
-[   3.1s] TICK #3    int=   998ms  avg= 1000ms  
-[   4.1s] TICK #4    int=  1001ms  avg= 1000ms  
+[   1.1s] TICK #1    int=     0ms  avg=     0ms
+[   2.1s] TICK #2    int=  1002ms  avg= 1002ms
+[   3.1s] TICK #3    int=   998ms  avg= 1000ms
+[   4.1s] TICK #4    int=  1001ms  avg= 1000ms
 ```
 
 ## Tick Detector Features
@@ -175,5 +175,5 @@ cd D:\claude_sandbox\phoenix_sdr
 
 ---
 
-**Phoenix Nest MARS Suite**  
+**Phoenix Nest MARS Suite**
 KY4OLB

@@ -114,8 +114,8 @@ Split-screen display with automatic tick detection.
 
 When ticks are detected, the console shows:
 ```
-[  23.5s] TICK #12   int= 1002ms  avg=  999ms  
-[  24.5s] TICK #13   int=  998ms  avg= 1000ms  
+[  23.5s] TICK #12   int= 1002ms  avg=  999ms
+[  24.5s] TICK #13   int=  998ms  avg= 1000ms
 ```
 
 - **int** = Interval since last tick (should be ~1000ms)
@@ -206,5 +206,5 @@ Beta 0.2.4+8.2c99002  — Hardware validation release
 
 ---
 
-**Phoenix Nest MARS Suite**  
+**Phoenix Nest MARS Suite**
 KY4OLB

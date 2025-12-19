@@ -357,6 +357,19 @@ try {
     if ($process.ExitCode -ne 0) { throw "Linking failed for sdr_server" }
     Write-Status "Built: $BinDir\sdr_server.exe"
 
+    # Build telem_logger (UDP telemetry listener/CSV logger)
+    Write-Status "Building telem_logger..."
+
+    $telemLoggerObj = Build-Object "tools\telem_logger.c" @()
+
+    Write-Status "Linking telem_logger.exe..."
+    $telemLoggerLdflags = @("-lws2_32")
+    $allArgs = @("-o", "`"$BinDir\telem_logger.exe`"", "`"$telemLoggerObj`"") + $telemLoggerLdflags
+    $argString = $allArgs -join " "
+    $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Linking failed for telem_logger" }
+    Write-Status "Built: $BinDir\telem_logger.exe"
+
     Write-Status "Done."
 }
 catch {

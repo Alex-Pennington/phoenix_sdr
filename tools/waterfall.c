@@ -287,6 +287,8 @@ static int g_waterfall_width = DEFAULT_WATERFALL_WIDTH;
 static int g_bucket_width = DEFAULT_BUCKET_WIDTH;
 static int g_window_width = DEFAULT_WATERFALL_WIDTH + DEFAULT_BUCKET_WIDTH;
 static int g_window_height = DEFAULT_WINDOW_HEIGHT;
+static int g_window_x = SDL_WINDOWPOS_CENTERED;
+static int g_window_y = SDL_WINDOWPOS_CENTERED;
 
 /*----------------------------------------------------------------------------
  * DETECTOR PATH (unchanged from original)
@@ -550,6 +552,8 @@ static void print_usage(const char *progname) {
     printf("  --test-pattern      Generate synthetic 1000Hz test tone (no SDR needed)\n");
     printf("  -w, --width WIDTH   Set waterfall width (default: %d)\n", DEFAULT_WATERFALL_WIDTH);
     printf("  -H, --height HEIGHT Set window height (default: %d)\n", DEFAULT_WINDOW_HEIGHT);
+    printf("  -x, --pos-x X       Set window X position (default: centered)\n");
+    printf("  -y, --pos-y Y       Set window Y position (default: centered)\n");
     printf("  -l, --log-csv       Enable CSV file logging (default: UDP telemetry only)\n");
     printf("  -h, --help          Show this help\n");
 }
@@ -834,6 +838,10 @@ int main(int argc, char *argv[]) {
         } else if ((strcmp(argv[i], "--height") == 0 || strcmp(argv[i], "-H") == 0) && i + 1 < argc) {
             g_window_height = atoi(argv[++i]);
             if (g_window_height < 300) g_window_height = 300;  /* Minimum */
+        } else if ((strcmp(argv[i], "--pos-x") == 0 || strcmp(argv[i], "-x") == 0) && i + 1 < argc) {
+            g_window_x = atoi(argv[++i]);
+        } else if ((strcmp(argv[i], "--pos-y") == 0 || strcmp(argv[i], "-y") == 0) && i + 1 < argc) {
+            g_window_y = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--log-csv") == 0 || strcmp(argv[i], "-l") == 0) {
             g_log_csv = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -943,7 +951,7 @@ int main(int argc, char *argv[]) {
                         g_tcp_mode ? "Waterfall (TCP)" : "Waterfall";
     SDL_Window *window = SDL_CreateWindow(
         title,
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        g_window_x, g_window_y,
         g_window_width, g_window_height,
         SDL_WINDOW_SHOWN
     );
@@ -1193,15 +1201,81 @@ int main(int argc, char *argv[]) {
 
         if (g_test_pattern) {
             /* Generate synthetic 1000Hz tone: I = cos(2πft), Q = sin(2πft) */
+            static int16_t test_samples[DISPLAY_OVERLAP * 2];  /* I/Q interleaved */
             int num_samples = DISPLAY_OVERLAP;
             for (int i = 0; i < num_samples; i++) {
-                double phase = 2.0 * M_PI * 1000.0 * g_test_sample_count / g_tcp_sample_rate;
-                samples[i * 2]     = (int16_t)(cos(phase) * 16384);  /* I channel */
-                samples[i * 2 + 1] = (int16_t)(sin(phase) * 16384);  /* Q channel */
+                double phase = 2.0 * 3.14159265358979323846 * 1000.0 * g_test_sample_count / g_tcp_sample_rate;
+                test_samples[i * 2]     = (int16_t)(cos(phase) * 16384);  /* I channel */
+                test_samples[i * 2 + 1] = (int16_t)(sin(phase) * 16384);  /* Q channel */
                 g_test_sample_count++;
             }
             samples_collected = num_samples;
             got_samples = true;
+
+            /* Process test pattern samples through DSP (same as TCP path) */
+            if (!g_detector_dsp_initialized) {
+                lowpass_init(&g_detector_lowpass_i, DETECTOR_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                lowpass_init(&g_detector_lowpass_q, DETECTOR_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                sync_channel_init(&g_sync_channel_i);
+                sync_channel_init(&g_sync_channel_q);
+                data_channel_init(&g_data_channel_i);
+                data_channel_init(&g_data_channel_q);
+                g_detector_dsp_initialized = true;
+            }
+            if (!g_display_dsp_initialized) {
+                lowpass_init(&g_display_lowpass_i, DISPLAY_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                lowpass_init(&g_display_lowpass_q, DISPLAY_FILTER_CUTOFF, (float)g_tcp_sample_rate);
+                g_display_dsp_initialized = true;
+            }
+
+            for (int s = 0; s < num_samples; s++) {
+                float i_raw = (float)test_samples[s * 2] / 32768.0f;
+                float q_raw = (float)test_samples[s * 2 + 1] / 32768.0f;
+
+                /* DETECTOR PATH */
+                float det_i = lowpass_process(&g_detector_lowpass_i, i_raw);
+                float det_q = lowpass_process(&g_detector_lowpass_q, q_raw);
+
+                g_detector_decim_counter++;
+                if (g_detector_decim_counter >= g_detector_decimation) {
+                    g_detector_decim_counter = 0;
+                    float norm_factor = normalize(&g_normalizer, det_i, det_q);
+                    det_i *= norm_factor;
+                    det_q *= norm_factor;
+
+                    float sync_i = sync_channel_process(&g_sync_channel_i, det_i);
+                    float sync_q = sync_channel_process(&g_sync_channel_q, det_q);
+                    float data_i = data_channel_process(&g_data_channel_i, det_i);
+                    float data_q = data_channel_process(&g_data_channel_q, det_q);
+
+                    tick_detector_process_sample(g_tick_detector, sync_i, sync_q);
+                    marker_detector_process_sample(g_marker_detector, sync_i, sync_q);
+                    if (g_bcd_time_detector) bcd_time_detector_process_sample(g_bcd_time_detector, data_i, data_q);
+                    if (g_bcd_freq_detector) bcd_freq_detector_process_sample(g_bcd_freq_detector, data_i, data_q);
+
+                    g_periodic_check_counter++;
+                    if (g_periodic_check_counter >= PERIODIC_CHECK_INTERVAL_SAMPLES) {
+                        g_periodic_check_counter = 0;
+                        if (g_sync_detector) {
+                            float timestamp_ms = (float)(frame_num * DISPLAY_EFFECTIVE_MS);
+                            sync_detector_periodic_check(g_sync_detector, timestamp_ms);
+                        }
+                    }
+                }
+
+                /* DISPLAY PATH */
+                float disp_i = lowpass_process(&g_display_lowpass_i, i_raw);
+                float disp_q = lowpass_process(&g_display_lowpass_q, q_raw);
+
+                g_display_decim_counter++;
+                if (g_display_decim_counter >= g_display_decimation) {
+                    g_display_decim_counter = 0;
+                    g_display_buffer[g_display_buffer_idx].i = disp_i;
+                    g_display_buffer[g_display_buffer_idx].q = disp_q;
+                    g_display_buffer_idx = (g_display_buffer_idx + 1) % DISPLAY_FFT_SIZE;
+                    g_display_new_samples++;
+                }
+            }
         } else if (g_tcp_mode) {
             while (samples_collected < DISPLAY_OVERLAP && running) {
                 uint32_t magic;
@@ -1468,7 +1542,7 @@ int main(int argc, char *argv[]) {
         /* Auto-gain tracking */
         float frame_max = -200.0f;
         float frame_min = 200.0f;
-        for (int i = 0; i < WATERFALL_WIDTH; i++) {
+        for (int i = 0; i < g_waterfall_width; i++) {
             float db = 20.0f * log10f(magnitudes[i] + 1e-10f);
             if (db > frame_max) frame_max = db;
             if (db < frame_min) frame_min = db;

@@ -42,6 +42,16 @@ static uint32_t g_stats_dropped = 0;
 static bool g_initialized = false;
 
 /*============================================================================
+ * Console Buffer (for hot-path performance)
+ *============================================================================*/
+
+#define CONSOLE_BUFFER_SIZE 8192
+
+static char g_console_buffer[CONSOLE_BUFFER_SIZE];
+static int g_console_buffer_len = 0;
+static uint32_t g_console_dropped = 0;
+
+/*============================================================================
  * Channel Prefixes
  *============================================================================*/
 
@@ -58,6 +68,7 @@ static const char *g_channel_prefixes[] = {
     "T600",  /* TELEM_TONE600 */
     "BCDE",  /* TELEM_BCD_ENV (100 Hz envelope) */
     "BCDS",  /* TELEM_BCDS (BCD symbols/time) */
+    "CONS",  /* TELEM_CONSOLE (console messages) */
 };
 
 /*============================================================================
@@ -77,6 +88,7 @@ static int get_channel_index(telem_channel_t channel) {
         case TELEM_TONE600: return 9;
         case TELEM_BCD_ENV: return 10;
         case TELEM_BCDS:    return 11;
+        case TELEM_CONSOLE: return 12;
         default:            return 0;
     }
 }
@@ -248,4 +260,70 @@ void telem_sendf(telem_channel_t channel, const char *fmt, ...) {
 void telem_get_stats(uint32_t *sent, uint32_t *dropped) {
     if (sent) *sent = g_stats_sent;
     if (dropped) *dropped = g_stats_dropped;
+}
+
+void telem_console_flush(void) {
+    if (g_console_buffer_len == 0) {
+        return;
+    }
+
+    /* Send buffered console data */
+    if (g_initialized && (g_enabled_channels & TELEM_CONSOLE)) {
+        /* Ensure null termination */
+        if (g_console_buffer_len < CONSOLE_BUFFER_SIZE) {
+            g_console_buffer[g_console_buffer_len] = '\0';
+        } else {
+            g_console_buffer[CONSOLE_BUFFER_SIZE - 1] = '\0';
+        }
+        telem_send(TELEM_CONSOLE, g_console_buffer);
+    }
+
+    /* Reset buffer */
+    g_console_buffer_len = 0;
+}
+
+void telem_console(const char *fmt, ...) {
+    /* Fast path: check if enabled */
+    if (!g_initialized || (g_enabled_channels & TELEM_CONSOLE) == 0) {
+        return;
+    }
+
+    /* Format message into temp buffer */
+    char temp[512];
+    va_list args;
+    va_start(args, fmt);
+    int written = vsnprintf(temp, sizeof(temp), fmt, args);
+    va_end(args);
+
+    if (written <= 0) {
+        return;
+    }
+
+    /* Truncate if too long */
+    if (written >= (int)sizeof(temp)) {
+        written = (int)sizeof(temp) - 1;
+    }
+
+    /* Check if buffer has space */
+    int space_available = CONSOLE_BUFFER_SIZE - g_console_buffer_len - 1;
+    if (written > space_available) {
+        /* Flush current buffer first */
+        telem_console_flush();
+        space_available = CONSOLE_BUFFER_SIZE - 1;
+        
+        /* If still doesn't fit, drop it and count */
+        if (written > space_available) {
+            g_console_dropped++;
+            return;
+        }
+    }
+
+    /* Append to buffer */
+    memcpy(g_console_buffer + g_console_buffer_len, temp, written);
+    g_console_buffer_len += written;
+
+    /* Auto-flush on newline */
+    if (written > 0 && temp[written - 1] == '\n') {
+        telem_console_flush();
+    }
 }

@@ -16,6 +16,7 @@
  */
 
 #include "bcd_freq_detector.h"
+#include "waterfall_telemetry.h"
 #include "kiss_fft.h"
 #include "version.h"
 #include <stdlib.h>
@@ -249,16 +250,23 @@ static void run_state_machine(bcd_freq_detector_t *fd) {
                            fd->pulses_detected, start_timestamp_ms, duration_ms,
                            fd->pulse_peak_energy, snr_db);
 
-                    /* CSV logging */
+                    /* CSV logging and telemetry */
+                    char time_str[16];
+                    get_wall_time_str(fd, start_timestamp_ms, time_str, sizeof(time_str));
+                    
                     if (fd->csv_file) {
-                        char time_str[16];
-                        get_wall_time_str(fd, start_timestamp_ms, time_str, sizeof(time_str));
                         fprintf(fd->csv_file, "%s,%.1f,%d,%.6f,%.0f,%.6f,%.1f\n",
                                 time_str, start_timestamp_ms, fd->pulses_detected,
                                 fd->pulse_peak_energy, duration_ms,
                                 fd->baseline_energy, snr_db);
                         fflush(fd->csv_file);
                     }
+                    
+                    /* UDP telemetry */
+                    telem_sendf(TELEM_BCDS, "FREQ,%s,%.1f,%d,%.6f,%.0f,%.6f,%.1f",
+                                time_str, start_timestamp_ms, fd->pulses_detected,
+                                fd->pulse_peak_energy, duration_ms,
+                                fd->baseline_energy, snr_db);
 
                     fd->last_pulse_frame = fd->pulse_start_frame;
 

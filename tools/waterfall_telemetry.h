@@ -46,7 +46,8 @@ typedef enum {
     TELEM_TONE600   = (1 << 8),  /* 600 Hz tone tracker */
     TELEM_BCD_ENV   = (1 << 9),  /* DEPRECATED: 100 Hz BCD envelope tracker */
     TELEM_BCDS      = (1 << 10), /* BCD decoder symbols and time */
-    TELEM_ALL       = 0x7FF      /* All channels */
+    TELEM_CONSOLE   = (1 << 11), /* Console/status messages (buffered) */
+    TELEM_ALL       = 0xFFF      /* All channels */
 } telem_channel_t;
 
 /*============================================================================
@@ -128,6 +129,25 @@ const char *telem_channel_prefix(telem_channel_t channel);
  * @param dropped  Receives count of messages dropped/filtered (can be NULL)
  */
 void telem_get_stats(uint32_t *sent, uint32_t *dropped);
+
+/**
+ * Send console message (buffered for hot-path performance)
+ * 
+ * Messages are buffered and automatically flushed on newline or buffer full.
+ * Call telem_console_flush() periodically to ensure messages are sent.
+ * 
+ * @param fmt  Printf format string
+ * @param ...  Format arguments
+ */
+void telem_console(const char *fmt, ...);
+
+/**
+ * Manually flush console buffer
+ * 
+ * Call this at frame boundaries or periodically to drain buffered console messages.
+ * Automatic flush occurs on newline or buffer full.
+ */
+void telem_console_flush(void);
 
 #ifdef __cplusplus
 }

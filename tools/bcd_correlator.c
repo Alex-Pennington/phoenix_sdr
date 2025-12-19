@@ -301,10 +301,11 @@ static void close_window(bcd_correlator_t *corr) {
     corr->last_symbol_ms = symbol_timestamp_ms;
     corr->symbol_count++;
 
-    /* Log to CSV */
+    /* Log to CSV and telemetry */
+    char time_str[16];
+    get_wall_time_str(corr, symbol_timestamp_ms, time_str, sizeof(time_str));
+    
     if (corr->csv_file) {
-        char time_str[16];
-        get_wall_time_str(corr, symbol_timestamp_ms, time_str, sizeof(time_str));
         fprintf(corr->csv_file, "%s,%.1f,%d,%d,%c,%s,%.0f,%.2f,%.1f,%d,%d,%.4f,%.4f,%s\n",
                 time_str, symbol_timestamp_ms, corr->symbol_count, corr->current_second,
                 bcd_corr_symbol_char(symbol), source,
@@ -314,6 +315,15 @@ static void close_window(bcd_correlator_t *corr) {
                 bcd_corr_state_name(corr->state));
         fflush(corr->csv_file);
     }
+    
+    /* UDP telemetry for correlation stats */
+    telem_sendf(TELEM_BCDS, "CORR,%s,%.1f,%d,%d,%c,%s,%.0f,%.2f,%.1f,%d,%d,%.4f,%.4f,%s",
+                time_str, symbol_timestamp_ms, corr->symbol_count, corr->current_second,
+                bcd_corr_symbol_char(symbol), source,
+                duration_ms, confidence, interval_ms / 1000.0f,
+                corr->time_event_count, corr->freq_event_count,
+                corr->time_energy_sum, corr->freq_energy_sum,
+                bcd_corr_state_name(corr->state));
 
     /* Only emit if we detected something */
     if (symbol != BCD_CORR_SYM_NONE) {

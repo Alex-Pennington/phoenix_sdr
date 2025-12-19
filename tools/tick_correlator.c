@@ -8,6 +8,7 @@
  */
 
 #include "tick_correlator.h"
+#include "waterfall_telemetry.h"
 #include "version.h"
 #include <stdlib.h>
 #include <string.h>
@@ -245,7 +246,7 @@ void tick_correlator_add_tick(tick_correlator_t *tc,
         tc->tick_count++;
     }
     
-    /* CSV output */
+    /* CSV output and telemetry */
     if (tc->csv_file) {
         fprintf(tc->csv_file, "%s,%.1f,%d,%s,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f,"
                 "%d,%d,%.1f,%.1f\n",
@@ -256,6 +257,14 @@ void tick_correlator_add_tick(tick_correlator_t *tc,
                 tc->current_chain_start_ms, tc->cumulative_drift_ms);
         fflush(tc->csv_file);
     }
+    
+    /* UDP telemetry */
+    telem_sendf(TELEM_CORR, "%s,%.1f,%d,%s,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f,%d,%d,%.1f,%.1f",
+                time_str, timestamp_ms, tick_num, expected,
+                energy_peak, duration_ms, interval_ms, avg_interval_ms,
+                noise_floor, corr_peak, corr_ratio,
+                tc->current_chain_id, tc->current_chain_length,
+                tc->current_chain_start_ms, tc->cumulative_drift_ms);
     
     tc->last_tick_ms = timestamp_ms;
 }

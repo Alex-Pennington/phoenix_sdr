@@ -4,6 +4,7 @@
  */
 
 #include "marker_correlator.h"
+#include "waterfall_telemetry.h"
 #include "version.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -137,18 +138,24 @@ void marker_correlator_slow_frame(marker_correlator_t *mc,
                        marker_num, mc->fast_duration_ms, mc->slow_peak_energy,
                        mc->slow_peak_snr, conf_str);
 
-                if (mc->csv_file) {
-                    time_t event_time = mc->start_time + (time_t)(mc->fast_timestamp_ms / 1000.0f);
-                    struct tm *tm_info = localtime(&event_time);
-                    char time_str[16];
-                    strftime(time_str, sizeof(time_str), "%H:%M:%S", tm_info);
+                time_t event_time = mc->start_time + (time_t)(mc->fast_timestamp_ms / 1000.0f);
+                struct tm *tm_info = localtime(&event_time);
+                char time_str[16];
+                strftime(time_str, sizeof(time_str), "%H:%M:%S", tm_info);
 
+                if (mc->csv_file) {
                     fprintf(mc->csv_file, "%s,%.1f,%d,%.1f,%.4f,%.1f,%s\n",
                             time_str, mc->fast_timestamp_ms, marker_num,
                             mc->fast_duration_ms, mc->slow_peak_energy,
                             mc->slow_peak_snr, conf_str);
                     fflush(mc->csv_file);
                 }
+                
+                /* UDP telemetry */
+                telem_sendf(TELEM_MARKERS, "%s,%.1f,%d,%.1f,%.4f,%.1f,%s",
+                            time_str, mc->fast_timestamp_ms, marker_num,
+                            mc->fast_duration_ms, mc->slow_peak_energy,
+                            mc->slow_peak_snr, conf_str);
 
                 if (mc->callback) {
                     correlated_marker_t marker = {

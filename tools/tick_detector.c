@@ -19,6 +19,7 @@
 #include "tick_detector.h"
 #include "wwv_clock.h"
 #include "tick_comb_filter.h"
+#include "waterfall_telemetry.h"
 #include "kiss_fft.h"
 #include "version.h"
 #include <stdlib.h>
@@ -401,11 +402,12 @@ static void run_state_machine(tick_detector_t *td) {
                            timestamp_ms / 1000.0f, td->markers_detected,
                            duration_ms, corr_ratio, since_last_marker_ms / 1000.0f);
 
-                    /* CSV logging */
+                    /* CSV logging and telemetry */
+                    char time_str[16];
+                    get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
+                    wwv_time_t wwv = td->wwv_clock ? wwv_clock_now(td->wwv_clock) : (wwv_time_t){0};
+                    
                     if (td->csv_file) {
-                        char time_str[16];
-                        get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
-                        wwv_time_t wwv = td->wwv_clock ? wwv_clock_now(td->wwv_clock) : (wwv_time_t){0};
                         fprintf(td->csv_file, "%s,%.1f,M%d,%s,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
                                 time_str, timestamp_ms, td->markers_detected,
                                 wwv_event_name(wwv.expected_event),
@@ -413,6 +415,13 @@ static void run_state_machine(tick_detector_t *td) {
                                 td->noise_floor, td->corr_peak, corr_ratio);
                         fflush(td->csv_file);
                     }
+                    
+                    /* UDP telemetry */
+                    telem_sendf(TELEM_TICKS, "%s,%.1f,M%d,%s,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f",
+                                time_str, timestamp_ms, td->markers_detected,
+                                wwv_event_name(wwv.expected_event),
+                                td->tick_peak_energy, duration_ms, interval_ms, 0.0f,
+                                td->noise_floor, td->corr_peak, corr_ratio);
 
                     td->last_marker_frame = td->tick_start_frame;
                     /* Don't update last_tick_frame - marker shouldn't affect tick timing */
@@ -460,11 +469,12 @@ static void run_state_machine(tick_detector_t *td) {
                            timestamp_ms / 1000.0f, td->ticks_detected,
                            interval_ms, avg_interval_ms, corr_ratio, indicator);
 
-                    /* CSV logging */
+                    /* CSV logging and telemetry */
+                    char time_str[16];
+                    get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
+                    wwv_time_t wwv = td->wwv_clock ? wwv_clock_now(td->wwv_clock) : (wwv_time_t){0};
+                    
                     if (td->csv_file) {
-                        char time_str[16];
-                        get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
-                        wwv_time_t wwv = td->wwv_clock ? wwv_clock_now(td->wwv_clock) : (wwv_time_t){0};
                         fprintf(td->csv_file, "%s,%.1f,%d,%s,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f\n",
                                 time_str, timestamp_ms, td->ticks_detected,
                                 wwv_event_name(wwv.expected_event),
@@ -472,6 +482,13 @@ static void run_state_machine(tick_detector_t *td) {
                                 td->noise_floor, td->corr_peak, corr_ratio);
                         fflush(td->csv_file);
                     }
+                    
+                    /* UDP telemetry */
+                    telem_sendf(TELEM_TICKS, "%s,%.1f,%d,%s,%.6f,%.1f,%.0f,%.0f,%.6f,%.2f,%.1f",
+                                time_str, timestamp_ms, td->ticks_detected,
+                                wwv_event_name(wwv.expected_event),
+                                td->tick_peak_energy, duration_ms, interval_ms, avg_interval_ms,
+                                td->noise_floor, td->corr_peak, corr_ratio);
 
                     td->last_tick_frame = td->tick_start_frame;
 

@@ -16,6 +16,7 @@
  */
 
 #include "bcd_time_detector.h"
+#include "waterfall_telemetry.h"
 #include "kiss_fft.h"
 #include "version.h"
 #include <stdlib.h>
@@ -223,16 +224,23 @@ static void run_state_machine(bcd_time_detector_t *td) {
                     printf("[BCD_TIME] Pulse #%d at %.1fms  dur=%.0fms  SNR=%.1fdB\n",
                            td->pulses_detected, timestamp_ms, duration_ms, snr_db);
 
-                    /* CSV logging */
+                    /* CSV logging and telemetry */
+                    char time_str[16];
+                    get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
+                    
                     if (td->csv_file) {
-                        char time_str[16];
-                        get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
                         fprintf(td->csv_file, "%s,%.1f,%d,%.6f,%.0f,%.6f,%.1f\n",
                                 time_str, timestamp_ms, td->pulses_detected,
                                 td->pulse_peak_energy, duration_ms,
                                 td->noise_floor, snr_db);
                         fflush(td->csv_file);
                     }
+                    
+                    /* UDP telemetry */
+                    telem_sendf(TELEM_BCDS, "TIME,%s,%.1f,%d,%.6f,%.0f,%.6f,%.1f",
+                                time_str, timestamp_ms, td->pulses_detected,
+                                td->pulse_peak_energy, duration_ms,
+                                td->noise_floor, snr_db);
 
                     td->last_pulse_frame = td->pulse_start_frame;
 

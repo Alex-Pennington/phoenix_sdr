@@ -132,6 +132,7 @@ typedef struct {
 /* TCP state */
 static bool g_tcp_mode = true;
 static bool g_stdin_mode = false;
+static bool g_log_csv = false;  /* Enable CSV logging (default: UDP only) */
 static char g_tcp_host[256] = "localhost";
 static int g_iq_port = DEFAULT_IQ_PORT;
 static socket_t g_iq_sock = SOCKET_INVALID;
@@ -539,6 +540,7 @@ static void print_usage(const char *progname) {
     printf("Usage: %s [options]\n", progname);
     printf("  -t, --tcp HOST[:PORT]   Connect to SDR server I/Q port (default localhost:%d)\n", DEFAULT_IQ_PORT);
     printf("  --stdin             Read from stdin instead of TCP\n");
+    printf("  -l, --log-csv       Enable CSV file logging (default: UDP telemetry only)\n");
     printf("  -h, --help          Show this help\n");
 }
 
@@ -578,13 +580,7 @@ static tick_correlator_t *g_tick_correlator = NULL;
 static void on_tick_marker(const tick_marker_event_t *event, void *user_data) {
     (void)user_data;
 
-    /* Feed sync detector */
-    if (g_sync_detector) {
-        sync_detector_tick_marker(g_sync_detector, event->timestamp_ms,
-                                   event->duration_ms, event->corr_ratio);
-    }
-
-    /* Set epoch from tick detector's precise measurement.
+    /* Calculate leading edge (true second boundary).
      * Research formula: T_true = T_trailing - D_known - T_filter_delay
      * T_filter_delay = 3.0ms total group delay:
      *   - 0.32ms: 2nd order Butterworth lowpass (fc=5kHz @ f=1kHz)
@@ -592,10 +588,20 @@ static void on_tick_marker(const tick_marker_event_t *event, void *user_data) {
      *   - 0.13ms: 3-stage decimation FIR cascade
      * Hysteresis correction not applicable (energy-based FFT, not threshold-crossing).
      * See: docs/Precise pulse timing recovery from WWV time signals.md */
+    float leading_edge_ms = event->timestamp_ms - event->duration_ms - 3.0f;
+
+    /* Feed sync detector with LEADING EDGE (actual second boundary).
+     * BCD correlator uses sync's last_marker_ms as anchor for 1-second windows.
+     * Passing trailing edge would misalign windows by ~800ms (pulse duration). */
+    if (g_sync_detector) {
+        sync_detector_tick_marker(g_sync_detector, leading_edge_ms,
+                                   event->duration_ms, event->corr_ratio);
+    }
+
+    /* Set epoch from tick detector's precise measurement */
     if (g_tick_detector) {
-        float leading_edge_ms = event->timestamp_ms - event->duration_ms - 3.0f;
-        printf("[EPOCH] TICK trailing=%.1fms dur=%.0fms leading=%.1fms\n",
-               event->timestamp_ms, event->duration_ms, leading_edge_ms);
+        telem_console("[EPOCH] TICK trailing=%.1fms dur=%.0fms leading=%.1fms\n",
+                      event->timestamp_ms, event->duration_ms, leading_edge_ms);
 
         tick_detector_set_epoch(g_tick_detector, leading_edge_ms);
 
@@ -664,15 +670,15 @@ static void on_marker_event(const marker_event_t *event, void *user_data) {
         if (have_tick && tick_duration_ms > 0.0f) {
             /* Tick detector: trailing edge - actual duration - filter delay (3.0ms) */
             leading_edge_ms = tick_timestamp_ms - tick_duration_ms - 3.0f;
-            printf("[EPOCH] TICK trailing=%.1fms dur=%.0fms leading=%.1fms\n",
-                   tick_timestamp_ms, tick_duration_ms, leading_edge_ms);
+            telem_console("[EPOCH] TICK trailing=%.1fms dur=%.0fms leading=%.1fms\n",
+                          tick_timestamp_ms, tick_duration_ms, leading_edge_ms);
         } else {
             /* Slow marker: trailing edge - estimated total delay - filter delay
              * (800ms pulse + ~400ms accumulator delay = 1200ms + 3ms filter) */
             #define SLOW_MARKER_TOTAL_DELAY_MS  1200.0f
             leading_edge_ms = event->timestamp_ms - SLOW_MARKER_TOTAL_DELAY_MS - 3.0f;
-            printf("[EPOCH] SLOW trailing=%.1fms total_delay=%.0fms leading=%.1fms\n",
-                   event->timestamp_ms, SLOW_MARKER_TOTAL_DELAY_MS, leading_edge_ms);
+            telem_console("[EPOCH] SLOW trailing=%.1fms total_delay=%.0fms leading=%.1fms\n",
+                          event->timestamp_ms, SLOW_MARKER_TOTAL_DELAY_MS, leading_edge_ms);
         }
 
         tick_detector_set_epoch(g_tick_detector, leading_edge_ms);
@@ -805,6 +811,8 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--stdin") == 0) {
             g_stdin_mode = true;
             g_tcp_mode = false;
+        } else if (strcmp(argv[i], "--log-csv") == 0 || strcmp(argv[i], "-l") == 0) {
+            g_log_csv = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -983,13 +991,13 @@ int main(int argc, char *argv[]) {
     printf("Resolution: %.1f Hz/bin, %.1f ms effective update\n", DISPLAY_HZ_PER_BIN, DISPLAY_EFFECTIVE_MS);
     printf("Keys: +/- gain, D=detect toggle, S=stats, Q/Esc quit\n\n");
 
-    g_tick_detector = tick_detector_create("wwv_ticks.csv");
+    g_tick_detector = tick_detector_create(g_log_csv ? "wwv_ticks.csv" : NULL);
     if (!g_tick_detector) {
         fprintf(stderr, "Failed to create tick detector\n");
         return 1;
     }
 
-    g_marker_detector = marker_detector_create("wwv_markers.csv");
+    g_marker_detector = marker_detector_create(g_log_csv ? "wwv_markers.csv" : NULL);
     if (!g_marker_detector) {
         fprintf(stderr, "Failed to create marker detector\n");
         return 1;
@@ -1014,7 +1022,7 @@ int main(int argc, char *argv[]) {
 
     /* DEPRECATED: Create BCD envelope tracker (100 Hz)
      * Use bcd_time_detector + bcd_freq_detector + bcd_correlator instead */
-    g_bcd_envelope = bcd_envelope_create("wwv_bcd.csv");
+    g_bcd_envelope = bcd_envelope_create(g_log_csv ? "wwv_bcd.csv" : NULL);
     if (!g_bcd_envelope) {
         fprintf(stderr, "Failed to create BCD envelope tracker\n");
         return 1;
@@ -1031,9 +1039,9 @@ int main(int argc, char *argv[]) {
      * bcd_decoder_set_symbol_callback(g_bcd_decoder, on_bcd_symbol, NULL); */
 
     /* Create BCD dual-path detectors (robust symbol demodulator) */
-    g_bcd_time_detector = bcd_time_detector_create("logs/wwv_bcd_time.csv");
-    g_bcd_freq_detector = bcd_freq_detector_create("logs/wwv_bcd_freq.csv");
-    g_bcd_correlator = bcd_correlator_create("logs/wwv_bcd_corr.csv");
+    g_bcd_time_detector = bcd_time_detector_create(g_log_csv ? "logs/wwv_bcd_time.csv" : NULL);
+    g_bcd_freq_detector = bcd_freq_detector_create(g_log_csv ? "logs/wwv_bcd_freq.csv" : NULL);
+    g_bcd_correlator = bcd_correlator_create(g_log_csv ? "logs/wwv_bcd_corr.csv" : NULL);
     if (g_bcd_time_detector && g_bcd_freq_detector && g_bcd_correlator) {
         /* Wire time and freq detectors to correlator via wrapper callbacks */
         bcd_time_detector_set_callback(g_bcd_time_detector, on_bcd_time_event, g_bcd_correlator);
@@ -1042,7 +1050,7 @@ int main(int argc, char *argv[]) {
     }
 
     /* Create marker correlator and wire orphaned marker callback */
-    g_marker_correlator = marker_correlator_create("wwv_markers_corr.csv");
+    g_marker_correlator = marker_correlator_create(g_log_csv ? "wwv_markers_corr.csv" : NULL);
     if (!g_marker_correlator) {
         fprintf(stderr, "Failed to create marker correlator\n");
         return 1;
@@ -1050,7 +1058,7 @@ int main(int argc, char *argv[]) {
     marker_correlator_set_callback(g_marker_correlator, on_orphaned_marker, NULL);
 
     /* Create sync detector and wire up callbacks */
-    g_sync_detector = sync_detector_create("wwv_sync.csv");
+    g_sync_detector = sync_detector_create(g_log_csv ? "wwv_sync.csv" : NULL);
     if (!g_sync_detector) {
         fprintf(stderr, "Failed to create sync detector\n");
         return 1;
@@ -1066,39 +1074,26 @@ int main(int argc, char *argv[]) {
     }
 
     /* Create tick correlator */
-    g_tick_correlator = tick_correlator_create("wwv_tick_corr.csv");
+    g_tick_correlator = tick_correlator_create(g_log_csv ? "wwv_tick_corr.csv" : NULL);
 
-    g_channel_csv = fopen("wwv_channel.csv", "w");
-    if (g_channel_csv) {
-        fprintf(g_channel_csv, "# Phoenix SDR WWV Channel Log v%s\n", PHOENIX_VERSION_FULL);
-        fprintf(g_channel_csv, "time,timestamp_ms,carrier_db,snr_db,sub500_db,sub600_db,tone1000_db,noise_db,quality\n");
-    }
+    /* g_channel_csv removed - use UDP telemetry (TELEM_CHANNEL) instead */
 
-    g_subcarrier_csv = fopen("wwv_subcarrier.csv", "w");
-    if (g_subcarrier_csv) {
-        time_t now = time(NULL);
-        char time_str[64];
-        strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", localtime(&now));
-        fprintf(g_subcarrier_csv, "# Phoenix SDR WWV Subcarrier Log v%s\n", PHOENIX_VERSION_FULL);
-        fprintf(g_subcarrier_csv, "# Started: %s\n", time_str);
-        fprintf(g_subcarrier_csv, "time,timestamp_ms,minute,expected,sub500_db,sub600_db,delta_db,detected,match\n");
-        fflush(g_subcarrier_csv);
-    }
+    /* g_subcarrier_csv removed - use UDP telemetry (TELEM_SUBCAR) instead */
 
     /* Create tone trackers for receiver characterization */
-    g_tone_carrier = tone_tracker_create(0.0f, "wwv_carrier.csv");
-    g_tone_500 = tone_tracker_create(500.0f, "wwv_tone_500.csv");
-    g_tone_600 = tone_tracker_create(600.0f, "wwv_tone_600.csv");
+    g_tone_carrier = tone_tracker_create(0.0f, g_log_csv ? "wwv_carrier.csv" : NULL);
+    g_tone_500 = tone_tracker_create(500.0f, g_log_csv ? "wwv_tone_500.csv" : NULL);
+    g_tone_600 = tone_tracker_create(600.0f, g_log_csv ? "wwv_tone_600.csv" : NULL);
 
     /* Initialize UDP telemetry broadcast */
     telem_init(3005);
-    telem_enable(TELEM_CHANNEL | TELEM_CARRIER | TELEM_SUBCAR | TELEM_TONE500 | TELEM_TONE600 | TELEM_BCD_ENV | TELEM_BCDS | TELEM_MARKERS | TELEM_SYNC);
+    telem_enable(TELEM_CHANNEL | TELEM_CARRIER | TELEM_SUBCAR | TELEM_TONE500 | TELEM_TONE600 | TELEM_BCD_ENV | TELEM_BCDS | TELEM_MARKERS | TELEM_SYNC | TELEM_CONSOLE | TELEM_TICKS | TELEM_CORR);
 
     /* Output initial sync state to console and telemetry */
-    printf("[SYNC] Startup state: %s (markers=%d, good_intervals=%d)\n",
-           sync_state_name(sync_detector_get_state(g_sync_detector)),
-           sync_detector_get_confirmed_count(g_sync_detector),
-           sync_detector_get_good_intervals(g_sync_detector));
+    telem_console("[SYNC] Startup state: %s (markers=%d, good_intervals=%d)\n",
+                  sync_state_name(sync_detector_get_state(g_sync_detector)),
+                  sync_detector_get_confirmed_count(g_sync_detector),
+                  sync_detector_get_good_intervals(g_sync_detector));
     sync_detector_broadcast_state(g_sync_detector);
 
     /* Initialize flash system and register detectors */
@@ -1510,10 +1505,6 @@ int main(int argc, char *argv[]) {
             float snr_db = tone1000_db - noise_db;
             const char *quality = (snr_db > 15) ? "GOOD" : (snr_db > 8) ? "FAIR" : (snr_db > 3) ? "POOR" : "NONE";
 
-            fprintf(g_channel_csv, "%s,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%s\n",
-                    time_str, timestamp_ms, carrier_db, snr_db, sub500_db, sub600_db, tone1000_db, noise_db, quality);
-            fflush(g_channel_csv);
-
             /* UDP telemetry broadcast */
             telem_sendf(TELEM_CHANNEL, "%s,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%s",
                         time_str, timestamp_ms, carrier_db, snr_db, sub500_db, sub600_db, tone1000_db, noise_db, quality);
@@ -1597,11 +1588,6 @@ int main(int argc, char *argv[]) {
             const char *detected = (delta_db > 3.0f) ? "500Hz" : (delta_db < -3.0f) ? "600Hz" : "NONE";
             const char *match = (strcmp(expected, detected) == 0) ? "YES" :
                                 (strcmp(expected, "NONE") == 0) ? "-" : "NO";
-
-            fprintf(g_subcarrier_csv, "%s,%.1f,%d,%s,%.1f,%.1f,%.1f,%s,%s\n",
-                    time_str, frame_num * DISPLAY_EFFECTIVE_MS, minute,
-                    expected, sub500_db, sub600_db, delta_db, detected, match);
-            fflush(g_subcarrier_csv);
 
             /* UDP telemetry broadcast */
             telem_sendf(TELEM_SUBCAR, "%s,%.1f,%d,%s,%.1f,%.1f,%.1f,%s,%s",
@@ -1707,6 +1693,11 @@ int main(int argc, char *argv[]) {
         SDL_RenderCopy(renderer, texture, NULL, NULL);
         SDL_RenderPresent(renderer);
 
+        /* Flush console telemetry buffer periodically */
+        if ((frame_num % 12) == 0) {
+            telem_console_flush();
+        }
+
         frame_num++;
     }
 
@@ -1730,8 +1721,6 @@ int main(int argc, char *argv[]) {
     tone_tracker_destroy(g_tone_500);
     tone_tracker_destroy(g_tone_600);
     telem_cleanup();
-    if (g_channel_csv) fclose(g_channel_csv);
-    if (g_subcarrier_csv) fclose(g_subcarrier_csv);
 
     if (g_tcp_mode) {
         if (g_iq_sock != SOCKET_INVALID) {

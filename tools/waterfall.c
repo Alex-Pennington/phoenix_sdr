@@ -53,6 +53,7 @@ static const char *wwv_expected_tone(int minute) {
 #include <fcntl.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
 #pragma comment(lib, "ws2_32.lib")
 typedef SOCKET socket_t;
 #define SOCKET_INVALID INVALID_SOCKET
@@ -132,11 +133,13 @@ typedef struct {
 /* TCP state */
 static bool g_tcp_mode = true;
 static bool g_stdin_mode = false;
+static bool g_test_pattern = false;  /* Generate synthetic 1000Hz test tone */
 static bool g_log_csv = false;  /* Enable CSV logging (default: UDP only) */
 static char g_tcp_host[256] = "localhost";
 static int g_iq_port = DEFAULT_IQ_PORT;
 static socket_t g_iq_sock = SOCKET_INVALID;
 static uint32_t g_tcp_sample_rate = 2000000;
+static uint64_t g_test_sample_count = 0;  /* Phase accumulator for test pattern */
 static uint32_t g_tcp_sample_format = IQ_FORMAT_S16;
 static uint64_t g_tcp_center_freq = 15000000;
 static uint32_t g_tcp_gain_reduction = 0;
@@ -275,11 +278,15 @@ static int g_iq_buffer_idx = 0;
  * Configuration - DUAL PATH ARCHITECTURE
  *============================================================================*/
 
-/* Window dimensions */
-#define WATERFALL_WIDTH 1024
-#define BUCKET_WIDTH    200
-#define WINDOW_WIDTH    (WATERFALL_WIDTH + BUCKET_WIDTH)
-#define WINDOW_HEIGHT   600
+/* Window dimensions - can be overridden via command line */
+#define DEFAULT_WATERFALL_WIDTH 1024
+#define DEFAULT_BUCKET_WIDTH    200
+#define DEFAULT_WINDOW_HEIGHT   600
+
+static int g_waterfall_width = DEFAULT_WATERFALL_WIDTH;
+static int g_bucket_width = DEFAULT_BUCKET_WIDTH;
+static int g_window_width = DEFAULT_WATERFALL_WIDTH + DEFAULT_BUCKET_WIDTH;
+static int g_window_height = DEFAULT_WINDOW_HEIGHT;
 
 /*----------------------------------------------------------------------------
  * DETECTOR PATH (unchanged from original)
@@ -540,6 +547,9 @@ static void print_usage(const char *progname) {
     printf("Usage: %s [options]\n", progname);
     printf("  -t, --tcp HOST[:PORT]   Connect to SDR server I/Q port (default localhost:%d)\n", DEFAULT_IQ_PORT);
     printf("  --stdin             Read from stdin instead of TCP\n");
+    printf("  --test-pattern      Generate synthetic 1000Hz test tone (no SDR needed)\n");
+    printf("  -w, --width WIDTH   Set waterfall width (default: %d)\n", DEFAULT_WATERFALL_WIDTH);
+    printf("  -H, --height HEIGHT Set window height (default: %d)\n", DEFAULT_WINDOW_HEIGHT);
     printf("  -l, --log-csv       Enable CSV file logging (default: UDP telemetry only)\n");
     printf("  -h, --help          Show this help\n");
 }
@@ -807,10 +817,23 @@ int main(int argc, char *argv[]) {
         if ((strcmp(argv[i], "--tcp") == 0 || strcmp(argv[i], "-t") == 0) && i + 1 < argc) {
             g_tcp_mode = true;
             g_stdin_mode = false;
+            g_test_pattern = false;
             parse_tcp_arg(argv[++i]);
         } else if (strcmp(argv[i], "--stdin") == 0) {
             g_stdin_mode = true;
             g_tcp_mode = false;
+            g_test_pattern = false;
+        } else if (strcmp(argv[i], "--test-pattern") == 0) {
+            g_test_pattern = true;
+            g_tcp_mode = false;
+            g_stdin_mode = false;
+        } else if ((strcmp(argv[i], "--width") == 0 || strcmp(argv[i], "-w") == 0) && i + 1 < argc) {
+            g_waterfall_width = atoi(argv[++i]);
+            if (g_waterfall_width < 400) g_waterfall_width = 400;  /* Minimum */
+            g_window_width = g_waterfall_width + g_bucket_width;
+        } else if ((strcmp(argv[i], "--height") == 0 || strcmp(argv[i], "-H") == 0) && i + 1 < argc) {
+            g_window_height = atoi(argv[++i]);
+            if (g_window_height < 300) g_window_height = 300;  /* Minimum */
         } else if (strcmp(argv[i], "--log-csv") == 0 || strcmp(argv[i], "-l") == 0) {
             g_log_csv = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -821,7 +844,9 @@ int main(int argc, char *argv[]) {
 
     print_version("Phoenix SDR - Waterfall");
 
-    if (g_tcp_mode) {
+    if (g_test_pattern) {
+        printf("Test Pattern Mode: Generating synthetic 1000Hz tone\n");
+    } else if (g_tcp_mode) {
         printf("TCP Mode: Connecting to %s:%d\n", g_tcp_host, g_iq_port);
 
         if (!tcp_init()) {
@@ -914,10 +939,12 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    const char *title = g_test_pattern ? "Waterfall (Test Pattern)" :
+                        g_tcp_mode ? "Waterfall (TCP)" : "Waterfall";
     SDL_Window *window = SDL_CreateWindow(
-        g_tcp_mode ? "Waterfall (TCP)" : "Waterfall",
+        title,
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        WINDOW_WIDTH, WINDOW_HEIGHT,
+        g_window_width, g_window_height,
         SDL_WINDOW_SHOWN
     );
     if (!window) {
@@ -925,6 +952,14 @@ int main(int argc, char *argv[]) {
         SDL_Quit();
         return 1;
     }
+
+#ifdef _WIN32
+    /* Minimize the console window now that GUI is up */
+    HWND console = GetConsoleWindow();
+    if (console) {
+        ShowWindow(console, SW_MINIMIZE);
+    }
+#endif
 
     SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     if (!renderer) {
@@ -938,7 +973,7 @@ int main(int argc, char *argv[]) {
         renderer,
         SDL_PIXELFORMAT_RGB24,
         SDL_TEXTUREACCESS_STREAMING,
-        WINDOW_WIDTH, WINDOW_HEIGHT
+        g_window_width, g_window_height
     );
     if (!texture) {
         fprintf(stderr, "SDL_CreateTexture failed: %s\n", SDL_GetError());
@@ -961,8 +996,8 @@ int main(int argc, char *argv[]) {
     /* Allocate buffers */
     kiss_fft_cpx *fft_in = (kiss_fft_cpx *)malloc(DISPLAY_FFT_SIZE * sizeof(kiss_fft_cpx));
     kiss_fft_cpx *fft_out = (kiss_fft_cpx *)malloc(DISPLAY_FFT_SIZE * sizeof(kiss_fft_cpx));
-    uint8_t *pixels = (uint8_t *)malloc(WINDOW_WIDTH * WINDOW_HEIGHT * 3);
-    float *magnitudes = (float *)malloc(WATERFALL_WIDTH * sizeof(float));
+    uint8_t *pixels = (uint8_t *)malloc(g_window_width * g_window_height * 3);
+    float *magnitudes = (float *)malloc(g_waterfall_width * sizeof(float));
 
     /* Display path buffer (12 kHz, 2048 samples for FFT) */
     g_display_buffer = (iq_sample_t *)malloc(DISPLAY_FFT_SIZE * sizeof(iq_sample_t));
@@ -980,13 +1015,13 @@ int main(int argc, char *argv[]) {
     g_display_new_samples = 0;
     memset(g_iq_buffer, 0, DISPLAY_FFT_SIZE * sizeof(iq_sample_t));
     g_iq_buffer_idx = 0;
-    memset(pixels, 0, WINDOW_WIDTH * WINDOW_HEIGHT * 3);
+    memset(pixels, 0, g_window_width * g_window_height * 3);
 
     /* Blackman-Harris window for display FFT (better sidelobe suppression) */
     float *window_func = (float *)malloc(DISPLAY_FFT_SIZE * sizeof(float));
     generate_blackman_harris(window_func, DISPLAY_FFT_SIZE);
 
-    printf("\nWaterfall ready. Window: %dx%d\n", WINDOW_WIDTH, WINDOW_HEIGHT);
+    printf("\nWaterfall ready. Window: %dx%d\n", g_window_width, g_window_height);
     printf("Display: %d-pt FFT, Blackman-Harris, 50%% overlap\n", DISPLAY_FFT_SIZE);
     printf("Resolution: %.1f Hz/bin, %.1f ms effective update\n", DISPLAY_HZ_PER_BIN, DISPLAY_EFFECTIVE_MS);
     printf("Keys: +/- gain, D=detect toggle, S=stats, Q/Esc quit\n\n");
@@ -1156,7 +1191,18 @@ int main(int argc, char *argv[]) {
         bool got_samples = false;
         int samples_collected = 0;
 
-        if (g_tcp_mode) {
+        if (g_test_pattern) {
+            /* Generate synthetic 1000Hz tone: I = cos(2πft), Q = sin(2πft) */
+            int num_samples = DISPLAY_OVERLAP;
+            for (int i = 0; i < num_samples; i++) {
+                double phase = 2.0 * M_PI * 1000.0 * g_test_sample_count / g_tcp_sample_rate;
+                samples[i * 2]     = (int16_t)(cos(phase) * 16384);  /* I channel */
+                samples[i * 2 + 1] = (int16_t)(sin(phase) * 16384);  /* Q channel */
+                g_test_sample_count++;
+            }
+            samples_collected = num_samples;
+            got_samples = true;
+        } else if (g_tcp_mode) {
             while (samples_collected < DISPLAY_OVERLAP && running) {
                 uint32_t magic;
                 recv_result_t result = tcp_recv_exact_ex(g_iq_sock, &magic, 4);
@@ -1400,9 +1446,9 @@ int main(int argc, char *argv[]) {
 
         /* Calculate magnitudes with FFT shift (DC in center) */
         float bin_hz = DISPLAY_HZ_PER_BIN;
-        for (int i = 0; i < WATERFALL_WIDTH; i++) {
+        for (int i = 0; i < g_waterfall_width; i++) {
             /* Map pixel to frequency: left = -ZOOM_MAX_HZ, center = 0 (DC), right = +ZOOM_MAX_HZ */
-            float freq = ((float)i / WATERFALL_WIDTH - 0.5f) * 2.0f * ZOOM_MAX_HZ;
+            float freq = ((float)i / g_waterfall_width - 0.5f) * 2.0f * ZOOM_MAX_HZ;
 
             int bin;
             if (freq >= 0) {
@@ -1440,12 +1486,12 @@ int main(int argc, char *argv[]) {
         }
 
         /* Scroll waterfall down by 1 row */
-        memmove(pixels + WINDOW_WIDTH * 3,
+        memmove(pixels + g_window_width * 3,
                 pixels,
-                WINDOW_WIDTH * (WINDOW_HEIGHT - 1) * 3);
+                g_window_width * (g_window_height - 1) * 3);
 
         /* Draw new row at top */
-        for (int x = 0; x < WATERFALL_WIDTH; x++) {
+        for (int x = 0; x < g_waterfall_width; x++) {
             uint8_t r, g, b;
             magnitude_to_rgb(magnitudes[x], g_peak_db, g_floor_db, &r, &g, &b);
             pixels[x * 3 + 0] = r;
@@ -1497,7 +1543,7 @@ int main(int argc, char *argv[]) {
             strftime(time_str, sizeof(time_str), "%H:%M:%S", tm_info);
 
             float timestamp_ms = frame_num * DISPLAY_EFFECTIVE_MS;
-            float carrier_db = 20.0f * log10f(magnitudes[WATERFALL_WIDTH/2] + 1e-10f);
+            float carrier_db = 20.0f * log10f(magnitudes[g_waterfall_width/2] + 1e-10f);
             float sub500_db = 20.0f * log10f(g_bucket_energy[2] + 1e-10f);  /* 500 Hz */
             float sub600_db = 20.0f * log10f(g_bucket_energy[3] + 1e-10f);  /* 600 Hz */
             float tone1000_db = 20.0f * log10f(g_bucket_energy[4] + 1e-10f); /* 1000 Hz */
@@ -1596,16 +1642,16 @@ int main(int argc, char *argv[]) {
         }
 
         /* Draw flash bands on waterfall for all registered detectors */
-        flash_draw_waterfall_bands(pixels, 0, WATERFALL_WIDTH, WINDOW_WIDTH, ZOOM_MAX_HZ);
+        flash_draw_waterfall_bands(pixels, 0, g_waterfall_width, g_window_width, ZOOM_MAX_HZ);
 
         /* === RIGHT PANEL: Bucket energy bars === */
-        int bar_width = BUCKET_WIDTH / NUM_TICK_FREQS;
+        int bar_width = g_bucket_width / NUM_TICK_FREQS;
         int bar_gap = 2;
 
         /* Clear right panel */
-        for (int y = 0; y < WINDOW_HEIGHT; y++) {
-            for (int x = WATERFALL_WIDTH; x < WINDOW_WIDTH; x++) {
-                int idx = (y * WINDOW_WIDTH + x) * 3;
+        for (int y = 0; y < g_window_height; y++) {
+            for (int x = g_waterfall_width; x < g_window_width; x++) {
+                int idx = (y * g_window_width + x) * 3;
                 pixels[idx + 0] = 20;  /* Dark gray background */
                 pixels[idx + 1] = 20;
                 pixels[idx + 2] = 20;
@@ -1614,7 +1660,7 @@ int main(int argc, char *argv[]) {
 
         /* Draw each bucket bar */
         for (int f = 0; f < NUM_TICK_FREQS; f++) {
-            int bar_x = WATERFALL_WIDTH + f * bar_width + bar_gap;
+            int bar_x = g_waterfall_width + f * bar_width + bar_gap;
             int bar_w = bar_width - bar_gap * 2;
 
             /* Use waterfall's tracked dB scale */
@@ -1623,22 +1669,22 @@ int main(int argc, char *argv[]) {
             if (norm < 0.0f) norm = 0.0f;
             if (norm > 1.0f) norm = 1.0f;
 
-            int bar_height = (int)(norm * WINDOW_HEIGHT);
+            int bar_height = (int)(norm * g_window_height);
 
             uint8_t r, g, b;
 
             /* Check if any detector wants to flash this bar */
             if (flash_get_bar_override(f, &r, &g, &b)) {
-                bar_height = WINDOW_HEIGHT;
+                bar_height = g_window_height;
             } else {
                 /* Color based on energy level */
                 magnitude_to_rgb(g_bucket_energy[f], -20.0f, -80.0f, &r, &g, &b);
             }
 
             /* Draw bar from bottom up */
-            for (int y = WINDOW_HEIGHT - bar_height; y < WINDOW_HEIGHT; y++) {
-                for (int x = bar_x; x < bar_x + bar_w && x < WINDOW_WIDTH; x++) {
-                    int idx = (y * WINDOW_WIDTH + x) * 3;
+            for (int y = g_window_height - bar_height; y < g_window_height; y++) {
+                for (int x = bar_x; x < bar_x + bar_w && x < g_window_width; x++) {
+                    int idx = (y * g_window_width + x) * 3;
                     pixels[idx + 0] = r;
                     pixels[idx + 1] = g;
                     pixels[idx + 2] = b;
@@ -1652,12 +1698,12 @@ int main(int argc, char *argv[]) {
                 float thresh_norm = (thresh_db - (-80.0f)) / 60.0f;
                 if (thresh_norm < 0.0f) thresh_norm = 0.0f;
                 if (thresh_norm > 1.0f) thresh_norm = 1.0f;
-                int thresh_y = WINDOW_HEIGHT - (int)(thresh_norm * WINDOW_HEIGHT);
+                int thresh_y = g_window_height - (int)(thresh_norm * g_window_height);
                 for (int dy = -1; dy <= 1; dy++) {
                     int y = thresh_y + dy;
-                    if (y >= 0 && y < WINDOW_HEIGHT) {
-                        for (int x = bar_x; x < bar_x + bar_w && x < WINDOW_WIDTH; x++) {
-                            int idx = (y * WINDOW_WIDTH + x) * 3;
+                    if (y >= 0 && y < g_window_height) {
+                        for (int x = bar_x; x < bar_x + bar_w && x < g_window_width; x++) {
+                            int idx = (y * g_window_width + x) * 3;
                             pixels[idx + 0] = 0;
                             pixels[idx + 1] = 255;
                             pixels[idx + 2] = 255;
@@ -1670,12 +1716,12 @@ int main(int argc, char *argv[]) {
                 float noise_norm = (noise_db - (-80.0f)) / 60.0f;
                 if (noise_norm < 0.0f) noise_norm = 0.0f;
                 if (noise_norm > 1.0f) noise_norm = 1.0f;
-                int noise_y = WINDOW_HEIGHT - (int)(noise_norm * WINDOW_HEIGHT);
+                int noise_y = g_window_height - (int)(noise_norm * g_window_height);
                 for (int dy = -1; dy <= 1; dy++) {
                     int y = noise_y + dy;
-                    if (y >= 0 && y < WINDOW_HEIGHT) {
-                        for (int x = bar_x; x < bar_x + bar_w && x < WINDOW_WIDTH; x++) {
-                            int idx = (y * WINDOW_WIDTH + x) * 3;
+                    if (y >= 0 && y < g_window_height) {
+                        for (int x = bar_x; x < bar_x + bar_w && x < g_window_width; x++) {
+                            int idx = (y * g_window_width + x) * 3;
                             pixels[idx + 0] = 0;
                             pixels[idx + 1] = 255;
                             pixels[idx + 2] = 0;
@@ -1688,7 +1734,7 @@ int main(int argc, char *argv[]) {
         /* Decrement flash counters for all registered sources */
         flash_decrement_all();
 
-        SDL_UpdateTexture(texture, NULL, pixels, WINDOW_WIDTH * 3);
+        SDL_UpdateTexture(texture, NULL, pixels, g_window_width * 3);
         SDL_RenderClear(renderer);
         SDL_RenderCopy(renderer, texture, NULL, NULL);
         SDL_RenderPresent(renderer);
@@ -1722,7 +1768,7 @@ int main(int argc, char *argv[]) {
     tone_tracker_destroy(g_tone_600);
     telem_cleanup();
 
-    if (g_tcp_mode) {
+    if (g_tcp_mode && !g_test_pattern) {
         if (g_iq_sock != SOCKET_INVALID) {
             socket_close(g_iq_sock);
         }

@@ -263,7 +263,6 @@ try {
 
     Write-Status "Linking waterfall.exe..."
     $waterfallLdflags = @(
-        "-mwindows",        # Suppress console window
         "-L`"$SDL2Lib`"",
         "-lmingw32",
         "-lSDL2main",

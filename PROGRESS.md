@@ -146,12 +146,24 @@ cd D:\claude_sandbox\phoenix_sdr
 
 **Usage:**
 ```powershell
-# Default: UDP telemetry only (no CSV files)
+# Standard TCP mode (UDP telemetry only, no CSV files)
 .\bin\waterfall.exe --tcp localhost:4536
 
 # Optional: Enable CSV logging for debugging
 .\bin\waterfall.exe --tcp localhost:4536 --log-csv
+
+# Test pattern mode (no SDR hardware needed)
+.\bin\waterfall.exe --test-pattern
+
+# Custom window size
+.\bin\waterfall.exe --tcp localhost:4536 -w 800 -H 400
 ```
+
+**New command-line options:**
+- `--test-pattern` — Generate synthetic 1000Hz tone for GUI testing
+- `-w, --width WIDTH` — Set waterfall width in pixels (default: 1024, min: 400)
+- `-H, --height HEIGHT` — Set window height in pixels (default: 600, min: 300)
+- Console window automatically minimizes after SDL window opens
 
 ### Dec 14 - Morning/Afternoon
 - Fixed waterfall display (was broken by sliding window changes)

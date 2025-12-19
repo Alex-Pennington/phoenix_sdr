@@ -52,18 +52,37 @@ This is a smoke test for our SDR capture chain. If we can reliably detect WWV ti
 
 ## Running the Test
 
-Open PowerShell in the Phoenix SDR folder and run:
+### TCP Mode (Recommended)
+
+Start the SDR server in one terminal:
+```powershell
+.\bin\sdr_server.exe
+```
+
+Start the waterfall in another terminal:
+```powershell
+.\bin\waterfall.exe --tcp localhost:4536
+```
+
+### Test Pattern Mode (No SDR Required)
+
+To test the GUI without hardware:
+```powershell
+.\bin\waterfall.exe --test-pattern
+```
+
+### Legacy Stdin Mode
 
 ```powershell
 # Night reception (5 MHz) - try this first if after sunset
-cmd /c ".\bin\simple_am_receiver.exe -f 5.000450 -g 59 -l 0 -o | .\bin\waterfall.exe"
+cmd /c ".\bin\simple_am_receiver.exe -f 5.000450 -g 59 -l 0 -o | .\bin\waterfall.exe --stdin"
 
 # Daytime reception (10 MHz) - most reliable during day
-cmd /c ".\bin\simple_am_receiver.exe -f 10.000450 -g 50 -l 2 -o | .\bin\waterfall.exe"
+cmd /c ".\bin\simple_am_receiver.exe -f 10.000450 -g 50 -l 2 -o | .\bin\waterfall.exe --stdin"
 
 # Alternative frequencies
 # 15 MHz (daytime, long distance)
-cmd /c ".\bin\simple_am_receiver.exe -f 15.000450 -g 45 -l 3 -o | .\bin\waterfall.exe"
+cmd /c ".\bin\simple_am_receiver.exe -f 15.000450 -g 45 -l 3 -o | .\bin\waterfall.exe --stdin"
 ```
 
 ---

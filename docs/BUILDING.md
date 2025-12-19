@@ -155,9 +155,24 @@ Opens control port (4535) and I/Q data port (4536).
 
 ### Start Waterfall (separate terminal)
 ```powershell
-.\bin\waterfall.exe
+# Standard TCP mode
+.\bin\waterfall.exe --tcp localhost:4536
+
+# Test pattern (no SDR needed)
+.\bin\waterfall.exe --test-pattern
+
+# Custom window size
+.\bin\waterfall.exe --tcp localhost:4536 -w 800 -H 400
 ```
-Connects to SDR server and displays spectrum.
+
+**Command-line options:**
+- `-t, --tcp HOST[:PORT]` — Connect to SDR server (default: localhost:4536)
+- `--stdin` — Read from stdin instead of TCP
+- `--test-pattern` — Generate synthetic 1000Hz test tone (no SDR needed)
+- `-w, --width WIDTH` — Set waterfall width in pixels (default: 1024, min: 400)
+- `-H, --height HEIGHT` — Set window height in pixels (default: 600, min: 300)
+- `-l, --log-csv` — Enable CSV file logging (default: UDP telemetry only)
+- `-h, --help` — Show help message
 
 ### Keyboard Controls (Waterfall)
 

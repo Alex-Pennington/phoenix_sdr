@@ -61,6 +61,33 @@ The waterfall window has two panels:
 
 Split-screen display with automatic tick detection.
 
+### Command-Line Options
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| -t, --tcp HOST[:PORT] | Connect to SDR server I/Q port | localhost:4536 |
+| --stdin | Read from stdin instead of TCP | - |
+| --test-pattern | Generate synthetic 1000Hz test tone | - |
+| -w, --width WIDTH | Set waterfall width in pixels | 1024 |
+| -H, --height HEIGHT | Set window height in pixels | 600 |
+| -l, --log-csv | Enable CSV file logging | UDP only |
+| -h, --help | Show help message | - |
+
+**Examples:**
+```powershell
+# Standard TCP mode
+.\bin\waterfall.exe --tcp localhost:4536
+
+# Custom window size
+.\bin\waterfall.exe --tcp localhost:4536 -w 800 -H 400
+
+# Test pattern (no SDR needed)
+.\bin\waterfall.exe --test-pattern
+
+# Enable CSV logging
+.\bin\waterfall.exe --tcp localhost:4536 --log-csv
+```
+
 ### Keyboard Controls
 
 | Key | Function |

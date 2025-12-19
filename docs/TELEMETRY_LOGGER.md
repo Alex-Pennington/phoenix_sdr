@@ -35,7 +35,7 @@ Options:
 ## Examples
 
 ```powershell
-# Log all channels to current directory
+# Log all channels (runs in system tray)
 .\bin\telem_logger.exe
 
 # Log to logs/ folder with console output
@@ -47,8 +47,27 @@ Options:
 # Log carrier and tone trackers to custom directory
 .\bin\telem_logger.exe -c CARR,T500,T600 -o frequency_logs/
 
+# Console-only mode (no system tray)
+.\bin\telem_logger.exe --no-tray -v
+
 # Custom port (if waterfall configured differently)
 .\bin\telem_logger.exe -p 3010
+```
+
+## System Tray Features
+
+When running in system tray mode (default on Windows):
+
+| Feature | Description |
+|---------|-------------|
+| **Tooltip** | Shows message count and active channels |
+| **Pause/Resume** | Temporarily stop logging without closing files |
+| **Open Logs Folder** | Opens Explorer to the output directory |
+| **Exit** | Cleanly shuts down and writes file footers |
+
+To disable the system tray and run as a console application:
+```powershell
+.\bin\telem_logger.exe --no-tray
 ```
 
 ## Output Files

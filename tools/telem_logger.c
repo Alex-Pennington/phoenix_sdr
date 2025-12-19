@@ -66,8 +66,8 @@
 
 /* Known channel prefixes */
 static const char *KNOWN_CHANNELS[] = {
-    "CHAN", "TICK", "MARK", "CARR", "SYNC", "SUBC", 
-    "CORR", "T500", "T600", "BCDE", "BCDS", "SYM", 
+    "CHAN", "TICK", "MARK", "CARR", "SYNC", "SUBC",
+    "CORR", "T500", "T600", "BCDE", "BCDS", "SYM",
     "STATE", "STATUS", NULL
 };
 
@@ -141,26 +141,26 @@ static LRESULT CALLBACK tray_wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
                 POINT pt;
                 GetCursorPos(&pt);
                 HMENU menu = CreatePopupMenu();
-                
+
                 /* Status item (disabled, just for display) */
                 char status[128];
                 snprintf(status, sizeof(status), "Messages: %llu | Channels: %d",
                          (unsigned long long)g_logger.total_messages, g_logger.channel_count);
                 AppendMenuA(menu, MF_STRING | MF_DISABLED, ID_TRAY_STATUS, status);
                 AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
-                
+
                 /* Pause/Resume */
-                AppendMenuA(menu, MF_STRING | (g_paused ? MF_CHECKED : 0), 
+                AppendMenuA(menu, MF_STRING | (g_paused ? MF_CHECKED : 0),
                            ID_TRAY_PAUSE, g_paused ? "Resume Logging" : "Pause Logging");
-                
+
                 /* Open logs folder */
                 if (g_logger.output_dir[0] || g_logger.channel_count > 0) {
                     AppendMenuA(menu, MF_STRING, ID_TRAY_OPEN_LOGS, "Open Logs Folder");
                 }
-                
+
                 AppendMenuA(menu, MF_SEPARATOR, 0, NULL);
                 AppendMenuA(menu, MF_STRING, ID_TRAY_EXIT, "Exit Telemetry Logger");
-                
+
                 SetForegroundWindow(hwnd);
                 TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, NULL);
                 DestroyMenu(menu);
@@ -210,13 +210,13 @@ static LRESULT CALLBACK tray_wnd_proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
 
 static void update_tray_tooltip(void) {
     if (!g_tray_active) return;
-    
+
     if (g_paused) {
-        snprintf(g_nid.szTip, sizeof(g_nid.szTip), 
+        snprintf(g_nid.szTip, sizeof(g_nid.szTip),
                  "Telemetry Logger - PAUSED (%llu msgs)",
                  (unsigned long long)g_logger.total_messages);
     } else {
-        snprintf(g_nid.szTip, sizeof(g_nid.szTip), 
+        snprintf(g_nid.szTip, sizeof(g_nid.szTip),
                  "Telemetry Logger - %llu msgs, %d channels",
                  (unsigned long long)g_logger.total_messages, g_logger.channel_count);
     }
@@ -225,7 +225,7 @@ static void update_tray_tooltip(void) {
 
 static bool init_tray_icon(void) {
     if (!g_tray_enabled) return true;
-    
+
     /* Register window class */
     WNDCLASSA wc = {0};
     wc.lpfnWndProc = tray_wnd_proc;
@@ -326,7 +326,7 @@ static bool extract_channel_prefix(const char *message, char *prefix, size_t pre
         /* Check if message starts with a known prefix */
         for (int i = 0; KNOWN_CHANNELS[i]; i++) {
             size_t plen = strlen(KNOWN_CHANNELS[i]);
-            if (strncmp(message, KNOWN_CHANNELS[i], plen) == 0 && 
+            if (strncmp(message, KNOWN_CHANNELS[i], plen) == 0 &&
                 (message[plen] == ',' || message[plen] == '\0')) {
                 strncpy(prefix, KNOWN_CHANNELS[i], prefix_len - 1);
                 prefix[prefix_len - 1] = '\0';
@@ -335,12 +335,12 @@ static bool extract_channel_prefix(const char *message, char *prefix, size_t pre
         }
         return false;
     }
-    
+
     size_t len = (size_t)(comma - message);
     if (len >= prefix_len || len == 0) {
         return false;
     }
-    
+
     strncpy(prefix, message, len);
     prefix[len] = '\0';
     return true;
@@ -350,7 +350,7 @@ static bool is_channel_filtered(const char *channel) {
     if (!g_logger.filter_enabled) {
         return false;  /* No filter, allow all */
     }
-    
+
     for (int i = 0; i < g_logger.filter_count; i++) {
         if (strcmp(channel, g_logger.filter_channels[i]) == 0) {
             return false;  /* In filter list, allow */
@@ -366,22 +366,22 @@ static channel_log_t *find_or_create_channel(const char *channel) {
             return &g_logger.channels[i];
         }
     }
-    
+
     /* Create new channel */
     if (g_logger.channel_count >= MAX_CHANNELS) {
         fprintf(stderr, "[telem_logger] Warning: Max channels reached, ignoring %s\n", channel);
         return NULL;
     }
-    
+
     channel_log_t *ch = &g_logger.channels[g_logger.channel_count];
     strncpy(ch->name, channel, sizeof(ch->name) - 1);
     ch->name[sizeof(ch->name) - 1] = '\0';
     ch->message_count = 0;
-    
+
     /* Create CSV file */
     char timestamp[32];
     get_timestamp_str(timestamp, sizeof(timestamp));
-    
+
     if (strlen(g_logger.output_dir) > 0) {
         snprintf(ch->csv_path, sizeof(ch->csv_path), "%s\\telem_%s_%s.csv",
                  g_logger.output_dir, channel, timestamp);
@@ -389,28 +389,28 @@ static channel_log_t *find_or_create_channel(const char *channel) {
         snprintf(ch->csv_path, sizeof(ch->csv_path), "telem_%s_%s.csv",
                  channel, timestamp);
     }
-    
+
     ch->csv_file = fopen(ch->csv_path, "w");
     if (!ch->csv_file) {
         fprintf(stderr, "[telem_logger] Error: Cannot create %s\n", ch->csv_path);
         return NULL;
     }
-    
+
     /* Write CSV header comment */
     time_t now = time(NULL);
     fprintf(ch->csv_file, "# Phoenix SDR Telemetry Log - Channel: %s\n", channel);
     fprintf(ch->csv_file, "# Started: %s", ctime(&now));
     fprintf(ch->csv_file, "# Source: UDP port %d\n", g_logger.port);
     fflush(ch->csv_file);
-    
+
     printf("[telem_logger] Created log: %s\n", ch->csv_path);
-    
+
     g_logger.channel_count++;
-    
+
 #ifdef _WIN32
     update_tray_tooltip();
 #endif
-    
+
     return ch;
 }
 
@@ -426,36 +426,36 @@ static bool init_socket(void) {
         return false;
     }
 #endif
-    
+
     g_logger.sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (g_logger.sock == INVALID_SOCKET) {
         fprintf(stderr, "[telem_logger] Failed to create socket\n");
         return false;
     }
-    
+
     /* Allow socket reuse */
     int reuse = 1;
     setsockopt(g_logger.sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse));
-    
+
     /* Bind to port */
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons((u_short)g_logger.port);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    
+
     if (bind(g_logger.sock, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
         fprintf(stderr, "[telem_logger] Failed to bind to port %d\n", g_logger.port);
         closesocket(g_logger.sock);
         return false;
     }
-    
+
     /* Set receive timeout (100ms) for responsive tray updates */
     struct timeval tv;
     tv.tv_sec = 0;
     tv.tv_usec = 100000;  /* 100ms */
     setsockopt(g_logger.sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
-    
+
     printf("[telem_logger] Listening on UDP port %d\n", g_logger.port);
     return true;
 }
@@ -472,17 +472,17 @@ static void cleanup(void) {
             fclose(g_logger.channels[i].csv_file);
         }
     }
-    
+
     /* Close socket */
     if (g_logger.sock != INVALID_SOCKET) {
         closesocket(g_logger.sock);
     }
-    
+
 #ifdef _WIN32
     cleanup_tray_icon();
     WSACleanup();
 #endif
-    
+
     /* Print summary */
     double elapsed = difftime(time(NULL), g_logger.start_time);
     printf("\n[telem_logger] Summary:\n");
@@ -506,7 +506,7 @@ static void process_message(const char *message, size_t len) {
     /* Skip if paused */
     if (g_paused) return;
 #endif
-    
+
     /* Extract channel prefix */
     char channel[MAX_CHANNEL_NAME];
     if (!extract_channel_prefix(message, channel, sizeof(channel))) {
@@ -515,30 +515,30 @@ static void process_message(const char *message, size_t len) {
         }
         return;
     }
-    
+
     /* Check filter */
     if (is_channel_filtered(channel)) {
         return;
     }
-    
+
     /* Find or create channel log */
     channel_log_t *ch = find_or_create_channel(channel);
     if (!ch) {
         return;
     }
-    
+
     /* Write to CSV (the message IS the CSV line) */
     fprintf(ch->csv_file, "%.*s\n", (int)len, message);
     fflush(ch->csv_file);
-    
+
     ch->message_count++;
     g_logger.total_messages++;
-    
+
     /* Verbose output */
     if (g_logger.verbose) {
         printf("[%s] %.*s\n", channel, (int)len, message);
     }
-    
+
     /* Periodic status update */
     if (g_logger.total_messages % 100 == 0) {
         if (g_logger.verbose) {
@@ -556,10 +556,10 @@ static void run_listener(void) {
     char buffer[MAX_MESSAGE_LEN];
     struct sockaddr_in sender;
     socklen_t sender_len = sizeof(sender);
-    
+
     g_logger.running = true;
     g_logger.start_time = time(NULL);
-    
+
 #ifdef _WIN32
     if (g_tray_enabled) {
         printf("[telem_logger] Running in system tray. Right-click icon to exit.\n\n");
@@ -571,16 +571,16 @@ static void run_listener(void) {
     printf("[telem_logger] Waiting for telemetry data...\n");
     printf("[telem_logger] Press Ctrl+C to stop\n\n");
 #endif
-    
+
     while (g_logger.running) {
 #ifdef _WIN32
         /* Process tray messages */
         process_tray_messages();
 #endif
-        
+
         int recv_len = recvfrom(g_logger.sock, buffer, sizeof(buffer) - 1, 0,
                                 (struct sockaddr*)&sender, &sender_len);
-        
+
         if (recv_len == SOCKET_ERROR) {
 #ifdef _WIN32
             int err = WSAGetLastError();
@@ -597,14 +597,14 @@ static void run_listener(void) {
             }
             break;
         }
-        
+
         if (recv_len > 0) {
             /* Null-terminate and strip trailing newline */
             buffer[recv_len] = '\0';
             while (recv_len > 0 && (buffer[recv_len-1] == '\n' || buffer[recv_len-1] == '\r')) {
                 buffer[--recv_len] = '\0';
             }
-            
+
             if (recv_len > 0) {
                 process_message(buffer, (size_t)recv_len);
             }
@@ -626,7 +626,7 @@ int main(int argc, char *argv[]) {
     g_logger.channel_count = 0;
     g_logger.sock = INVALID_SOCKET;
     g_logger.total_messages = 0;
-    
+
     /* Parse arguments */
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -669,11 +669,11 @@ int main(int argc, char *argv[]) {
             return 1;
         }
     }
-    
+
     /* Setup signal handler */
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
-    
+
     /* Print configuration */
     print_version("telem_logger");
     printf("============================\n");
@@ -686,7 +686,7 @@ int main(int argc, char *argv[]) {
     if (g_logger.filter_enabled) {
         printf("Filter: ");
         for (int i = 0; i < g_logger.filter_count; i++) {
-            printf("%s%s", g_logger.filter_channels[i], 
+            printf("%s%s", g_logger.filter_channels[i],
                    i < g_logger.filter_count - 1 ? "," : "");
         }
         printf("\n");
@@ -694,7 +694,7 @@ int main(int argc, char *argv[]) {
         printf("Filter: (all channels)\n");
     }
     printf("\n");
-    
+
 #ifdef _WIN32
     /* Initialize system tray */
     if (g_tray_enabled && !init_tray_icon()) {
@@ -702,18 +702,18 @@ int main(int argc, char *argv[]) {
         g_tray_enabled = false;
     }
 #endif
-    
+
     /* Initialize socket */
     if (!init_socket()) {
         cleanup();
         return 1;
     }
-    
+
     /* Run main loop */
     run_listener();
-    
+
     /* Cleanup */
     cleanup();
-    
+
     return 0;
 }

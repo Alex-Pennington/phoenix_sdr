@@ -100,7 +100,7 @@ Hysteresis in threshold comparators affects timing: a hysteresis band H causes t
 The master equation for true pulse start time incorporates all error sources:
 
 ```
-T_true = T_detected - T_filter_delay - T_threshold_offset - T_integration_delay 
+T_true = T_detected - T_filter_delay - T_threshold_offset - T_integration_delay
          - T_propagation + T_hysteresis_correction ± T_quantization/2
 ```
 

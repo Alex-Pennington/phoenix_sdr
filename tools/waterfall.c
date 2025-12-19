@@ -577,13 +577,13 @@ static tick_correlator_t *g_tick_correlator = NULL;
 
 static void on_tick_marker(const tick_marker_event_t *event, void *user_data) {
     (void)user_data;
-    
+
     /* Feed sync detector */
     if (g_sync_detector) {
         sync_detector_tick_marker(g_sync_detector, event->timestamp_ms,
                                    event->duration_ms, event->corr_ratio);
     }
-    
+
     /* Set epoch from tick detector's precise measurement.
      * Research formula: T_true = T_trailing - D_known - T_filter_delay
      * T_filter_delay = 3.0ms total group delay:
@@ -596,9 +596,9 @@ static void on_tick_marker(const tick_marker_event_t *event, void *user_data) {
         float leading_edge_ms = event->timestamp_ms - event->duration_ms - 3.0f;
         printf("[EPOCH] TICK trailing=%.1fms dur=%.0fms leading=%.1fms\n",
                event->timestamp_ms, event->duration_ms, leading_edge_ms);
-        
+
         tick_detector_set_epoch(g_tick_detector, leading_edge_ms);
-        
+
         /* Enable gate after first marker */
         if (!tick_detector_is_gating_enabled(g_tick_detector)) {
             tick_detector_set_gating_enabled(g_tick_detector, true);
@@ -639,13 +639,13 @@ static void on_marker_event(const marker_event_t *event, void *user_data) {
     }
 
     /* Get pending tick info BEFORE sync_detector_marker_event() clears it.
-     * Order of operations bug: sync_detector_marker_event() -> confirm_marker() 
+     * Order of operations bug: sync_detector_marker_event() -> confirm_marker()
      * clears tick_pending, so we must capture the tick info first. */
     float tick_timestamp_ms = 0.0f, tick_duration_ms = 0.0f;
     bool have_tick = false;
     if (g_sync_detector) {
-        have_tick = sync_detector_get_pending_tick(g_sync_detector, 
-                                                    &tick_timestamp_ms, 
+        have_tick = sync_detector_get_pending_tick(g_sync_detector,
+                                                    &tick_timestamp_ms,
                                                     &tick_duration_ms);
     }
 
@@ -658,7 +658,7 @@ static void on_marker_event(const marker_event_t *event, void *user_data) {
     /* Feed tick detector timing gate (marker bootstrap) */
     if (g_tick_detector) {
         float leading_edge_ms;
-        
+
         /* Prefer tick detector timestamp/duration when available (more precise).
          * Only fall back to slow marker estimate when tick detector didn't see it. */
         if (have_tick && tick_duration_ms > 0.0f) {
@@ -674,7 +674,7 @@ static void on_marker_event(const marker_event_t *event, void *user_data) {
             printf("[EPOCH] SLOW trailing=%.1fms total_delay=%.0fms leading=%.1fms\n",
                    event->timestamp_ms, SLOW_MARKER_TOTAL_DELAY_MS, leading_edge_ms);
         }
-        
+
         tick_detector_set_epoch(g_tick_detector, leading_edge_ms);
 
         /* Enable gate after first marker */

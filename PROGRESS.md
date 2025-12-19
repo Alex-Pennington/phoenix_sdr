@@ -1,10 +1,10 @@
 # Phoenix SDR - Progress & Status
 
-**Last Updated:** 2025-12-14 ~12:00 EST
+**Last Updated:** 2025-12-19
 
-## Current Status: 🟢 TICK DETECTION WORKING
+## Current Status: 🟢 UDP TELEMETRY CONSOLIDATION COMPLETE
 
-**Version:** v0.2.6 — Split-screen waterfall with tick detection and interval averaging
+**Version:** v0.3.x+ — UDP-only telemetry with optional CSV logging
 
 ## What's Working ✅
 
@@ -99,6 +99,59 @@ cd D:\claude_sandbox\phoenix_sdr
 - **Antenna:** HF antenna on Hi-Z port
 
 ## Session History
+
+### Dec 19 - UDP Telemetry Consolidation
+**Goal:** Eliminate CSV file duplication, consolidate all logging to UDP telemetry (port 3005)
+
+**Changes Implemented:**
+1. **Added TELEM_CONSOLE channel** with 8KB ring buffer for console output
+   - `telem_console()` helper with auto-flush on newline
+   - `telem_console_flush()` for periodic draining (every 12 frames)
+   - Captures epoch timing, sync state, connection status messages
+
+2. **Added UDP telemetry to 6 detector modules:**
+   - `tick_detector.c` - Tick events via TELEM_TICKS
+   - `tick_correlator.c` - Correlation chains via TELEM_CORR
+   - `marker_correlator.c` - Marker correlation via TELEM_MARKERS
+   - `bcd_time_detector.c` - Time-domain BCD pulses via TELEM_BCDS
+   - `bcd_freq_detector.c` - Freq-domain BCD pulses via TELEM_BCDS
+   - `bcd_correlator.c` - BCD correlation stats via TELEM_BCDS
+
+3. **Disabled CSV logging by default:**
+   - All detector `_create()` calls now pass NULL (no CSV files)
+   - Added `--log-csv` / `-l` flag to waterfall.exe to re-enable CSV
+   - Removed `g_channel_csv` and `g_subcarrier_csv` (replaced by TELEM_CHANNEL, TELEM_SUBCAR)
+
+4. **Converted console output to telemetry:**
+   - Epoch timing messages `[EPOCH]` → TELEM_CONSOLE
+   - Sync state messages `[SYNC]` → TELEM_CONSOLE
+
+**Result:**
+- ✅ Build successful (all tests pass)
+- ✅ No CSV files created by default (UDP-only)
+- ✅ Optional CSV re-enable with `--log-csv` flag
+- ✅ All detector data flows through UDP port 3005
+- ✅ Console messages captured via TELEM_CONSOLE channel
+
+**Files Modified:**
+- `tools/waterfall_telemetry.h` - Added TELEM_CONSOLE enum
+- `tools/waterfall_telemetry.c` - Implemented console buffer and flush
+- `tools/waterfall.c` - Added -l flag, NULL csv_path, console telemetry
+- `tools/tick_detector.c` - Added TELEM_TICKS output
+- `tools/tick_correlator.c` - Added TELEM_CORR output
+- `tools/marker_correlator.c` - Added TELEM_MARKERS output
+- `tools/bcd_time_detector.c` - Added TELEM_BCDS output
+- `tools/bcd_freq_detector.c` - Added TELEM_BCDS output
+- `tools/bcd_correlator.c` - Added TELEM_BCDS output
+
+**Usage:**
+```powershell
+# Default: UDP telemetry only (no CSV files)
+.\bin\waterfall.exe --tcp localhost:4536
+
+# Optional: Enable CSV logging for debugging
+.\bin\waterfall.exe --tcp localhost:4536 --log-csv
+```
 
 ### Dec 14 - Morning/Afternoon
 - Fixed waterfall display (was broken by sliding window changes)

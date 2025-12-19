@@ -304,7 +304,7 @@ static void close_window(bcd_correlator_t *corr) {
     /* Log to CSV and telemetry */
     char time_str[16];
     get_wall_time_str(corr, symbol_timestamp_ms, time_str, sizeof(time_str));
-    
+
     if (corr->csv_file) {
         fprintf(corr->csv_file, "%s,%.1f,%d,%d,%c,%s,%.0f,%.2f,%.1f,%d,%d,%.4f,%.4f,%s\n",
                 time_str, symbol_timestamp_ms, corr->symbol_count, corr->current_second,
@@ -315,7 +315,7 @@ static void close_window(bcd_correlator_t *corr) {
                 bcd_corr_state_name(corr->state));
         fflush(corr->csv_file);
     }
-    
+
     /* UDP telemetry for correlation stats */
     telem_sendf(TELEM_BCDS, "CORR,%s,%.1f,%d,%d,%c,%s,%.0f,%.2f,%.1f,%d,%d,%.4f,%.4f,%s",
                 time_str, symbol_timestamp_ms, corr->symbol_count, corr->current_second,

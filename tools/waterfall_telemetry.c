@@ -310,7 +310,7 @@ void telem_console(const char *fmt, ...) {
         /* Flush current buffer first */
         telem_console_flush();
         space_available = CONSOLE_BUFFER_SIZE - 1;
-        
+
         /* If still doesn't fit, drop it and count */
         if (written > space_available) {
             g_console_dropped++;

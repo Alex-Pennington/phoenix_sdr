@@ -227,7 +227,7 @@ static void run_state_machine(bcd_time_detector_t *td) {
                     /* CSV logging and telemetry */
                     char time_str[16];
                     get_wall_time_str(td, timestamp_ms, time_str, sizeof(time_str));
-                    
+
                     if (td->csv_file) {
                         fprintf(td->csv_file, "%s,%.1f,%d,%.6f,%.0f,%.6f,%.1f\n",
                                 time_str, timestamp_ms, td->pulses_detected,
@@ -235,7 +235,7 @@ static void run_state_machine(bcd_time_detector_t *td) {
                                 td->noise_floor, snr_db);
                         fflush(td->csv_file);
                     }
-                    
+
                     /* UDP telemetry */
                     telem_sendf(TELEM_BCDS, "TIME,%s,%.1f,%d,%.6f,%.0f,%.6f,%.1f",
                                 time_str, timestamp_ms, td->pulses_detected,

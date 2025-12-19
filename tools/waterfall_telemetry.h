@@ -132,10 +132,10 @@ void telem_get_stats(uint32_t *sent, uint32_t *dropped);
 
 /**
  * Send console message (buffered for hot-path performance)
- * 
+ *
  * Messages are buffered and automatically flushed on newline or buffer full.
  * Call telem_console_flush() periodically to ensure messages are sent.
- * 
+ *
  * @param fmt  Printf format string
  * @param ...  Format arguments
  */
@@ -143,7 +143,7 @@ void telem_console(const char *fmt, ...);
 
 /**
  * Manually flush console buffer
- * 
+ *
  * Call this at frame boundaries or periodically to drain buffered console messages.
  * Automatic flush occurs on newline or buffer full.
  */

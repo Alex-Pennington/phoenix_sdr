@@ -150,7 +150,7 @@ void marker_correlator_slow_frame(marker_correlator_t *mc,
                             mc->slow_peak_snr, conf_str);
                     fflush(mc->csv_file);
                 }
-                
+
                 /* UDP telemetry */
                 telem_sendf(TELEM_MARKERS, "%s,%.1f,%d,%.1f,%.4f,%.1f,%s",
                             time_str, mc->fast_timestamp_ms, marker_num,

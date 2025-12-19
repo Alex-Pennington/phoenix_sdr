@@ -662,15 +662,15 @@ static void on_marker_event(const marker_event_t *event, void *user_data) {
         /* Prefer tick detector timestamp/duration when available (more precise).
          * Only fall back to slow marker estimate when tick detector didn't see it. */
         if (have_tick && tick_duration_ms > 0.0f) {
-            /* Tick detector: trailing edge - actual duration */
-            leading_edge_ms = tick_timestamp_ms - tick_duration_ms - 10.0f;
+            /* Tick detector: trailing edge - actual duration - filter delay (3.0ms) */
+            leading_edge_ms = tick_timestamp_ms - tick_duration_ms - 3.0f;
             printf("[EPOCH] TICK trailing=%.1fms dur=%.0fms leading=%.1fms\n",
                    tick_timestamp_ms, tick_duration_ms, leading_edge_ms);
         } else {
-            /* Slow marker: trailing edge - estimated total delay
-             * (800ms pulse + ~400ms accumulator delay = 1200ms) */
+            /* Slow marker: trailing edge - estimated total delay - filter delay
+             * (800ms pulse + ~400ms accumulator delay = 1200ms + 3ms filter) */
             #define SLOW_MARKER_TOTAL_DELAY_MS  1200.0f
-            leading_edge_ms = event->timestamp_ms - SLOW_MARKER_TOTAL_DELAY_MS - 10.0f;
+            leading_edge_ms = event->timestamp_ms - SLOW_MARKER_TOTAL_DELAY_MS - 3.0f;
             printf("[EPOCH] SLOW trailing=%.1fms total_delay=%.0fms leading=%.1fms\n",
                    event->timestamp_ms, SLOW_MARKER_TOTAL_DELAY_MS, leading_edge_ms);
         }

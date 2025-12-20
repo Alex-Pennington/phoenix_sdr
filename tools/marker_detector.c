@@ -107,6 +107,11 @@ struct marker_detector {
     int flash_frames_remaining;
     bool detection_enabled;
 
+    /* Tunable parameters (runtime adjustable via UDP commands) */
+    float threshold_multiplier;     /* Threshold above baseline (2.0-5.0, default 3.0) */
+    float noise_adapt_rate;         /* Baseline adaptation rate (0.0001-0.01, default 0.001) */
+    float min_duration_ms;          /* Minimum pulse duration (300.0-700.0, default 500.0) */
+
     /* Callback */
     marker_callback_fn callback;
     void *callback_user_data;
@@ -193,7 +198,7 @@ static void run_state_machine(marker_detector_t *md) {
     /* Warmup phase - fast adaptation to learn baseline */
     if (!md->warmup_complete) {
         md->baseline_energy += MARKER_WARMUP_ADAPT_RATE * (md->accumulated_energy - md->baseline_energy);
-        md->threshold = md->baseline_energy * MARKER_THRESHOLD_MULT;
+        md->threshold = md->baseline_energy * md->threshold_multiplier;
 
         if (frame >= md->start_frame + MARKER_WARMUP_FRAMES) {
             md->warmup_complete = true;
@@ -206,16 +211,16 @@ static void run_state_machine(marker_detector_t *md) {
     /* No markers in first few seconds - baseline still stabilizing */
     float timestamp_ms = md->frame_count * FRAME_DURATION_MS;
     if (timestamp_ms < MARKER_MIN_STARTUP_MS) {
-        md->baseline_energy += MARKER_NOISE_ADAPT_RATE * (md->accumulated_energy - md->baseline_energy);
-        md->threshold = md->baseline_energy * MARKER_THRESHOLD_MULT;
+        md->baseline_energy += md->noise_adapt_rate * (md->accumulated_energy - md->baseline_energy);
+        md->threshold = md->baseline_energy * md->threshold_multiplier;
         return;
     }
 
     /* Self-track baseline during IDLE (proven approach from v133) */
     if (md->state == STATE_IDLE) {
-        md->baseline_energy += MARKER_NOISE_ADAPT_RATE * (md->accumulated_energy - md->baseline_energy);
+        md->baseline_energy += md->noise_adapt_rate * (md->accumulated_energy - md->baseline_energy);
         if (md->baseline_energy < 0.001f) md->baseline_energy = 0.001f;
-        md->threshold = md->baseline_energy * MARKER_THRESHOLD_MULT;
+        md->threshold = md->baseline_energy * md->threshold_multiplier;
     }
 
     /* State machine */
@@ -240,7 +245,7 @@ static void run_state_machine(marker_detector_t *md) {
             bool timed_out = (duration_ms > MARKER_MAX_DURATION_MS);
 
             if (md->accumulated_energy < md->threshold || timed_out) {
-                if (duration_ms >= MARKER_MIN_DURATION_MS && duration_ms < MARKER_MAX_DURATION_MS) {
+                if (duration_ms >= md->min_duration_ms && duration_ms < MARKER_MAX_DURATION_MS) {
                     /* Valid marker! */
                     md->markers_detected++;
                     md->flash_frames_remaining = MARKER_FLASH_FRAMES;
@@ -287,7 +292,7 @@ static void run_state_machine(marker_detector_t *md) {
                 } else if (timed_out) {
                     printf("[MARKER] Timeout after %.0fms - resetting baseline\n", duration_ms);
                     md->baseline_energy = md->accumulated_energy;
-                    md->threshold = md->baseline_energy * MARKER_THRESHOLD_MULT;
+                    md->threshold = md->baseline_energy * md->threshold_multiplier;
                 }
 
                 md->state = STATE_COOLDOWN;
@@ -350,6 +355,11 @@ marker_detector_t *marker_detector_create(const char *csv_path) {
     md->detection_enabled = true;
     md->warmup_complete = false;
     md->start_time = time(NULL);
+
+    /* Initialize tunable parameters to defaults */
+    md->threshold_multiplier = MARKER_THRESHOLD_MULT;      /* 3.0 */
+    md->noise_adapt_rate = MARKER_NOISE_ADAPT_RATE;        /* 0.001 */
+    md->min_duration_ms = MARKER_MIN_DURATION_MS;          /* 500.0 */
 
     md->wwv_clock = wwv_clock_create(WWV_STATION_WWV);
 
@@ -529,4 +539,36 @@ void marker_detector_log_display_gain(marker_detector_t *md, float display_gain)
 
 float marker_detector_get_frame_duration_ms(void) {
     return FRAME_DURATION_MS;
+}
+
+/*============================================================================
+ * Runtime Parameter Tuning
+ *============================================================================*/
+
+void marker_detector_set_threshold_mult(marker_detector_t *md, float mult) {
+    if (!md || mult < 2.0f || mult > 5.0f) return;
+    md->threshold_multiplier = mult;
+    md->threshold = md->baseline_energy * md->threshold_multiplier;
+}
+
+float marker_detector_get_threshold_mult(marker_detector_t *md) {
+    return md ? md->threshold_multiplier : 3.0f;
+}
+
+void marker_detector_set_noise_adapt_rate(marker_detector_t *md, float rate) {
+    if (!md || rate < 0.0001f || rate > 0.01f) return;
+    md->noise_adapt_rate = rate;
+}
+
+float marker_detector_get_noise_adapt_rate(marker_detector_t *md) {
+    return md ? md->noise_adapt_rate : 0.001f;
+}
+
+void marker_detector_set_min_duration_ms(marker_detector_t *md, float ms) {
+    if (!md || ms < 300.0f || ms > 700.0f) return;
+    md->min_duration_ms = ms;
+}
+
+float marker_detector_get_min_duration_ms(marker_detector_t *md) {
+    return md ? md->min_duration_ms : 500.0f;
 }

@@ -217,4 +217,42 @@ int sync_detector_get_good_intervals(sync_detector_t *sd);
  */
 bool sync_detector_get_pending_tick(sync_detector_t *sd, float *timestamp_ms, float *duration_ms);
 
+/*============================================================================
+ * Runtime Parameter Tuning
+ *============================================================================*/
+
+/* Evidence weights */
+void sync_detector_set_weight_tick(sync_detector_t *sd, float weight);
+float sync_detector_get_weight_tick(sync_detector_t *sd);
+void sync_detector_set_weight_marker(sync_detector_t *sd, float weight);
+float sync_detector_get_weight_marker(sync_detector_t *sd);
+void sync_detector_set_weight_p_marker(sync_detector_t *sd, float weight);
+float sync_detector_get_weight_p_marker(sync_detector_t *sd);
+void sync_detector_set_weight_tick_hole(sync_detector_t *sd, float weight);
+float sync_detector_get_weight_tick_hole(sync_detector_t *sd);
+void sync_detector_set_weight_combined(sync_detector_t *sd, float weight);
+float sync_detector_get_weight_combined(sync_detector_t *sd);
+
+/* Confidence thresholds */
+void sync_detector_set_locked_threshold(sync_detector_t *sd, float threshold);
+float sync_detector_get_locked_threshold(sync_detector_t *sd);
+void sync_detector_set_min_retain(sync_detector_t *sd, float threshold);
+float sync_detector_get_min_retain(sync_detector_t *sd);
+void sync_detector_set_tentative_init(sync_detector_t *sd, float confidence);
+float sync_detector_get_tentative_init(sync_detector_t *sd);
+
+/* Confidence decay rates */
+void sync_detector_set_decay_normal(sync_detector_t *sd, float rate);
+float sync_detector_get_decay_normal(sync_detector_t *sd);
+void sync_detector_set_decay_recovering(sync_detector_t *sd, float rate);
+float sync_detector_get_decay_recovering(sync_detector_t *sd);
+
+/* Validation tolerances */
+void sync_detector_set_tick_tolerance(sync_detector_t *sd, float ms);
+float sync_detector_get_tick_tolerance(sync_detector_t *sd);
+void sync_detector_set_marker_tolerance(sync_detector_t *sd, float ms);
+float sync_detector_get_marker_tolerance(sync_detector_t *sd);
+void sync_detector_set_p_marker_tolerance(sync_detector_t *sd, float ms);
+float sync_detector_get_p_marker_tolerance(sync_detector_t *sd);
+
 #endif /* SYNC_DETECTOR_H */

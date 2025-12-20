@@ -72,6 +72,10 @@ struct tick_correlator {
         float last_std_dev_ms;          /* For discipline monitoring */
         int consecutive_misses;         /* Count prediction failures */
     } tracking;
+
+    /* Tunable parameters (runtime adjustable via UDP commands) */
+    float epoch_confidence_threshold;   /* Min confidence to activate tracking (0.5-0.95, default 0.8) */
+    int max_consecutive_misses;         /* Misses before dropping lock (2-10, default 5) */
 };
 
 /*============================================================================
@@ -163,6 +167,10 @@ tick_correlator_t *tick_correlator_create(const char *csv_path) {
     tc->tracking.last_std_dev_ms = 0.0f;
     tc->tracking.consecutive_misses = 0;
 
+    /* Initialize tunable parameters to defaults */
+    tc->epoch_confidence_threshold = 0.8f;
+    tc->max_consecutive_misses = 5;
+
     /* Open CSV file */
     if (csv_path) {
         tc->csv_file = fopen(csv_path, "w");
@@ -244,9 +252,10 @@ void tick_correlator_add_tick(tick_correlator_t *tc,
             telem_sendf(TELEM_CONSOLE, "[TRACK] MISS: t_err=%.1fms int=%.1fms misses=%d",
                        prediction_error, actual_interval, tc->tracking.consecutive_misses);
 
-            /* Exit tracking after 5 consecutive misses */
-            if (tc->tracking.consecutive_misses >= 5) {
-                telem_sendf(TELEM_CONSOLE, "[TRACK] Deactivated: 5 consecutive misses, signal lost");
+            /* Exit tracking after max consecutive misses */
+            if (tc->tracking.consecutive_misses >= tc->max_consecutive_misses) {
+                telem_sendf(TELEM_CONSOLE, "[TRACK] Deactivated: %d consecutive misses, signal lost",
+                           tc->max_consecutive_misses);
                 tc->tracking.active = false;
                 tc->tracking.consecutive_misses = 0;
             }
@@ -349,7 +358,7 @@ void tick_correlator_add_tick(tick_correlator_t *tc,
                tc->current_chain_length, n, mean, std_dev_ms, confidence);
 
         /* Only call if confidence is reasonable (std_dev < 10ms) */
-        if (confidence > 0.8f) {
+        if (confidence > tc->epoch_confidence_threshold) {
             float epoch_offset_ms = fmodf(timestamp_ms, 1000.0f);
             if (epoch_offset_ms < 0) epoch_offset_ms += 1000.0f;
             tc->epoch_callback(epoch_offset_ms, std_dev_ms, confidence, tc->epoch_callback_user_data);
@@ -467,4 +476,26 @@ void tick_correlator_set_epoch_callback(tick_correlator_t *tc, epoch_callback_fn
     if (!tc) return;
     tc->epoch_callback = callback;
     tc->epoch_callback_user_data = user_data;
+}
+
+/*============================================================================
+ * Runtime Parameter Tuning
+ *============================================================================*/
+
+void tick_correlator_set_epoch_confidence(tick_correlator_t *tc, float threshold) {
+    if (!tc || threshold < 0.5f || threshold > 0.95f) return;
+    tc->epoch_confidence_threshold = threshold;
+}
+
+float tick_correlator_get_epoch_confidence(tick_correlator_t *tc) {
+    return tc ? tc->epoch_confidence_threshold : 0.8f;
+}
+
+void tick_correlator_set_max_misses(tick_correlator_t *tc, int max_misses) {
+    if (!tc || max_misses < 2 || max_misses > 10) return;
+    tc->max_consecutive_misses = max_misses;
+}
+
+int tick_correlator_get_max_misses(tick_correlator_t *tc) {
+    return tc ? tc->max_consecutive_misses : 5;
 }

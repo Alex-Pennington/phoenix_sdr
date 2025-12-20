@@ -113,4 +113,16 @@ typedef void (*epoch_callback_fn)(float epoch_offset_ms, float std_dev_ms, float
  */
 void tick_correlator_set_epoch_callback(tick_correlator_t *tc, epoch_callback_fn callback, void *user_data);
 
+/*============================================================================
+ * Runtime Parameter Tuning
+ *============================================================================*/
+
+/* Epoch confidence threshold (0.5-0.95, default 0.8) - controls when tracking activates */
+void tick_correlator_set_epoch_confidence(tick_correlator_t *tc, float threshold);
+float tick_correlator_get_epoch_confidence(tick_correlator_t *tc);
+
+/* Max consecutive misses (2-10, default 5) - controls persistence through fades */
+void tick_correlator_set_max_misses(tick_correlator_t *tc, int max_misses);
+int tick_correlator_get_max_misses(tick_correlator_t *tc);
+
 #endif /* TICK_CORRELATOR_H */

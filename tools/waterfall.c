@@ -472,6 +472,11 @@ static void set_tick_threshold(float mult);
 static void set_tick_adapt_down(float alpha);
 static void set_tick_adapt_up(float alpha);
 static void set_tick_min_duration(float ms);
+static void set_corr_epoch_confidence(float threshold);
+static void set_corr_max_misses(int max_misses);
+static void set_marker_threshold(float mult);
+static void set_marker_adapt_rate(float rate);
+static void set_marker_min_duration(float ms);
 
 /*============================================================================
  * UDP Command Processor
@@ -585,6 +590,53 @@ static void process_modem_command(const char *cmd_buf, int len) {
             set_tick_min_duration(value);
         } else {
             telem_sendf(TELEM_RESP, "ERR PARSE SET_TICK_MIN_DURATION requires numeric value\n");
+        }
+        return;
+    }
+
+    /* Tick correlator parameter commands */
+    if (strcmp(cmd_name, "SET_CORR_CONFIDENCE") == 0) {
+        if (parsed == 2) {
+            set_corr_epoch_confidence(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_CORR_CONFIDENCE requires numeric value\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd_name, "SET_CORR_MAX_MISSES") == 0) {
+        if (parsed == 2) {
+            set_corr_max_misses((int)value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_CORR_MAX_MISSES requires numeric value\n");
+        }
+        return;
+    }
+
+    /* Marker detector parameter commands */
+    if (strcmp(cmd_name, "SET_MARKER_THRESHOLD") == 0) {
+        if (parsed == 2) {
+            set_marker_threshold(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_MARKER_THRESHOLD requires numeric value\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd_name, "SET_MARKER_ADAPT_RATE") == 0) {
+        if (parsed == 2) {
+            set_marker_adapt_rate(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_MARKER_ADAPT_RATE requires numeric value\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd_name, "SET_MARKER_MIN_DURATION") == 0) {
+        if (parsed == 2) {
+            set_marker_min_duration(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_MARKER_MIN_DURATION requires numeric value\n");
         }
         return;
     }
@@ -768,6 +820,36 @@ static void set_tick_min_duration(float ms) {
     }
 }
 
+static void set_corr_epoch_confidence(float threshold) {
+    tick_correlator_set_epoch_confidence(g_tick_correlator, threshold);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK epoch_confidence_threshold=%.3f\n", threshold);
+}
+
+static void set_corr_max_misses(int max_misses) {
+    tick_correlator_set_max_misses(g_tick_correlator, max_misses);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK max_consecutive_misses=%d\n", max_misses);
+}
+
+static void set_marker_threshold(float mult) {
+    marker_detector_set_threshold_mult(g_marker_detector, mult);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK marker_threshold_multiplier=%.3f\n", mult);
+}
+
+static void set_marker_adapt_rate(float rate) {
+    marker_detector_set_noise_adapt_rate(g_marker_detector, rate);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK marker_noise_adapt_rate=%.6f\n", rate);
+}
+
+static void set_marker_min_duration(float ms) {
+    marker_detector_set_min_duration_ms(g_marker_detector, ms);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK marker_min_duration_ms=%.2f\n", ms);
+}
+
 /*============================================================================
  * INI File Persistence for Tunable Parameters
  *============================================================================*/
@@ -785,6 +867,15 @@ static void save_tick_params_to_ini(void) {
     fprintf(f, "adapt_alpha_up=%.6f\n", tick_detector_get_adapt_alpha_up(g_tick_detector));
     fprintf(f, "min_duration_ms=%.2f\n", tick_detector_get_min_duration_ms(g_tick_detector));
 
+    fprintf(f, "\n[tick_correlator]\n");
+    fprintf(f, "epoch_confidence_threshold=%.3f\n", tick_correlator_get_epoch_confidence(g_tick_correlator));
+    fprintf(f, "max_consecutive_misses=%d\n", tick_correlator_get_max_misses(g_tick_correlator));
+
+    fprintf(f, "\n[marker_detector]\n");
+    fprintf(f, "threshold_multiplier=%.3f\n", marker_detector_get_threshold_mult(g_marker_detector));
+    fprintf(f, "noise_adapt_rate=%.6f\n", marker_detector_get_noise_adapt_rate(g_marker_detector));
+    fprintf(f, "min_duration_ms=%.2f\n", marker_detector_get_min_duration_ms(g_marker_detector));
+
     fclose(f);
 }
 
@@ -797,20 +888,36 @@ static void load_tick_params_from_ini(void) {
 
     char line[256];
     bool in_tick_section = false;
+    bool in_corr_section = false;
+    bool in_marker_section = false;
     int params_loaded = 0;
 
     while (fgets(line, sizeof(line), f)) {
         /* Check for section header */
         if (strstr(line, "[tick_detector]")) {
             in_tick_section = true;
+            in_corr_section = false;
+            in_marker_section = false;
+            continue;
+        }
+        if (strstr(line, "[tick_correlator]")) {
+            in_tick_section = false;
+            in_corr_section = true;
+            in_marker_section = false;
+            continue;
+        }
+        if (strstr(line, "[marker_detector]")) {
+            in_tick_section = false;
+            in_corr_section = false;
+            in_marker_section = true;
             continue;
         }
         if (line[0] == '[') {
             in_tick_section = false;
+            in_corr_section = false;
+            in_marker_section = false;
             continue;
         }
-
-        if (!in_tick_section) continue;
 
         /* Parse key=value */
         char *eq = strchr(line, '=');
@@ -818,29 +925,50 @@ static void load_tick_params_from_ini(void) {
 
         float value = (float)atof(eq + 1);
 
-        if (strstr(line, "threshold_multiplier=")) {
-            if (tick_detector_set_threshold_mult(g_tick_detector, value)) {
-                params_loaded++;
-            } else {
-                telem_sendf(TELEM_CONSOLE, "[WARN] Invalid threshold_multiplier=%.3f in INI, using default\n", value);
+        if (in_tick_section) {
+            if (strstr(line, "threshold_multiplier=")) {
+                if (tick_detector_set_threshold_mult(g_tick_detector, value)) {
+                    params_loaded++;
+                } else {
+                    telem_sendf(TELEM_CONSOLE, "[WARN] Invalid threshold_multiplier=%.3f in INI, using default\n", value);
+                }
+            } else if (strstr(line, "adapt_alpha_down=")) {
+                if (tick_detector_set_adapt_alpha_down(g_tick_detector, value)) {
+                    params_loaded++;
+                } else {
+                    telem_sendf(TELEM_CONSOLE, "[WARN] Invalid adapt_alpha_down=%.6f in INI, using default\n", value);
+                }
+            } else if (strstr(line, "adapt_alpha_up=")) {
+                if (tick_detector_set_adapt_alpha_up(g_tick_detector, value)) {
+                    params_loaded++;
+                } else {
+                    telem_sendf(TELEM_CONSOLE, "[WARN] Invalid adapt_alpha_up=%.6f in INI, using default\n", value);
+                }
+            } else if (strstr(line, "min_duration_ms=")) {
+                if (tick_detector_set_min_duration_ms(g_tick_detector, value)) {
+                    params_loaded++;
+                } else {
+                    telem_sendf(TELEM_CONSOLE, "[WARN] Invalid min_duration_ms=%.2f in INI, using default\n", value);
+                }
             }
-        } else if (strstr(line, "adapt_alpha_down=")) {
-            if (tick_detector_set_adapt_alpha_down(g_tick_detector, value)) {
+        } else if (in_corr_section) {
+            if (strstr(line, "epoch_confidence_threshold=")) {
+                tick_correlator_set_epoch_confidence(g_tick_correlator, value);
                 params_loaded++;
-            } else {
-                telem_sendf(TELEM_CONSOLE, "[WARN] Invalid adapt_alpha_down=%.6f in INI, using default\n", value);
+            } else if (strstr(line, "max_consecutive_misses=")) {
+                tick_correlator_set_max_misses(g_tick_correlator, (int)value);
+                params_loaded++;
             }
-        } else if (strstr(line, "adapt_alpha_up=")) {
-            if (tick_detector_set_adapt_alpha_up(g_tick_detector, value)) {
+        } else if (in_marker_section) {
+            if (strstr(line, "threshold_multiplier=")) {
+                marker_detector_set_threshold_mult(g_marker_detector, value);
                 params_loaded++;
-            } else {
-                telem_sendf(TELEM_CONSOLE, "[WARN] Invalid adapt_alpha_up=%.6f in INI, using default\n", value);
-            }
-        } else if (strstr(line, "min_duration_ms=")) {
-            if (tick_detector_set_min_duration_ms(g_tick_detector, value)) {
+            } else if (strstr(line, "noise_adapt_rate=")) {
+                marker_detector_set_noise_adapt_rate(g_marker_detector, value);
                 params_loaded++;
-            } else {
-                telem_sendf(TELEM_CONSOLE, "[WARN] Invalid min_duration_ms=%.2f in INI, using default\n", value);
+            } else if (strstr(line, "min_duration_ms=")) {
+                marker_detector_set_min_duration_ms(g_marker_detector, value);
+                params_loaded++;
             }
         }
     }

@@ -127,6 +127,22 @@ void marker_detector_log_display_gain(marker_detector_t *md, float display_gain)
  */
 float marker_detector_get_frame_duration_ms(void);
 
+/*============================================================================
+ * Runtime Parameter Tuning
+ *============================================================================*/
+
+/* Threshold multiplier (2.0-5.0, default 3.0) - detection sensitivity */
+void marker_detector_set_threshold_mult(marker_detector_t *md, float mult);
+float marker_detector_get_threshold_mult(marker_detector_t *md);
+
+/* Noise adaptation rate (0.0001-0.01, default 0.001) - baseline tracking speed */
+void marker_detector_set_noise_adapt_rate(marker_detector_t *md, float rate);
+float marker_detector_get_noise_adapt_rate(marker_detector_t *md);
+
+/* Minimum duration (300.0-700.0, default 500.0) - pulse width threshold */
+void marker_detector_set_min_duration_ms(marker_detector_t *md, float ms);
+float marker_detector_get_min_duration_ms(marker_detector_t *md);
+
 #ifdef __cplusplus
 }
 #endif

@@ -127,6 +127,21 @@ struct sync_detector {
     wwv_clock_t *wwv_clock;
     bool leap_second_pending;
 
+    /* Tunable parameters (runtime adjustable via UDP commands) */
+    float weight_tick;                      /* Tick evidence weight (0.01-0.2, default 0.05) */
+    float weight_marker;                    /* Marker evidence weight (0.1-0.6, default 0.40) */
+    float weight_p_marker;                  /* P-marker evidence weight (0.05-0.3, default 0.15) */
+    float weight_tick_hole;                 /* Tick hole evidence weight (0.05-0.4, default 0.20) */
+    float weight_combined_hole_marker;      /* Combined hole+marker weight (0.2-0.8, default 0.50) */
+    float confidence_locked_threshold;      /* Threshold to reach LOCKED (0.5-0.9, default 0.70) */
+    float confidence_min_retain;            /* Minimum to keep state (0.01-0.2, default 0.05) */
+    float confidence_tentative_init;        /* Initial tentative confidence (0.1-0.5, default 0.30) */
+    float confidence_decay_normal;          /* Normal decay rate (0.99-0.9999, default 0.9999) */
+    float confidence_decay_recovering;      /* Recovery mode decay (0.90-0.99, default 0.980) */
+    float tick_phase_tolerance_ms;          /* Tick timing tolerance (50.0-200.0, default 100.0) */
+    float marker_tolerance_ms;              /* Marker timing tolerance (200.0-800.0, default 500.0) */
+    float p_marker_tolerance_ms;            /* P-marker timing tolerance (100.0-400.0, default 200.0) */
+
     /* Callbacks */
     sync_state_callback_fn state_callback;
     void *state_callback_user_data;
@@ -299,10 +314,10 @@ static float get_evidence_weight(sync_detector_t *sd, uint32_t evidence_type) {
     float base_weight;
 
     switch (evidence_type) {
-        case EVIDENCE_TICK:       base_weight = WEIGHT_TICK; break;
-        case EVIDENCE_MARKER:     base_weight = WEIGHT_MARKER; break;
-        case EVIDENCE_P_MARKER:   base_weight = WEIGHT_P_MARKER; break;
-        case EVIDENCE_TICK_HOLE:  base_weight = WEIGHT_TICK_HOLE; break;
+        case EVIDENCE_TICK:       base_weight = sd->weight_tick; break;
+        case EVIDENCE_MARKER:     base_weight = sd->weight_marker; break;
+        case EVIDENCE_P_MARKER:   base_weight = sd->weight_p_marker; break;
+        case EVIDENCE_TICK_HOLE:  base_weight = sd->weight_tick_hole; break;
         default:                  base_weight = 0.10f; break;
     }
 
@@ -322,7 +337,7 @@ static void apply_evidence(sync_detector_t *sd, uint32_t evidence_type, float we
     if (sd->confidence > 1.0f) sd->confidence = 1.0f;
 
     /* State transitions based on confidence */
-    if (sd->state == SYNC_TENTATIVE && sd->confidence >= CONFIDENCE_LOCKED_THRESHOLD) {
+    if (sd->state == SYNC_TENTATIVE && sd->confidence >= sd->confidence_locked_threshold) {
         transition_state(sd, SYNC_LOCKED);
     }
 }
@@ -430,6 +445,21 @@ sync_detector_t *sync_detector_create(const char *csv_path) {
 
     sd->state = SYNC_ACQUIRING;
     sd->start_time = time(NULL);
+
+    /* Initialize tunable parameters to defaults */
+    sd->weight_tick = WEIGHT_TICK;                                      /* 0.05 */
+    sd->weight_marker = WEIGHT_MARKER;                                  /* 0.40 */
+    sd->weight_p_marker = WEIGHT_P_MARKER;                              /* 0.15 */
+    sd->weight_tick_hole = WEIGHT_TICK_HOLE;                            /* 0.20 */
+    sd->weight_combined_hole_marker = WEIGHT_COMBINED_HOLE_MARKER;      /* 0.50 */
+    sd->confidence_locked_threshold = CONFIDENCE_LOCKED_THRESHOLD;      /* 0.70 */
+    sd->confidence_min_retain = CONFIDENCE_MIN_RETAIN;                  /* 0.05 */
+    sd->confidence_tentative_init = CONFIDENCE_TENTATIVE_INIT;          /* 0.30 */
+    sd->confidence_decay_normal = CONFIDENCE_DECAY_NORMAL;              /* 0.9999 */
+    sd->confidence_decay_recovering = CONFIDENCE_DECAY_RECOVERING;      /* 0.980 */
+    sd->tick_phase_tolerance_ms = TICK_PHASE_TOLERANCE_MS;              /* 100.0 */
+    sd->marker_tolerance_ms = MARKER_TOLERANCE_MS;                      /* 500.0 */
+    sd->p_marker_tolerance_ms = P_MARKER_TOLERANCE_MS;                  /* 200.0 */
 
     /* Open CSV file */
     if (csv_path) {
@@ -643,7 +673,7 @@ void sync_detector_periodic_check(sync_detector_t *sd, float current_ms) {
 
     /* Confidence decay */
     float decay_rate = (sd->state == SYNC_RECOVERING) ?
-                       CONFIDENCE_DECAY_RECOVERING : CONFIDENCE_DECAY_NORMAL;
+                       sd->confidence_decay_recovering : sd->confidence_decay_normal;
     sd->confidence *= decay_rate;
 
     /* Signal loss detection (only when LOCKED) - marker-based authority */
@@ -764,4 +794,129 @@ bool sync_detector_get_pending_tick(sync_detector_t *sd, float *timestamp_ms, fl
     if (timestamp_ms) *timestamp_ms = sd->pending_tick_ms;
     if (duration_ms) *duration_ms = sd->pending_tick_duration_ms;
     return true;
+}
+
+/*============================================================================
+ * Runtime Parameter Tuning
+ *============================================================================*/
+
+/* Evidence weights */
+void sync_detector_set_weight_tick(sync_detector_t *sd, float weight) {
+    if (!sd || weight < 0.01f || weight > 0.2f) return;
+    sd->weight_tick = weight;
+}
+
+float sync_detector_get_weight_tick(sync_detector_t *sd) {
+    return sd ? sd->weight_tick : WEIGHT_TICK;
+}
+
+void sync_detector_set_weight_marker(sync_detector_t *sd, float weight) {
+    if (!sd || weight < 0.1f || weight > 0.6f) return;
+    sd->weight_marker = weight;
+}
+
+float sync_detector_get_weight_marker(sync_detector_t *sd) {
+    return sd ? sd->weight_marker : WEIGHT_MARKER;
+}
+
+void sync_detector_set_weight_p_marker(sync_detector_t *sd, float weight) {
+    if (!sd || weight < 0.05f || weight > 0.3f) return;
+    sd->weight_p_marker = weight;
+}
+
+float sync_detector_get_weight_p_marker(sync_detector_t *sd) {
+    return sd ? sd->weight_p_marker : WEIGHT_P_MARKER;
+}
+
+void sync_detector_set_weight_tick_hole(sync_detector_t *sd, float weight) {
+    if (!sd || weight < 0.05f || weight > 0.4f) return;
+    sd->weight_tick_hole = weight;
+}
+
+float sync_detector_get_weight_tick_hole(sync_detector_t *sd) {
+    return sd ? sd->weight_tick_hole : WEIGHT_TICK_HOLE;
+}
+
+void sync_detector_set_weight_combined(sync_detector_t *sd, float weight) {
+    if (!sd || weight < 0.2f || weight > 0.8f) return;
+    sd->weight_combined_hole_marker = weight;
+}
+
+float sync_detector_get_weight_combined(sync_detector_t *sd) {
+    return sd ? sd->weight_combined_hole_marker : WEIGHT_COMBINED_HOLE_MARKER;
+}
+
+/* Confidence thresholds */
+void sync_detector_set_locked_threshold(sync_detector_t *sd, float threshold) {
+    if (!sd || threshold < 0.5f || threshold > 0.9f) return;
+    sd->confidence_locked_threshold = threshold;
+}
+
+float sync_detector_get_locked_threshold(sync_detector_t *sd) {
+    return sd ? sd->confidence_locked_threshold : CONFIDENCE_LOCKED_THRESHOLD;
+}
+
+void sync_detector_set_min_retain(sync_detector_t *sd, float threshold) {
+    if (!sd || threshold < 0.01f || threshold > 0.2f) return;
+    sd->confidence_min_retain = threshold;
+}
+
+float sync_detector_get_min_retain(sync_detector_t *sd) {
+    return sd ? sd->confidence_min_retain : CONFIDENCE_MIN_RETAIN;
+}
+
+void sync_detector_set_tentative_init(sync_detector_t *sd, float confidence) {
+    if (!sd || confidence < 0.1f || confidence > 0.5f) return;
+    sd->confidence_tentative_init = confidence;
+}
+
+float sync_detector_get_tentative_init(sync_detector_t *sd) {
+    return sd ? sd->confidence_tentative_init : CONFIDENCE_TENTATIVE_INIT;
+}
+
+/* Confidence decay rates */
+void sync_detector_set_decay_normal(sync_detector_t *sd, float rate) {
+    if (!sd || rate < 0.99f || rate > 0.9999f) return;
+    sd->confidence_decay_normal = rate;
+}
+
+float sync_detector_get_decay_normal(sync_detector_t *sd) {
+    return sd ? sd->confidence_decay_normal : CONFIDENCE_DECAY_NORMAL;
+}
+
+void sync_detector_set_decay_recovering(sync_detector_t *sd, float rate) {
+    if (!sd || rate < 0.90f || rate > 0.99f) return;
+    sd->confidence_decay_recovering = rate;
+}
+
+float sync_detector_get_decay_recovering(sync_detector_t *sd) {
+    return sd ? sd->confidence_decay_recovering : CONFIDENCE_DECAY_RECOVERING;
+}
+
+/* Validation tolerances */
+void sync_detector_set_tick_tolerance(sync_detector_t *sd, float ms) {
+    if (!sd || ms < 50.0f || ms > 200.0f) return;
+    sd->tick_phase_tolerance_ms = ms;
+}
+
+float sync_detector_get_tick_tolerance(sync_detector_t *sd) {
+    return sd ? sd->tick_phase_tolerance_ms : TICK_PHASE_TOLERANCE_MS;
+}
+
+void sync_detector_set_marker_tolerance(sync_detector_t *sd, float ms) {
+    if (!sd || ms < 200.0f || ms > 800.0f) return;
+    sd->marker_tolerance_ms = ms;
+}
+
+float sync_detector_get_marker_tolerance(sync_detector_t *sd) {
+    return sd ? sd->marker_tolerance_ms : MARKER_TOLERANCE_MS;
+}
+
+void sync_detector_set_p_marker_tolerance(sync_detector_t *sd, float ms) {
+    if (!sd || ms < 100.0f || ms > 400.0f) return;
+    sd->p_marker_tolerance_ms = ms;
+}
+
+float sync_detector_get_p_marker_tolerance(sync_detector_t *sd) {
+    return sd ? sd->p_marker_tolerance_ms : P_MARKER_TOLERANCE_MS;
 }

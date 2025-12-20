@@ -315,7 +315,7 @@ static void run_state_machine(tick_detector_t *td) {
     if (!td->warmup_complete) {
         td->noise_floor += TICK_WARMUP_ADAPT_RATE * (energy - td->noise_floor);
         if (td->noise_floor < 0.0001f) td->noise_floor = 0.0001f;
-        td->threshold_high = td->noise_floor * TICK_THRESHOLD_MULT;
+        td->threshold_high = td->noise_floor * td->threshold_multiplier;
         td->threshold_low = td->threshold_high * TICK_HYSTERESIS_RATIO;
 
         if (frame >= td->start_frame + TICK_WARMUP_FRAMES) {
@@ -340,13 +340,13 @@ static void run_state_machine(tick_detector_t *td) {
     /* Adaptive noise floor - asymmetric: fast down, slow up */
     if (td->state == STATE_IDLE && energy < td->threshold_high) {
         if (energy < td->noise_floor) {
-            td->noise_floor += TICK_NOISE_ADAPT_DOWN * (energy - td->noise_floor);
+            td->noise_floor = td->noise_floor * td->adapt_alpha_down + energy * (1.0f - td->adapt_alpha_down);
         } else {
-            td->noise_floor += TICK_NOISE_ADAPT_UP * (energy - td->noise_floor);
+            td->noise_floor = td->noise_floor * td->adapt_alpha_up + energy * (1.0f - td->adapt_alpha_up);
         }
         if (td->noise_floor < 0.0001f) td->noise_floor = 0.0001f;
         if (td->noise_floor > NOISE_FLOOR_MAX) td->noise_floor = NOISE_FLOOR_MAX;
-        td->threshold_high = td->noise_floor * TICK_THRESHOLD_MULT;
+        td->threshold_high = td->noise_floor * td->threshold_multiplier;
         td->threshold_low = td->threshold_high * TICK_HYSTERESIS_RATIO;
     }
 
@@ -453,7 +453,7 @@ static void run_state_machine(tick_detector_t *td) {
                         td->marker_callback(&event, td->marker_callback_user_data);
                     }
 
-                } else if (duration_ms >= TICK_MIN_DURATION_MS &&
+                } else if (duration_ms >= td->min_duration_ms &&
                            duration_ms <= TICK_MAX_DURATION_MS &&
                            valid_correlation) {
                     /* Normal tick */
@@ -605,6 +605,12 @@ tick_detector_t *tick_detector_create(const char *csv_path) {
     td->corr_buf_idx = 0;
     td->corr_sample_count = 0;
     td->corr_noise_floor = 0.0f;
+
+    /* Initialize tunable parameters to defaults */
+    td->threshold_multiplier = TICK_THRESHOLD_MULT;      /* 2.0 */
+    td->adapt_alpha_down = 1.0f - TICK_NOISE_ADAPT_DOWN; /* 0.998 */
+    td->adapt_alpha_up = 1.0f - TICK_NOISE_ADAPT_UP;     /* 0.9998 */
+    td->min_duration_ms = TICK_MIN_DURATION_MS;          /* 2.0 */
 
     /* Initialize state */
     td->state = STATE_IDLE;

@@ -561,7 +561,7 @@ static void process_modem_command(const char *cmd_buf, int len) {
         }
         return;
     }
-    
+
     if (strcmp(cmd_name, "SET_TICK_ADAPT_DOWN") == 0) {
         if (parsed == 2) {
             set_tick_adapt_down(value);
@@ -570,7 +570,7 @@ static void process_modem_command(const char *cmd_buf, int len) {
         }
         return;
     }
-    
+
     if (strcmp(cmd_name, "SET_TICK_ADAPT_UP") == 0) {
         if (parsed == 2) {
             set_tick_adapt_up(value);
@@ -579,7 +579,7 @@ static void process_modem_command(const char *cmd_buf, int len) {
         }
         return;
     }
-    
+
     if (strcmp(cmd_name, "SET_TICK_MIN_DURATION") == 0) {
         if (parsed == 2) {
             set_tick_min_duration(value);
@@ -778,13 +778,13 @@ static void save_tick_params_to_ini(void) {
         telem_sendf(TELEM_CONSOLE, "[WARN] Could not write waterfall.ini\n");
         return;
     }
-    
+
     fprintf(f, "[tick_detector]\n");
     fprintf(f, "threshold_multiplier=%.3f\n", tick_detector_get_threshold_mult(g_tick_detector));
     fprintf(f, "adapt_alpha_down=%.6f\n", tick_detector_get_adapt_alpha_down(g_tick_detector));
     fprintf(f, "adapt_alpha_up=%.6f\n", tick_detector_get_adapt_alpha_up(g_tick_detector));
     fprintf(f, "min_duration_ms=%.2f\n", tick_detector_get_min_duration_ms(g_tick_detector));
-    
+
     fclose(f);
 }
 
@@ -794,11 +794,11 @@ static void load_tick_params_from_ini(void) {
         telem_sendf(TELEM_CONSOLE, "[INIT] No waterfall.ini found, using defaults\n");
         return;
     }
-    
+
     char line[256];
     bool in_tick_section = false;
     int params_loaded = 0;
-    
+
     while (fgets(line, sizeof(line), f)) {
         /* Check for section header */
         if (strstr(line, "[tick_detector]")) {
@@ -809,15 +809,15 @@ static void load_tick_params_from_ini(void) {
             in_tick_section = false;
             continue;
         }
-        
+
         if (!in_tick_section) continue;
-        
+
         /* Parse key=value */
         char *eq = strchr(line, '=');
         if (!eq) continue;
-        
+
         float value = (float)atof(eq + 1);
-        
+
         if (strstr(line, "threshold_multiplier=")) {
             if (tick_detector_set_threshold_mult(g_tick_detector, value)) {
                 params_loaded++;
@@ -844,9 +844,9 @@ static void load_tick_params_from_ini(void) {
             }
         }
     }
-    
+
     fclose(f);
-    
+
     if (params_loaded > 0) {
         telem_sendf(TELEM_CONSOLE, "[INIT] Loaded %d debug parameters from waterfall.ini\n", params_loaded);
     }

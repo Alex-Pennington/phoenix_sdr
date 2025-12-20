@@ -125,7 +125,7 @@ Changed architecture to make **leading edge** (pulse START) the authoritative ti
    #define TICK_ACTUAL_DURATION_MS    5.0f     /* WWV spec */
    #define MARKER_ACTUAL_DURATION_MS  800.0f   /* WWV spec */
    #define TICK_FILTER_DELAY_MS       3.0f     /* Measured group delay */
-   
+
    typedef struct {
        float timestamp_ms;        /* TRAILING EDGE (when energy dropped) */
        float start_timestamp_ms;  /* LEADING EDGE (on-time marker) */
@@ -150,7 +150,7 @@ Changed architecture to make **leading edge** (pulse START) the authoritative ti
 4. **Dual-path validation** — Compare fast vs slow marker detection:
    ```c
    float disagreement_ms = fabsf(fast_leading - slow_leading);
-   const char *quality = (disagreement_ms < 20.0f) ? "GOOD" : 
+   const char *quality = (disagreement_ms < 20.0f) ? "GOOD" :
                         (disagreement_ms < 50.0f) ? "FAIR" : "POOR";
    ```
 

@@ -686,15 +686,15 @@ static void on_marker_event(const marker_event_t *event, void *user_data) {
         if (have_tick && tick_duration_ms > 0.0f) {
             /* Fast path (tick detector): trailing edge - actual duration - filter delay (3.0ms) */
             leading_edge_ms = tick_timestamp_ms - tick_duration_ms - 3.0f;
-            
+
             /* Dual-path agreement check */
             float disagreement_ms = fabsf(leading_edge_ms - slow_marker_leading_edge_ms);
-            const char *quality = (disagreement_ms < 20.0f) ? "GOOD" : 
+            const char *quality = (disagreement_ms < 20.0f) ? "GOOD" :
                                   (disagreement_ms < 50.0f) ? "FAIR" : "POOR";
-            
+
             telem_console("[EPOCH] FAST=%.1fms SLOW=%.1fms diff=%.1fms [%s]\n",
                           leading_edge_ms, slow_marker_leading_edge_ms, disagreement_ms, quality);
-            
+
             if (disagreement_ms > 50.0f) {
                 telem_console("[WARN] Dual-path disagreement >50ms - possible fading or interference\n");
             }

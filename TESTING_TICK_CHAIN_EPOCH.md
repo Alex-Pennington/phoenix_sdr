@@ -65,24 +65,24 @@ cd d:\claude_sandbox\phoenix_sdr
 - Epoch from tick chain, markers used for minute framing only
 
 ### Success Criteria
-✅ Console shows `[EPOCH] Set from CHAIN` messages  
-✅ No `Gate recovery mode ENABLED` messages after tick chain established  
-✅ Tick intervals consistent: 998-1002ms (not 5985ms, 8084ms like before)  
-✅ Waterfall shows regular tick detections every second  
+✅ Console shows `[EPOCH] Set from CHAIN` messages
+✅ No `Gate recovery mode ENABLED` messages after tick chain established
+✅ Tick intervals consistent: 998-1002ms (not 5985ms, 8084ms like before)
+✅ Waterfall shows regular tick detections every second
 ✅ telem_logger captures CONS channel in `logs/telem_CONS_*.csv`
 
 ### Troubleshooting
 
-**Issue:** No `[EPOCH] Set from CHAIN` messages  
-**Cause:** Weak signal, tick chain length < 5, or confidence < 0.8  
+**Issue:** No `[EPOCH] Set from CHAIN` messages
+**Cause:** Weak signal, tick chain length < 5, or confidence < 0.8
 **Fix:** Increase gain, improve antenna, wait longer for chain to establish
 
-**Issue:** Still seeing gate recovery cycling  
-**Cause:** Tick chain not formed yet, still using marker epoch  
+**Issue:** Still seeing gate recovery cycling
+**Cause:** Tick chain not formed yet, still using marker epoch
 **Fix:** Wait for 5+ consecutive ticks, verify signal strength
 
-**Issue:** telem_logger not capturing CONS messages  
-**Cause:** Old telem_logger.exe without CONS channel  
+**Issue:** telem_logger not capturing CONS messages
+**Cause:** Old telem_logger.exe without CONS channel
 **Fix:** Rebuild with `.\build.ps1 -Target tools`
 
 ## Debug Output Channels

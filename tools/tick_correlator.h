@@ -40,7 +40,7 @@ typedef struct {
     float noise_floor;          /* Energy noise floor */
     float corr_peak;            /* Correlation peak */
     float corr_ratio;           /* Correlation ratio */
-    
+
     /* Correlation fields */
     int chain_id;               /* Correlation chain ID (0 = uncorrelated) */
     int chain_position;         /* Position within chain (1, 2, 3...) */

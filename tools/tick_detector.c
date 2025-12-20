@@ -850,7 +850,7 @@ float tick_detector_get_frame_duration_ms(void) {
  * Timing Gate API (Step 2: WWV Tick/BCD Separation)
  *============================================================================*/
 
-void tick_detector_set_epoch_with_source(tick_detector_t *td, float epoch_ms, 
+void tick_detector_set_epoch_with_source(tick_detector_t *td, float epoch_ms,
                                           epoch_source_t source, float confidence) {
     if (!td) return;
 
@@ -865,7 +865,7 @@ void tick_detector_set_epoch_with_source(tick_detector_t *td, float epoch_ms,
     td->epoch_confidence = confidence;
 
     /* Log epoch updates to console telemetry */
-    const char *source_str = (source == EPOCH_SOURCE_TICK_CHAIN) ? "CHAIN" : 
+    const char *source_str = (source == EPOCH_SOURCE_TICK_CHAIN) ? "CHAIN" :
                              (source == EPOCH_SOURCE_MARKER) ? "MARKER" : "UNKNOWN";
     telem_console("[EPOCH] Set from %s: offset=%.1fms confidence=%.3f\n",
                   source_str, normalized_epoch, confidence);

@@ -198,7 +198,7 @@ void tick_detector_set_epoch(tick_detector_t *td, float epoch_ms);
  * @param source Where epoch came from (marker or tick chain)
  * @param confidence Confidence metric 0-1 (higher = more precise)
  */
-void tick_detector_set_epoch_with_source(tick_detector_t *td, float epoch_ms, 
+void tick_detector_set_epoch_with_source(tick_detector_t *td, float epoch_ms,
                                           epoch_source_t source, float confidence);
 
 void tick_detector_set_gating_enabled(tick_detector_t *td, bool enabled);

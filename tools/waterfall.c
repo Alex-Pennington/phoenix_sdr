@@ -504,7 +504,7 @@ static void process_modem_command(const char *cmd_buf, int len) {
     int copy_len = (len < CMD_MAX_LEN) ? len : CMD_MAX_LEN;
     memcpy(cmd_str, cmd_buf, copy_len);
     cmd_str[copy_len] = '\0';
-    
+
     /* Remove trailing newline */
     char *nl = strchr(cmd_str, '\n');
     if (nl) *nl = '\0';
@@ -517,7 +517,7 @@ static void process_modem_command(const char *cmd_buf, int len) {
     char cmd_name[64];
     float value;
     int parsed = sscanf(cmd_str, "%63s %f", cmd_name, &value);
-    
+
     if (parsed < 1) {
         telem_sendf(TELEM_RESP, "ERR PARSE empty command\n");
         return;
@@ -542,7 +542,7 @@ static void process_modem_command(const char *cmd_buf, int len) {
         }
         return;
     }
-    
+
     if (strcmp(cmd_name, "DISABLE_TELEM") == 0) {
         char channel_name[64];
         if (sscanf(cmd_str, "%*s %63s", channel_name) == 1) {
@@ -571,7 +571,7 @@ static void process_modem_command(const char *cmd_buf, int len) {
         }
         return;
     }
-    
+
     if (strcmp(cmd_name, "SET_TICK_ADAPT_DOWN") == 0) {
         if (parsed == 2 && value > 0.0f && value < 1.0f) {
             stub_set_tick_adapt_down(value);
@@ -580,7 +580,7 @@ static void process_modem_command(const char *cmd_buf, int len) {
         }
         return;
     }
-    
+
     if (strcmp(cmd_name, "SET_TICK_ADAPT_UP") == 0) {
         if (parsed == 2 && value > 0.0f && value < 1.0f) {
             stub_set_tick_adapt_up(value);
@@ -1334,7 +1334,7 @@ int main(int argc, char *argv[]) {
         cmd_addr.sin_family = AF_INET;
         cmd_addr.sin_port = htons(CMD_PORT);
         cmd_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);  /* localhost only */
-        
+
         if (bind(g_cmd_sock, (struct sockaddr*)&cmd_addr, sizeof(cmd_addr)) < 0) {
             fprintf(stderr, "[CMD] Failed to bind UDP command socket on port %d\n", CMD_PORT);
             socket_close(g_cmd_sock);
@@ -1348,7 +1348,7 @@ int main(int argc, char *argv[]) {
             int flags = fcntl(g_cmd_sock, F_GETFL, 0);
             fcntl(g_cmd_sock, F_SETFL, flags | O_NONBLOCK);
 #endif
-            printf("[CMD] UDP command listener on localhost:%d (rate limit: %d/sec)\n", 
+            printf("[CMD] UDP command listener on localhost:%d (rate limit: %d/sec)\n",
                    CMD_PORT, CMD_RATE_LIMIT_PER_SEC);
         }
     } else {

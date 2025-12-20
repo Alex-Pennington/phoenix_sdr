@@ -169,6 +169,8 @@ struct tick_detector {
 
     /* Timing gate */
     tick_gate_t gate;
+    epoch_source_t epoch_source;
+    float epoch_confidence;
 
     /* Comb filter for weak signal detection */
     comb_filter_t *comb_filter;
@@ -610,6 +612,8 @@ tick_detector_t *tick_detector_create(const char *csv_path) {
     /* Initialize timing gate (disabled until marker sets epoch) */
     td->gate.epoch_ms = 0.0f;
     td->gate.enabled = false;
+    td->epoch_source = EPOCH_SOURCE_NONE;
+    td->epoch_confidence = 0.0f;
 
     /* Create WWV clock tracker */
     td->wwv_clock = wwv_clock_create(WWV_STATION_WWV);
@@ -846,12 +850,30 @@ float tick_detector_get_frame_duration_ms(void) {
  * Timing Gate API (Step 2: WWV Tick/BCD Separation)
  *============================================================================*/
 
-void tick_detector_set_epoch(tick_detector_t *td, float epoch_ms) {
+void tick_detector_set_epoch_with_source(tick_detector_t *td, float epoch_ms, 
+                                          epoch_source_t source, float confidence) {
     if (!td) return;
-    td->gate.epoch_ms = fmodf(epoch_ms, 1000.0f);
-    if (td->gate.epoch_ms < 0) {
-        td->gate.epoch_ms += 1000.0f;
+
+    /* Normalize to millisecond within second (0-999) */
+    float normalized_epoch = fmodf(epoch_ms, 1000.0f);
+    if (normalized_epoch < 0) {
+        normalized_epoch += 1000.0f;
     }
+
+    td->gate.epoch_ms = normalized_epoch;
+    td->epoch_source = source;
+    td->epoch_confidence = confidence;
+
+    /* Log epoch updates to console telemetry */
+    const char *source_str = (source == EPOCH_SOURCE_TICK_CHAIN) ? "CHAIN" : 
+                             (source == EPOCH_SOURCE_MARKER) ? "MARKER" : "UNKNOWN";
+    telem_console("[EPOCH] Set from %s: offset=%.1fms confidence=%.3f\n",
+                  source_str, normalized_epoch, confidence);
+}
+
+void tick_detector_set_epoch(tick_detector_t *td, float epoch_ms) {
+    /* Legacy function - assume marker source with medium confidence */
+    tick_detector_set_epoch_with_source(td, epoch_ms, EPOCH_SOURCE_MARKER, 0.7f);
 }
 
 void tick_detector_set_gating_enabled(tick_detector_t *td, bool enabled) {
@@ -875,4 +897,12 @@ float tick_detector_get_epoch(tick_detector_t *td) {
 
 bool tick_detector_is_gating_enabled(tick_detector_t *td) {
     return td ? td->gate.enabled : false;
+}
+
+epoch_source_t tick_detector_get_epoch_source(tick_detector_t *td) {
+    return td ? td->epoch_source : EPOCH_SOURCE_NONE;
+}
+
+float tick_detector_get_epoch_confidence(tick_detector_t *td) {
+    return td ? td->epoch_confidence : 0.0f;
 }

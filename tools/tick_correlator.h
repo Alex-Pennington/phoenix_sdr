@@ -99,4 +99,18 @@ chain_stats_t tick_correlator_get_chain_stats(tick_correlator_t *tc, int chain_i
 /* Print summary */
 void tick_correlator_print_stats(tick_correlator_t *tc);
 
+/**
+ * Epoch callback - called when tick chain establishes precise second epoch
+ * @param epoch_offset_ms Offset within second (0-999 ms)
+ * @param std_dev_ms Standard deviation of last 5 intervals (precision estimate)
+ * @param confidence Confidence metric 0-1 (1.0 - std_dev/50)
+ * @param user_data User context pointer
+ */
+typedef void (*epoch_callback_fn)(float epoch_offset_ms, float std_dev_ms, float confidence, void *user_data);
+
+/**
+ * Set epoch callback - called when chain length ≥5 with calculated epoch
+ */
+void tick_correlator_set_epoch_callback(tick_correlator_t *tc, epoch_callback_fn callback, void *user_data);
+
 #endif /* TICK_CORRELATOR_H */

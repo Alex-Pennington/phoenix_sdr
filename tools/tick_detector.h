@@ -179,13 +179,37 @@ void tick_detector_log_display_gain(tick_detector_t *td, float display_gain_db);
 float tick_detector_get_frame_duration_ms(void);
 
 /**
+ * Epoch source - tracks where epoch timing came from
+ */
+typedef enum {
+    EPOCH_SOURCE_NONE = 0,        /* No epoch set yet */
+    EPOCH_SOURCE_MARKER = 1,      /* From marker detector (±50ms precision) */
+    EPOCH_SOURCE_TICK_CHAIN = 2   /* From tick correlation chain (±5ms precision) */
+} epoch_source_t;
+
+/**
  * Timing gate control (for marker-based epoch bootstrap)
  * Set epoch from marker timestamp: epoch_ms = marker_timestamp - 10.0
  */
 void tick_detector_set_epoch(tick_detector_t *td, float epoch_ms);
+
+/**
+ * Set timing gate epoch with source and confidence tracking
+ * @param source Where epoch came from (marker or tick chain)
+ * @param confidence Confidence metric 0-1 (higher = more precise)
+ */
+void tick_detector_set_epoch_with_source(tick_detector_t *td, float epoch_ms, 
+                                          epoch_source_t source, float confidence);
+
 void tick_detector_set_gating_enabled(tick_detector_t *td, bool enabled);
 float tick_detector_get_epoch(tick_detector_t *td);
 bool tick_detector_is_gating_enabled(tick_detector_t *td);
+
+/**
+ * Get current epoch source and confidence
+ */
+epoch_source_t tick_detector_get_epoch_source(tick_detector_t *td);
+float tick_detector_get_epoch_confidence(tick_detector_t *td);
 
 #ifdef __cplusplus
 }

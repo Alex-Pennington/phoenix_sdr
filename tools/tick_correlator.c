@@ -53,6 +53,15 @@ struct tick_correlator {
     /* Logging */
     FILE *csv_file;
     time_t start_time;
+
+    /* Epoch callback */
+    epoch_callback_fn epoch_callback;
+    void *epoch_callback_user_data;
+
+    /* Interval tracking for std_dev calculation */
+    float recent_intervals[5];
+    int recent_interval_idx;
+    int recent_interval_count;
 };
 
 /*============================================================================
@@ -65,6 +74,11 @@ static void start_new_chain(tick_correlator_t *tc, float timestamp_ms) {
     tc->current_chain_length = 0;
     tc->current_chain_start_ms = timestamp_ms;
     tc->cumulative_drift_ms = 0.0f;
+
+    /* Reset interval tracking for epoch calculation */
+    tc->recent_interval_idx = 0;
+    tc->recent_interval_count = 0;
+    memset(tc->recent_intervals, 0, sizeof(tc->recent_intervals));
 
     /* Initialize chain stats */
     if (tc->chain_count <= tc->chain_capacity) {
@@ -123,6 +137,13 @@ tick_correlator_t *tick_correlator_create(const char *csv_path) {
 
     tc->start_time = time(NULL);
     tc->last_tick_ms = -99999.0f;  /* Force new chain on first tick */
+
+    /* Initialize epoch callback */
+    tc->epoch_callback = NULL;
+    tc->epoch_callback_user_data = NULL;
+    memset(tc->recent_intervals, 0, sizeof(tc->recent_intervals));
+    tc->recent_interval_idx = 0;
+    tc->recent_interval_count = 0;
 
     /* Open CSV file */
     if (csv_path) {
@@ -222,6 +243,44 @@ void tick_correlator_add_tick(tick_correlator_t *tc,
         tc->longest_chain_ticks = tc->current_chain_length;
     }
 
+    /* Track recent intervals for epoch calculation
+     * Use actual_interval (timestamp delta) not interval_ms (tick_detector's average)
+     * Only track when chain_length > 1 (first tick has no interval) */
+    if (actual_interval > 0 && tc->current_chain_length > 1) {
+        tc->recent_intervals[tc->recent_interval_idx] = actual_interval;
+        tc->recent_interval_idx = (tc->recent_interval_idx + 1) % 5;
+        if (tc->recent_interval_count < 5) {
+            tc->recent_interval_count++;
+        }
+    }
+
+    /* Calculate epoch when we have 4+ correlated intervals (5+ ticks in chain)
+     * NOTE: 5 ticks = 4 intervals, sufficient for std_dev calculation */
+    if (tc->current_chain_length >= 5 && tc->recent_interval_count >= 4 && tc->epoch_callback) {
+        /* Calculate std_dev from recent intervals */
+        float sum = 0, sum_sq = 0;
+        int n = tc->recent_interval_count;
+        for (int i = 0; i < n; i++) {
+            sum += tc->recent_intervals[i];
+            sum_sq += tc->recent_intervals[i] * tc->recent_intervals[i];
+        }
+        float mean = sum / n;
+        float variance = (sum_sq / n) - (mean * mean);
+        float std_dev_ms = sqrtf(variance > 0 ? variance : 0);
+
+        /* Calculate confidence (1.0 when std_dev=0, 0.0 when std_dev≥50ms) */
+        float confidence = 1.0f - (std_dev_ms / 50.0f);
+        if (confidence < 0) confidence = 0;
+        if (confidence > 1.0f) confidence = 1.0f;
+
+        /* Only call if confidence is reasonable (std_dev < 10ms) */
+        if (confidence > 0.8f) {
+            float epoch_offset_ms = fmodf(timestamp_ms, 1000.0f);
+            if (epoch_offset_ms < 0) epoch_offset_ms += 1000.0f;
+            tc->epoch_callback(epoch_offset_ms, std_dev_ms, confidence, tc->epoch_callback_user_data);
+        }
+    }
+
     /* Store tick record */
     if (tc->tick_count < tc->tick_capacity) {
         tick_record_t *tr = &tc->ticks[tc->tick_count];
@@ -316,4 +375,10 @@ void tick_correlator_print_stats(tick_correlator_t *tc) {
     }
 
     printf("==============================\n");
+}
+
+void tick_correlator_set_epoch_callback(tick_correlator_t *tc, epoch_callback_fn callback, void *user_data) {
+    if (!tc) return;
+    tc->epoch_callback = callback;
+    tc->epoch_callback_user_data = user_data;
 }

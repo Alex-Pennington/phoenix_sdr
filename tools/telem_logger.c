@@ -68,7 +68,7 @@
 static const char *KNOWN_CHANNELS[] = {
     "CHAN", "TICK", "MARK", "CARR", "SYNC", "SUBC",
     "CORR", "T500", "T600", "BCDE", "BCDS", "SYM",
-    "STATE", "STATUS", NULL
+    "STATE", "STATUS", "CONS", NULL
 };
 
 /*============================================================================

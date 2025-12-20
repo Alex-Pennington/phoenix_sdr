@@ -591,6 +591,30 @@ static tick_correlator_t *g_tick_correlator = NULL;
  * Sync Detector Callback Wrappers
  *============================================================================*/
 
+/**
+ * Tick chain epoch callback - called when correlator establishes precise second epoch
+ */
+static void on_tick_chain_epoch(float epoch_offset_ms, float std_dev_ms, float confidence, void *user_data) {
+    (void)user_data;
+
+    /* Tick chain has established precise second epoch - update tick detector */
+    if (g_tick_detector) {
+        /* Only update if we don't already have a better source, or this is higher confidence */
+        epoch_source_t current_source = tick_detector_get_epoch_source(g_tick_detector);
+        float current_confidence = tick_detector_get_epoch_confidence(g_tick_detector);
+
+        if (current_source != EPOCH_SOURCE_TICK_CHAIN || confidence > current_confidence) {
+            tick_detector_set_epoch_with_source(g_tick_detector, epoch_offset_ms,
+                                                 EPOCH_SOURCE_TICK_CHAIN, confidence);
+
+            /* Enable gate with tick-chain precision (better than marker) */
+            if (!tick_detector_is_gating_enabled(g_tick_detector)) {
+                tick_detector_set_gating_enabled(g_tick_detector, true);
+            }
+        }
+    }
+}
+
 static void on_tick_marker(const tick_marker_event_t *event, void *user_data) {
     (void)user_data;
 
@@ -607,16 +631,23 @@ static void on_tick_marker(const tick_marker_event_t *event, void *user_data) {
                                    event->duration_ms, event->corr_ratio);
     }
 
-    /* Set epoch from tick detector's precise measurement */
+    /* Set epoch from tick detector's precise measurement - but only as fallback
+     * if tick chain hasn't already established better epoch. */
     if (g_tick_detector) {
+        epoch_source_t current_source = tick_detector_get_epoch_source(g_tick_detector);
+
         telem_console("[EPOCH] FAST trailing=%.1fms dur=%.0fms leading=%.1fms\n",
                       event->timestamp_ms, event->duration_ms, leading_edge_ms);
 
-        tick_detector_set_epoch(g_tick_detector, leading_edge_ms);
+        /* Only set marker epoch if we don't have tick chain epoch yet */
+        if (current_source == EPOCH_SOURCE_NONE) {
+            tick_detector_set_epoch_with_source(g_tick_detector, leading_edge_ms,
+                                                 EPOCH_SOURCE_MARKER, 0.7f);
 
-        /* Enable gate after first marker */
-        if (!tick_detector_is_gating_enabled(g_tick_detector)) {
-            tick_detector_set_gating_enabled(g_tick_detector, true);
+            /* Enable gate after first marker */
+            if (!tick_detector_is_gating_enabled(g_tick_detector)) {
+                tick_detector_set_gating_enabled(g_tick_detector, true);
+            }
         }
     }
 }
@@ -673,6 +704,7 @@ static void on_marker_event(const marker_event_t *event, void *user_data) {
     /* Feed tick detector timing gate (marker bootstrap).
      * Dual-path agreement validation: compare fast (tick_detector) to slow (marker_detector). */
     if (g_tick_detector) {
+        epoch_source_t current_source = tick_detector_get_epoch_source(g_tick_detector);
         float leading_edge_ms;
         float slow_marker_leading_edge_ms;
 
@@ -705,11 +737,15 @@ static void on_marker_event(const marker_event_t *event, void *user_data) {
                           event->timestamp_ms, SLOW_MARKER_TOTAL_DELAY_MS, leading_edge_ms);
         }
 
-        tick_detector_set_epoch(g_tick_detector, leading_edge_ms);
+        /* Only set marker epoch if we don't have tick chain epoch yet */
+        if (current_source == EPOCH_SOURCE_NONE) {
+            tick_detector_set_epoch_with_source(g_tick_detector, leading_edge_ms,
+                                                 EPOCH_SOURCE_MARKER, 0.7f);
 
-        /* Enable gate after first marker */
-        if (!tick_detector_is_gating_enabled(g_tick_detector)) {
-            tick_detector_set_gating_enabled(g_tick_detector, true);
+            /* Enable gate after first marker */
+            if (!tick_detector_is_gating_enabled(g_tick_detector)) {
+                tick_detector_set_gating_enabled(g_tick_detector, true);
+            }
         }
     }
 }
@@ -1128,6 +1164,13 @@ int main(int argc, char *argv[]) {
 
     /* Create tick correlator */
     g_tick_correlator = tick_correlator_create(g_log_csv ? "wwv_tick_corr.csv" : NULL);
+    if (!g_tick_correlator) {
+        fprintf(stderr, "Failed to create tick correlator\n");
+        return 1;
+    }
+
+    /* Wire tick chain epoch callback */
+    tick_correlator_set_epoch_callback(g_tick_correlator, on_tick_chain_epoch, NULL);
 
     /* g_channel_csv removed - use UDP telemetry (TELEM_CHANNEL) instead */
 

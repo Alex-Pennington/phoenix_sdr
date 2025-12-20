@@ -19,8 +19,8 @@ typedef struct tick_correlator tick_correlator_t;
  * Configuration
  *============================================================================*/
 
-#define CORR_MAX_INTERVAL_MS    1050.0f   /* Max interval to correlate ticks */
-#define CORR_MIN_INTERVAL_MS    900.0f    /* Min expected interval */
+#define CORR_MAX_INTERVAL_MS    1002.0f   /* Max interval to correlate ticks (proven discipline) */
+#define CORR_MIN_INTERVAL_MS    998.0f    /* Min expected interval (proven discipline) */
 #define CORR_NOMINAL_INTERVAL   1000.0f   /* Expected tick interval */
 
 /*============================================================================

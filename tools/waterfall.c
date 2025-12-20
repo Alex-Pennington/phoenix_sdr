@@ -607,10 +607,10 @@ static void on_tick_chain_epoch(float epoch_offset_ms, float std_dev_ms, float c
             tick_detector_set_epoch_with_source(g_tick_detector, epoch_offset_ms,
                                                  EPOCH_SOURCE_TICK_CHAIN, confidence);
 
-            /* Enable gate with tick-chain precision (better than marker) */
-            if (!tick_detector_is_gating_enabled(g_tick_detector)) {
-                tick_detector_set_gating_enabled(g_tick_detector, true);
-            }
+            /* DISABLED: Testing whether BCD 10th harmonic actually causes false positives */
+            // if (!tick_detector_is_gating_enabled(g_tick_detector)) {
+            //     tick_detector_set_gating_enabled(g_tick_detector, true);
+            // }
         }
     }
 }
@@ -644,10 +644,10 @@ static void on_tick_marker(const tick_marker_event_t *event, void *user_data) {
             tick_detector_set_epoch_with_source(g_tick_detector, leading_edge_ms,
                                                  EPOCH_SOURCE_MARKER, 0.7f);
 
-            /* Enable gate after first marker */
-            if (!tick_detector_is_gating_enabled(g_tick_detector)) {
-                tick_detector_set_gating_enabled(g_tick_detector, true);
-            }
+            /* DISABLED: Testing whether BCD 10th harmonic actually causes false positives */
+            // if (!tick_detector_is_gating_enabled(g_tick_detector)) {
+            //     tick_detector_set_gating_enabled(g_tick_detector, true);
+            // }
         }
     }
 }
@@ -742,10 +742,10 @@ static void on_marker_event(const marker_event_t *event, void *user_data) {
             tick_detector_set_epoch_with_source(g_tick_detector, leading_edge_ms,
                                                  EPOCH_SOURCE_MARKER, 0.7f);
 
-            /* Enable gate after first marker */
-            if (!tick_detector_is_gating_enabled(g_tick_detector)) {
-                tick_detector_set_gating_enabled(g_tick_detector, true);
-            }
+            /* DISABLED: Testing whether BCD 10th harmonic actually causes false positives */
+            // if (!tick_detector_is_gating_enabled(g_tick_detector)) {
+            //     tick_detector_set_gating_enabled(g_tick_detector, true);
+            // }
         }
     }
 }

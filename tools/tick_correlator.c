@@ -62,6 +62,16 @@ struct tick_correlator {
     float recent_intervals[5];
     int recent_interval_idx;
     int recent_interval_count;
+
+    /* Prediction-based tracking state */
+    struct {
+        bool active;                    /* Tracking loop engaged */
+        int retained_chain_id;          /* Chain to reattach to */
+        float predicted_next_ms;        /* When we expect next tick */
+        float discipline_window_ms;     /* Acceptance window (4σ) */
+        float last_std_dev_ms;          /* For discipline monitoring */
+        int consecutive_misses;         /* Count prediction failures */
+    } tracking;
 };
 
 /*============================================================================
@@ -145,6 +155,14 @@ tick_correlator_t *tick_correlator_create(const char *csv_path) {
     tc->recent_interval_idx = 0;
     tc->recent_interval_count = 0;
 
+    /* Initialize prediction tracking state */
+    tc->tracking.active = false;
+    tc->tracking.retained_chain_id = 0;
+    tc->tracking.predicted_next_ms = 0.0f;
+    tc->tracking.discipline_window_ms = 0.0f;
+    tc->tracking.last_std_dev_ms = 0.0f;
+    tc->tracking.consecutive_misses = 0;
+
     /* Open CSV file */
     if (csv_path) {
         tc->csv_file = fopen(csv_path, "w");
@@ -197,8 +215,47 @@ void tick_correlator_add_tick(tick_correlator_t *tc,
     /* Calculate interval from last tick */
     float actual_interval = timestamp_ms - tc->last_tick_ms;
 
+    /* Prediction-based tracking: check if tick matches prediction from established discipline */
+    bool prediction_match = false;
+    if (tc->tracking.active && tc->last_tick_ms > 0) {
+        float predicted_next = tc->last_tick_ms + CORR_NOMINAL_INTERVAL;
+        float prediction_error = fabsf(timestamp_ms - predicted_next);
+        
+        /* Require BOTH timestamp AND interval discipline:
+         * - Timestamp within discipline window (±10ms typical)
+         * - Interval within proven range (998-1002ms) */
+        if (prediction_error <= tc->tracking.discipline_window_ms &&
+            actual_interval >= 998.0f && actual_interval <= 1002.0f) {
+            /* Both timestamp and interval match discipline - accept it */
+            prediction_match = true;
+            tc->tracking.consecutive_misses = 0;
+            telem_sendf(TELEM_CONSOLE, "[TRACK] HIT: t_err=%.1fms int=%.1fms chain=%d",
+                       prediction_error, actual_interval, tc->tracking.retained_chain_id);
+            
+            /* Reattach to retained chain if we broke off */
+            if (tc->current_chain_id != tc->tracking.retained_chain_id) {
+                telem_sendf(TELEM_CONSOLE, "[TRACK] Reattach: %d → %d",
+                           tc->current_chain_id, tc->tracking.retained_chain_id);
+                tc->current_chain_id = tc->tracking.retained_chain_id;
+            }
+        } else {
+            /* Prediction miss - increment miss counter */
+            tc->tracking.consecutive_misses++;
+            telem_sendf(TELEM_CONSOLE, "[TRACK] MISS: t_err=%.1fms int=%.1fms misses=%d",
+                       prediction_error, actual_interval, tc->tracking.consecutive_misses);
+            
+            /* Exit tracking after 5 consecutive misses */
+            if (tc->tracking.consecutive_misses >= 5) {
+                telem_sendf(TELEM_CONSOLE, "[TRACK] Deactivated: 5 consecutive misses, signal lost");
+                tc->tracking.active = false;
+                tc->tracking.consecutive_misses = 0;
+            }
+        }
+    }
+
     /* Determine if this tick correlates with previous */
-    bool correlates = (actual_interval >= CORR_MIN_INTERVAL_MS &&
+    bool correlates = prediction_match ||
+                      (actual_interval >= CORR_MIN_INTERVAL_MS &&
                        actual_interval <= CORR_MAX_INTERVAL_MS);
     /* Grace period for single-tick dropouts: if interval is ~2 seconds (1900-2100ms),
      * assume exactly one tick was missed due to RF fade or QRN burst. Continue the
@@ -273,6 +330,20 @@ void tick_correlator_add_tick(tick_correlator_t *tc,
         if (confidence < 0) confidence = 0;
         if (confidence > 1.0f) confidence = 1.0f;
 
+        /* Update discipline window if tracking active */
+        if (tc->tracking.active) {
+            tc->tracking.discipline_window_ms = std_dev_ms * 4.0f;
+            tc->tracking.last_std_dev_ms = std_dev_ms;
+            
+            /* Deactivate tracking if discipline degraded beyond threshold */
+            if (std_dev_ms > 20.0f) {
+                telem_sendf(TELEM_CONSOLE, "[TRACK] Deactivated: discipline degraded (std_dev=%.1fms > 20ms)",
+                           std_dev_ms);
+                tc->tracking.active = false;
+                tc->tracking.consecutive_misses = 0;
+            }
+        }
+
         /* DEBUG: Show epoch calculation */
         printf("[CORR_EPOCH] chain=%d intervals=%d mean=%.1f std_dev=%.1f conf=%.3f\n",
                tc->current_chain_length, n, mean, std_dev_ms, confidence);
@@ -282,6 +353,17 @@ void tick_correlator_add_tick(tick_correlator_t *tc,
             float epoch_offset_ms = fmodf(timestamp_ms, 1000.0f);
             if (epoch_offset_ms < 0) epoch_offset_ms += 1000.0f;
             tc->epoch_callback(epoch_offset_ms, std_dev_ms, confidence, tc->epoch_callback_user_data);
+
+            /* Activate prediction-based tracking - discipline achieved */
+            if (!tc->tracking.active) {
+                tc->tracking.active = true;
+                tc->tracking.retained_chain_id = tc->current_chain_id;
+                tc->tracking.discipline_window_ms = std_dev_ms * 4.0f;  /* 4σ confidence interval */
+                tc->tracking.last_std_dev_ms = std_dev_ms;
+                tc->tracking.consecutive_misses = 0;
+                telem_sendf(TELEM_CONSOLE, "[TRACK] Activated: chain=%d window=%.1fms (4σ=%.1fms)",
+                           tc->current_chain_id, tc->tracking.discipline_window_ms, std_dev_ms);
+            }
         }
     }
 

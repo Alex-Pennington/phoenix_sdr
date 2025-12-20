@@ -273,6 +273,10 @@ void tick_correlator_add_tick(tick_correlator_t *tc,
         if (confidence < 0) confidence = 0;
         if (confidence > 1.0f) confidence = 1.0f;
 
+        /* DEBUG: Show epoch calculation */
+        printf("[CORR_EPOCH] chain=%d intervals=%d mean=%.1f std_dev=%.1f conf=%.3f\n",
+               tc->current_chain_length, n, mean, std_dev_ms, confidence);
+
         /* Only call if confidence is reasonable (std_dev < 10ms) */
         if (confidence > 0.8f) {
             float epoch_offset_ms = fmodf(timestamp_ms, 1000.0f);

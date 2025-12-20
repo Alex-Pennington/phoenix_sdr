@@ -1130,7 +1130,7 @@ int main(int argc, char *argv[]) {
 
     /* Initialize UDP telemetry broadcast */
     telem_init(3005);
-    telem_enable(TELEM_CHANNEL | TELEM_CARRIER | TELEM_SUBCAR | TELEM_TONE500 | TELEM_TONE600 | TELEM_BCD_ENV | TELEM_BCDS | TELEM_MARKERS | TELEM_SYNC | TELEM_CONSOLE | TELEM_TICKS | TELEM_CORR);
+    /* All channels enabled by default in telem_init() */
 
     /* Output initial sync state to console and telemetry */
     telem_console("[SYNC] Startup state: %s (markers=%d, good_intervals=%d)\n",
@@ -1610,7 +1610,7 @@ int main(int argc, char *argv[]) {
         }
 
         /* Log channel conditions every ~1 second (12 frames at 85ms effective) */
-        if (g_channel_csv && (frame_num % 12) == 0) {
+        if ((frame_num % 12) == 0) {
             time_t now = time(NULL);
             struct tm *tm_info = localtime(&now);
             char time_str[16];
@@ -1692,7 +1692,7 @@ int main(int argc, char *argv[]) {
         }
 
         /* Log subcarrier conditions every ~1 second (12 frames) */
-        if (g_subcarrier_csv && (frame_num % 12) == 0) {
+        if ((frame_num % 12) == 0) {
             time_t now = time(NULL);
             struct tm *tm_info = localtime(&now);
             char time_str[16];

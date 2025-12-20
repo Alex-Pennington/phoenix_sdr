@@ -1,6 +1,6 @@
 # UDP Telemetry Output Protocol
 
-> ✅ **CURRENT** - Telemetry protocol documentation is accurate
+> ✅ **CURRENT** - Updated December 19, 2025
 
 Phoenix SDR waterfall broadcasts real-time telemetry data via UDP broadcast on port 3005.
 
@@ -11,6 +11,7 @@ Phoenix SDR waterfall broadcasts real-time telemetry data via UDP broadcast on p
 - **Format:** CSV with 4-character channel prefix
 - **Rate:** ~1 message per second per enabled channel
 - **Non-blocking:** Fire-and-forget, no acknowledgment required
+- **Default:** All channels enabled on startup
 
 ## Listening
 
@@ -173,7 +174,27 @@ Broadcast when a minute marker is detected (long ~800ms pulse at second 0 or 59)
 MARK,14:33:00,145320.0,M3,0,MINUTE_MARKER,0.045623,823.5,60.02,0.000123,0.001234
 ```
 
----
+#### MARK Correlator Summary
+
+Broadcast when marker correlation confirms a marker using dual-path analysis.
+
+**Format (correlator):** `MARK,time,timestamp_ms,marker_num,duration_ms,peak_energy,snr_db,confidence\n`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `time` | string | Wall clock time `HH:MM:SS` |
+| `timestamp_ms` | float | Milliseconds since waterfall start |
+| `marker_num` | int | Marker count |
+| `duration_ms` | float | Marker duration (ms) |
+| `peak_energy` | float | Peak energy measured in the slow path |
+| `snr_db` | float | SNR of marker in the slow path (dB) |
+| `confidence` | string | Confidence label (`LOW`, `MED`, `HIGH`) |
+
+**Example:**
+```
+MARK,14:33:00,145320.0,3,823.5,0.0456,18.7,HIGH
+```
+
 
 ### SYNC - Synchronization State
 
@@ -264,33 +285,111 @@ BCDE,14:32:15,85320.0,0.002345,18.7,-56.2,PRESENT
 
 ### BCDS - BCD Symbol Decoder
 
-Broadcast when BCD symbols (0, 1, position marker) are decoded. The BCD correlator uses dual-path detection (time-domain and frequency-domain) to emit high-confidence symbol decisions.
+The BCDS channel broadcasts multiple message types related to BCD time code decoding. All messages are prefixed with `BCDS,` followed by a sub-type identifier.
 
-#### BCDS Symbol Event
+#### BCDS TIME - Time-Domain BCD Pulse Detection
 
-Broadcast when a BCD symbol is decoded with sufficient confidence.
+Broadcast when BCD pulses are detected via time-domain analysis (100 Hz subcarrier envelope).
 
-**Format:** `SYM,symbol,second,duration_ms,confidence\n`
+**Format:** `BCDS,TIME,time,timestamp_ms,pulse_count,peak_energy,duration_ms,noise_floor,snr_db`
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `symbol` | char | Decoded symbol: `0` (zero), `1` (one), `P` (position marker), `?` (unknown) |
-| `second` | int | WWV second position (0-59) when symbol occurred |
+| `time` | string | Wall clock time `HH:MM:SS` |
+| `timestamp_ms` | float | Milliseconds since waterfall start |
+| `pulse_count` | int | Total pulses detected since start |
+| `peak_energy` | float | Peak energy of the detected pulse |
+| `duration_ms` | float | Pulse duration (ms): ~200ms=0, ~500ms=1, ~800ms=marker |
+| `noise_floor` | float | Noise floor estimate |
+| `snr_db` | float | Signal-to-noise ratio (dB) |
+
+**Example:**
+```
+BCDS,TIME,14:32:15,85320.0,127,0.045623,498.5,0.002345,18.7
+```
+
+---
+
+#### BCDS FREQ - Frequency-Domain BCD Pulse Detection
+
+Broadcast when BCD pulses are detected via frequency-domain analysis (100 Hz FFT bin tracking).
+
+**Format:** `BCDS,FREQ,time,timestamp_ms,pulse_count,peak_energy,duration_ms,baseline,snr_db`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `time` | string | Wall clock time `HH:MM:SS` |
+| `timestamp_ms` | float | Milliseconds since waterfall start |
+| `pulse_count` | int | Total pulses detected since start |
+| `peak_energy` | float | Peak energy of the detected pulse |
+| `duration_ms` | float | Pulse duration (ms) |
+| `baseline` | float | Baseline energy level |
+| `snr_db` | float | Signal-to-noise ratio (dB) |
+
+**Example:**
+```
+BCDS,FREQ,14:32:16,86320.0,128,0.042123,503.2,0.001234,19.2
+```
+
+---
+
+#### BCDS CORR - BCD Correlation Statistics
+
+Broadcast for each symbol correlation event, providing detailed statistics from both detection paths.
+
+**Format:** `BCDS,CORR,time,timestamp_ms,symbol_count,second,symbol,source,duration_ms,confidence,interval_sec,time_events,freq_events,time_energy,freq_energy,state`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `time` | string | Wall clock time `HH:MM:SS` |
+| `timestamp_ms` | float | Milliseconds since waterfall start |
+| `symbol_count` | int | Total symbols decoded |
+| `second` | int | WWV second position (0-59) |
+| `symbol` | char | Decoded symbol: `0`, `1`, `P` (marker), `?` (unknown) |
+| `source` | string | Detection source: `TIME`, `FREQ`, `BOTH`, `CONFLICT` |
+| `duration_ms` | float | Pulse duration (ms) |
+| `confidence` | float | Detection confidence (0.0-1.0) |
+| `interval_sec` | float | Time since last symbol (seconds) |
+| `time_events` | int | Events from time-domain detector |
+| `freq_events` | int | Events from frequency-domain detector |
+| `time_energy` | float | Cumulative energy from time detector |
+| `freq_energy` | float | Cumulative energy from freq detector |
+| `state` | string | Correlator state: `IDLE`, `ACQUIRING`, `LOCKED` |
+
+**Example:**
+```
+BCDS,CORR,14:32:16,86320.0,128,16,1,BOTH,498.5,0.92,1.0,1,1,0.0456,0.0421,LOCKED
+```
+
+---
+
+#### BCDS SYM - BCD Symbol Events
+
+Broadcast when a BCD symbol is decoded with high confidence. This is the primary output for BCD decoding.
+
+**Format:** `BCDS,SYM,symbol,second,duration_ms,confidence`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `symbol` | char | Decoded symbol: `0`, `1`, `P` (position marker), `?` (unknown) |
+| `second` | int | WWV second position (0-59) |
 | `duration_ms` | float | Pulse duration in milliseconds (200ms=0, 500ms=1, 800ms=marker) |
 | `confidence` | float | Detection confidence (0.0-1.0) |
 
 **Example:**
 ```
-SYM,1,15,498.5,0.92
-SYM,0,16,203.2,0.87
-SYM,P,0,821.0,0.95
+BCDS,SYM,1,15,498.5,0.92
+BCDS,SYM,0,16,203.2,0.87
+BCDS,SYM,P,0,821.0,0.95
 ```
 
-#### BCDS Status
+---
 
-Broadcast every ~1 second. Reports decoder modem status.
+#### BCDS STATUS - Decoder Status
 
-**Format:** `STATUS,time,timestamp_ms,mode,frame,parity,timecode,symbol_count\n`
+Broadcast every ~1 second. Reports overall decoder modem status and statistics.
+
+**Format:** `BCDS,STATUS,time,timestamp_ms,mode,frame,parity,timecode,symbol_count`
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -304,33 +403,102 @@ Broadcast every ~1 second. Reports decoder modem status.
 
 **Example:**
 ```
-STATUS,14:32:15,85320.0,MODEM,-1,0,0,127
+BCDS,STATUS,14:32:15,85320.0,MODEM,-1,0,0,127
 ```
 
 **Broadcast Timing:**
-- Symbol events: Sent immediately when decoded (max 1/second per WWV schedule)
-- Status: Sent every ~1 second with cumulative statistics
+- TIME/FREQ messages: Sent when pulses detected (~1/second)
+- CORR messages: Sent for each symbol correlation event
+- SYM messages: Sent immediately when high-confidence symbols decoded
+- STATUS messages: Sent every ~1 second with cumulative statistics
 
 ---
 
-## Reserved Channels (Not Yet Implemented)
+### TICK - Tick Pulse Detection Events
 
-| Prefix | Channel Enum | Description |
-|--------|--------------|-------------|
-| `TICK` | `TELEM_TICKS` | Tick pulse detection events |
-| `CORR` | `TELEM_CORR` | Tick correlation data |
+Broadcast when tick pulses are detected (~1 per second).
+
+**Format:** `TICK,time,timestamp_ms,tick_num,expected,energy_peak,duration_ms,interval_ms,avg_interval_ms,noise_floor,corr_peak,corr_ratio\n`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `time` | string | Wall clock time `HH:MM:SS` |
+| `timestamp_ms` | float | Milliseconds since waterfall start |
+| `tick_num` | int or string | Tick number or `M#` for markers |
+| `expected` | string | Expected WWV event at this second |
+| `energy_peak` | float | Peak energy of the tick pulse |
+| `duration_ms` | float | Tick pulse duration (ms), typically ~5ms |
+| `interval_ms` | float | Time since last tick (ms) |
+| `avg_interval_ms` | float | 15-second rolling average interval (ms) |
+| `noise_floor` | float | Noise floor estimate |
+| `corr_peak` | float | Correlation peak value |
+| `corr_ratio` | float | Peak-to-noise ratio in correlation |
+
+**Example:**
+```
+TICK,14:32:15,85320.0,15,TICK,0.045623,5.2,1000.5,1000.1,0.0011,12.3,0.89
+```
+
+---
+
+### CORR - Tick Correlation Chains
+
+Broadcast when tick correlation chains are analyzed.
+
+**Format:** `CORR,time,timestamp_ms,tick_num,expected,energy_peak,duration_ms,interval_ms,avg_interval_ms,noise_floor,corr_peak,corr_ratio,chain_id,chain_len,chain_start_ms,drift_ms\n`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `time` | string | Wall clock time `HH:MM:SS` |
+| `timestamp_ms` | float | Milliseconds since waterfall start |
+| `tick_num` | int | Tick number in sequence |
+| `expected` | string | Expected WWV event |
+| `energy_peak` | float | Peak energy value |
+| `duration_ms` | float | Pulse duration (ms) |
+| `interval_ms` | float | Interval since last tick (ms) |
+| `avg_interval_ms` | float | Average interval (ms) |
+| `noise_floor` | float | Noise floor |
+| `corr_peak` | float | Correlation peak |
+| `corr_ratio` | float | Correlation ratio |
+| `chain_id` | int | Current correlation chain identifier |
+| `chain_len` | int | Current correlation chain length |
+| `chain_start_ms` | float | Timestamp (ms) where the current chain started |
+| `drift_ms` | float | Accumulated timing drift within the current chain (ms) |
+
+**Example:**
+```
+CORR,14:32:16,86320.0,16,TICK,0.042,5.1,1000.2,1000.15,0.0012,13.1,0.91,3,16,85320,2.4
+```
+
+---
+
+### CONS - Console Messages
+
+Broadcast console/debug output from waterfall. Messages are buffered and flushed periodically or on newline.
+
+**Format:** `CONS,message\n`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message` | string | Console output text (may contain internal commas) |
+
+**Example:**
+```
+CONS,[SYNC] Startup state: ACQUIRING (markers=0, good_intervals=0)
+CONS,[EPOCH] 1234 frames = 105.192 sec, avg frame = 85.33 ms
+```
 
 ---
 
 ## Enabling/Disabling Channels
 
-Channels are controlled via bitmask in waterfall.c:
+**All channels are enabled by default** when `telem_init()` is called. Channels can be controlled via bitmask in waterfall.c:
 
 ```c
 #include "waterfall_telemetry.h"
 
-telem_init(3005);
-telem_enable(TELEM_CHANNEL | TELEM_CARRIER | TELEM_SUBCAR | TELEM_TONE500 | TELEM_TONE600);
+telem_init(3005);              // All channels enabled by default
+telem_disable(TELEM_BCD_ENV);  // Optionally disable specific channels
 ```
 
 Channel bitmask values:
@@ -347,7 +515,8 @@ Channel bitmask values:
 | `TELEM_TONE600` | 8 | 0x100 | `T600` |
 | `TELEM_BCD_ENV` | 9 | 0x200 | `BCDE` (deprecated) |
 | `TELEM_BCDS` | 10 | 0x400 | `BCDS` |
-| `TELEM_ALL` | - | 0x7FF | - |
+| `TELEM_CONSOLE` | 11 | 0x800 | `CONS` |
+| `TELEM_ALL` | - | 0xFFF | (all channels) |
 
 ---
 

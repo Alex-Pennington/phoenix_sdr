@@ -57,17 +57,17 @@ void test_channel_enable_disable(void) {
 
     telem_init(3005);
 
-    /* Initially none enabled */
-    if (telem_get_channels() != TELEM_NONE) {
-        FAIL("channels not initially NONE");
+    /* All channels enabled by default */
+    if (telem_get_channels() != TELEM_ALL) {
+        FAIL("channels not initialized to TELEM_ALL");
         telem_cleanup();
         return;
     }
 
-    /* Enable single channel */
-    telem_enable(TELEM_CHANNEL);
-    if (!telem_is_enabled(TELEM_CHANNEL)) {
-        FAIL("TELEM_CHANNEL not enabled");
+    /* Disabling should work */
+    telem_disable(TELEM_TONE500);
+    if (telem_is_enabled(TELEM_TONE500)) {
+        FAIL("TELEM_TONE500 not disabled");
         telem_cleanup();
         return;
     }

@@ -147,7 +147,8 @@ bool telem_init(int port) {
     g_broadcast_addr.sin_port = htons((uint16_t)port);
     g_broadcast_addr.sin_addr.s_addr = htonl(INADDR_BROADCAST);  /* 255.255.255.255 */
 
-    g_enabled_channels = TELEM_NONE;
+    /* Enable all channels by default */
+    g_enabled_channels = TELEM_ALL;
     g_stats_sent = 0;
     g_stats_dropped = 0;
     g_initialized = true;

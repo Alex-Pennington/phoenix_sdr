@@ -2,9 +2,9 @@
 
 **Last Updated:** 2025-12-19
 
-## Current Status: 🟢 UDP TELEMETRY CONSOLIDATION COMPLETE
+## Current Status: 🟢 TELEMETRY LOGGER TOOL COMPLETE
 
-**Version:** v0.3.x+ — UDP-only telemetry with optional CSV logging
+**Version:** v1.10.x — UDP telemetry with standalone logger tool
 
 ## What's Working ✅
 
@@ -16,7 +16,8 @@
 | Tick Detection | ✅ | State machine with hysteresis, adaptive threshold |
 | Interval Tracking | ✅ | Per-tick interval + 15-second rolling average |
 | Purple Flash | ✅ | Visual indicator on 1000Hz bar when tick detected |
-| CSV Logging | ✅ | Full tick data to wwv_ticks.csv |
+| UDP Telemetry | ✅ | All detector data broadcast on port 3005 |
+| Telemetry Logger | ✅ | System tray app logs UDP → CSV files |
 | Keyboard Controls | ✅ | D=toggle, S=stats, 0-7=params, +/-=adjust |
 
 ## Today's Achievement 🎯
@@ -99,6 +100,48 @@ cd D:\claude_sandbox\phoenix_sdr
 - **Antenna:** HF antenna on Hi-Z port
 
 ## Session History
+
+### Dec 19 - Telemetry Logger Tool
+**Goal:** Create a standalone UDP listener that writes telemetry to CSV files
+
+**New Tool: `telem_logger.exe`**
+- Listens on UDP port 3005 for telemetry broadcasts from waterfall.exe
+- Auto-detects channels from message prefixes (CHAN, TICK, MARK, SYNC, etc.)
+- Creates separate CSV files per channel: `telem_<CHANNEL>_YYYYMMDD_HHMMSS.csv`
+- Runs in Windows system tray for background operation
+
+**System Tray Features:**
+- Tooltip shows live message count and active channels
+- Right-click menu:
+  - Status display (messages, channels)
+  - Pause/Resume logging
+  - Open logs folder in Explorer
+  - Exit
+
+**Command-line options:**
+- `-p <port>` — UDP port (default: 3005)
+- `-o <dir>` — Output directory for CSV files
+- `-c <channels>` — Filter to specific channels (comma-separated)
+- `-v` — Verbose mode (print to console)
+- `--no-tray` — Disable system tray (console only)
+
+**Usage:**
+```powershell
+# Start logger in system tray
+.\bin\telem_logger.exe -o logs/
+
+# Start waterfall
+cmd /c ".\bin\simple_am_receiver.exe -f 5.000450 -g 59 -l 0 -o | .\bin\waterfall.exe"
+
+# Right-click tray icon to manage/exit
+```
+
+**Files Created:**
+- `tools/telem_logger.c` — UDP listener with system tray support
+- `docs/TELEMETRY_LOGGER.md` — Tool documentation
+
+**Files Modified:**
+- `build.ps1` — Added telem_logger build target
 
 ### Dec 19 - UDP Telemetry Consolidation
 **Goal:** Eliminate CSV file duplication, consolidate all logging to UDP telemetry (port 3005)

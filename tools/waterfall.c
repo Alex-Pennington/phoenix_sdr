@@ -594,15 +594,10 @@ static tick_correlator_t *g_tick_correlator = NULL;
 static void on_tick_marker(const tick_marker_event_t *event, void *user_data) {
     (void)user_data;
 
-    /* Calculate leading edge (true second boundary).
-     * Research formula: T_true = T_trailing - D_known - T_filter_delay
-     * T_filter_delay = 3.0ms total group delay:
-     *   - 0.32ms: 2nd order Butterworth lowpass (fc=5kHz @ f=1kHz)
-     *   - 2.55ms: Hann window (N=256, fs=50kHz)
-     *   - 0.13ms: 3-stage decimation FIR cascade
-     * Hysteresis correction not applicable (energy-based FFT, not threshold-crossing).
-     * See: docs/Precise pulse timing recovery from WWV time signals.md */
-    float leading_edge_ms = event->timestamp_ms - event->duration_ms - 3.0f;
+    /* Use leading edge directly from tick_detector (already compensated for filter delay).
+     * start_timestamp_ms = trailing - duration - TICK_FILTER_DELAY_MS
+     * This is the fast path (256-pt FFT @ 50kHz) - most precise timing. */
+    float leading_edge_ms = event->start_timestamp_ms;
 
     /* Feed sync detector with LEADING EDGE (actual second boundary).
      * BCD correlator uses sync's last_marker_ms as anchor for 1-second windows.
@@ -614,7 +609,7 @@ static void on_tick_marker(const tick_marker_event_t *event, void *user_data) {
 
     /* Set epoch from tick detector's precise measurement */
     if (g_tick_detector) {
-        telem_console("[EPOCH] TICK trailing=%.1fms dur=%.0fms leading=%.1fms\n",
+        telem_console("[EPOCH] FAST trailing=%.1fms dur=%.0fms leading=%.1fms\n",
                       event->timestamp_ms, event->duration_ms, leading_edge_ms);
 
         tick_detector_set_epoch(g_tick_detector, leading_edge_ms);
@@ -675,23 +670,38 @@ static void on_marker_event(const marker_event_t *event, void *user_data) {
                                     event->accumulated_energy, event->duration_ms);
     }
 
-    /* Feed tick detector timing gate (marker bootstrap) */
+    /* Feed tick detector timing gate (marker bootstrap).
+     * Dual-path agreement validation: compare fast (tick_detector) to slow (marker_detector). */
     if (g_tick_detector) {
         float leading_edge_ms;
+        float slow_marker_leading_edge_ms;
+
+        /* Slow marker path: trailing edge - estimated total delay - filter delay
+         * (800ms pulse + ~400ms accumulator delay = 1200ms + 3ms filter) */
+        #define SLOW_MARKER_TOTAL_DELAY_MS  1200.0f
+        slow_marker_leading_edge_ms = event->timestamp_ms - SLOW_MARKER_TOTAL_DELAY_MS - 3.0f;
 
         /* Prefer tick detector timestamp/duration when available (more precise).
          * Only fall back to slow marker estimate when tick detector didn't see it. */
         if (have_tick && tick_duration_ms > 0.0f) {
-            /* Tick detector: trailing edge - actual duration - filter delay (3.0ms) */
+            /* Fast path (tick detector): trailing edge - actual duration - filter delay (3.0ms) */
             leading_edge_ms = tick_timestamp_ms - tick_duration_ms - 3.0f;
-            telem_console("[EPOCH] TICK trailing=%.1fms dur=%.0fms leading=%.1fms\n",
-                          tick_timestamp_ms, tick_duration_ms, leading_edge_ms);
+            
+            /* Dual-path agreement check */
+            float disagreement_ms = fabsf(leading_edge_ms - slow_marker_leading_edge_ms);
+            const char *quality = (disagreement_ms < 20.0f) ? "GOOD" : 
+                                  (disagreement_ms < 50.0f) ? "FAIR" : "POOR";
+            
+            telem_console("[EPOCH] FAST=%.1fms SLOW=%.1fms diff=%.1fms [%s]\n",
+                          leading_edge_ms, slow_marker_leading_edge_ms, disagreement_ms, quality);
+            
+            if (disagreement_ms > 50.0f) {
+                telem_console("[WARN] Dual-path disagreement >50ms - possible fading or interference\n");
+            }
         } else {
-            /* Slow marker: trailing edge - estimated total delay - filter delay
-             * (800ms pulse + ~400ms accumulator delay = 1200ms + 3ms filter) */
-            #define SLOW_MARKER_TOTAL_DELAY_MS  1200.0f
-            leading_edge_ms = event->timestamp_ms - SLOW_MARKER_TOTAL_DELAY_MS - 3.0f;
-            telem_console("[EPOCH] SLOW trailing=%.1fms total_delay=%.0fms leading=%.1fms\n",
+            /* Fallback to slow marker only */
+            leading_edge_ms = slow_marker_leading_edge_ms;
+            telem_console("[EPOCH] SLOW-ONLY trailing=%.1fms total_delay=%.0fms leading=%.1fms\n",
                           event->timestamp_ms, SLOW_MARKER_TOTAL_DELAY_MS, leading_edge_ms);
         }
 

@@ -65,12 +65,18 @@ typedef void (*tick_callback_fn)(const tick_event_t *event, void *user_data);
  * Callback for minute marker events (detected by duration)
  *============================================================================*/
 
+/* Timing calibration constants (WWV spec + empirical measurements) */
+#define TICK_ACTUAL_DURATION_MS    5.0f     /* WWV spec: 5ms pulse */
+#define MARKER_ACTUAL_DURATION_MS  800.0f   /* WWV spec: 800ms pulse */
+#define TICK_FILTER_DELAY_MS       3.0f     /* Filter group delay (2.55ms Hann + 0.32ms Butterworth + 0.13ms decimation) */
+
 typedef struct {
     int marker_number;
-    float timestamp_ms;
-    float duration_ms;
+    float timestamp_ms;        /* TRAILING EDGE - when pulse energy dropped below threshold */
+    float start_timestamp_ms;  /* LEADING EDGE - timestamp_ms - duration_ms - TICK_FILTER_DELAY_MS (ON-TIME MARKER) */
+    float duration_ms;         /* Measured duration (may be biased longer than actual due to threshold hysteresis) */
     float corr_ratio;
-    float interval_ms;      /* Time since previous marker */
+    float interval_ms;         /* Time since previous marker */
 } tick_marker_event_t;
 
 typedef void (*tick_marker_callback_fn)(const tick_marker_event_t *event, void *user_data);

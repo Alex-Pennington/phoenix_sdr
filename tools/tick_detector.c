@@ -398,9 +398,15 @@ static void run_state_machine(tick_detector_t *td) {
                     td->markers_detected++;
                     td->flash_frames_remaining = TICK_FLASH_FRAMES * 6;  /* Long flash for marker */
 
-                    printf("[%7.1fs] *** MINUTE MARKER #%-3d ***  dur=%.0fms  corr=%.1f  since=%.1fs\n",
+                    /* Calculate leading edge (on-time marker).
+                     * Leading edge = trailing edge - duration - filter delay.
+                     * timestamp_ms is when energy dropped below threshold (trailing edge).
+                     * The actual WWV marker START is the on-time reference. */
+                    float leading_edge_ms = timestamp_ms - duration_ms - TICK_FILTER_DELAY_MS;
+
+                    printf("[%7.1fs] *** MINUTE MARKER #%-3d ***  dur=%.0fms  corr=%.1f  since=%.1fs  start=%.1fms\n",
                            timestamp_ms / 1000.0f, td->markers_detected,
-                           duration_ms, corr_ratio, since_last_marker_ms / 1000.0f);
+                           duration_ms, corr_ratio, since_last_marker_ms / 1000.0f, leading_edge_ms);
 
                     /* CSV logging and telemetry */
                     char time_str[16];
@@ -431,6 +437,7 @@ static void run_state_machine(tick_detector_t *td) {
                         tick_marker_event_t event = {
                             .marker_number = td->markers_detected,
                             .timestamp_ms = timestamp_ms,
+                            .start_timestamp_ms = leading_edge_ms,  /* LEADING EDGE - on-time marker */
                             .duration_ms = duration_ms,
                             .corr_ratio = corr_ratio,
                             .interval_ms = since_last_marker_ms

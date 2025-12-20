@@ -47,7 +47,9 @@ typedef enum {
     TELEM_BCD_ENV   = (1 << 9),  /* DEPRECATED: 100 Hz BCD envelope tracker */
     TELEM_BCDS      = (1 << 10), /* BCD decoder symbols and time */
     TELEM_CONSOLE   = (1 << 11), /* Console/status messages (buffered) */
-    TELEM_ALL       = 0xFFF      /* All channels */
+    TELEM_CTRL      = (1 << 12), /* Control commands received (from controller) */
+    TELEM_RESP      = (1 << 13), /* Responses to control commands (to controller) */
+    TELEM_ALL       = 0x3FFF     /* All channels */
 } telem_channel_t;
 
 /*============================================================================

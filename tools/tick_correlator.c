@@ -220,7 +220,7 @@ void tick_correlator_add_tick(tick_correlator_t *tc,
     if (tc->tracking.active && tc->last_tick_ms > 0) {
         float predicted_next = tc->last_tick_ms + CORR_NOMINAL_INTERVAL;
         float prediction_error = fabsf(timestamp_ms - predicted_next);
-        
+
         /* Require BOTH timestamp AND interval discipline:
          * - Timestamp within discipline window (±10ms typical)
          * - Interval within proven range (998-1002ms) */
@@ -231,7 +231,7 @@ void tick_correlator_add_tick(tick_correlator_t *tc,
             tc->tracking.consecutive_misses = 0;
             telem_sendf(TELEM_CONSOLE, "[TRACK] HIT: t_err=%.1fms int=%.1fms chain=%d",
                        prediction_error, actual_interval, tc->tracking.retained_chain_id);
-            
+
             /* Reattach to retained chain if we broke off */
             if (tc->current_chain_id != tc->tracking.retained_chain_id) {
                 telem_sendf(TELEM_CONSOLE, "[TRACK] Reattach: %d → %d",
@@ -243,7 +243,7 @@ void tick_correlator_add_tick(tick_correlator_t *tc,
             tc->tracking.consecutive_misses++;
             telem_sendf(TELEM_CONSOLE, "[TRACK] MISS: t_err=%.1fms int=%.1fms misses=%d",
                        prediction_error, actual_interval, tc->tracking.consecutive_misses);
-            
+
             /* Exit tracking after 5 consecutive misses */
             if (tc->tracking.consecutive_misses >= 5) {
                 telem_sendf(TELEM_CONSOLE, "[TRACK] Deactivated: 5 consecutive misses, signal lost");
@@ -334,7 +334,7 @@ void tick_correlator_add_tick(tick_correlator_t *tc,
         if (tc->tracking.active) {
             tc->tracking.discipline_window_ms = std_dev_ms * 4.0f;
             tc->tracking.last_std_dev_ms = std_dev_ms;
-            
+
             /* Deactivate tracking if discipline degraded beyond threshold */
             if (std_dev_ms > 20.0f) {
                 telem_sendf(TELEM_CONSOLE, "[TRACK] Deactivated: discipline degraded (std_dev=%.1fms > 20ms)",

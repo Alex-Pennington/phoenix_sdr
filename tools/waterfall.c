@@ -146,6 +146,17 @@ static uint32_t g_tcp_gain_reduction = 0;
 static uint32_t g_tcp_lna_state = 0;
 static bool g_tcp_streaming = false;
 
+/*============================================================================
+ * UDP Command Listener (Runtime Modem Tuning)
+ *============================================================================*/
+#define CMD_PORT            3006
+#define CMD_MAX_LEN         512
+#define CMD_RATE_LIMIT_PER_SEC  10
+
+static socket_t g_cmd_sock = SOCKET_INVALID;
+static uint32_t g_cmd_count_this_sec = 0;
+static time_t g_cmd_rate_limit_sec = 0;
+
 /* Decimation factors (computed from TCP sample rate) */
 static int g_detector_decimation = 1;   /* 2 MHz → 48 kHz */
 static int g_display_decimation = 1;    /* 2 MHz → 12 kHz */
@@ -451,6 +462,136 @@ static bool parse_tcp_arg(const char *arg) {
         g_tcp_host[sizeof(g_tcp_host) - 1] = '\0';
     }
     return true;
+}
+
+/*============================================================================
+ * STUB: Detector Parameter Setters (To Be Implemented)
+ *============================================================================*/
+/* STUB: tick_detector setters - implementation deferred */
+static void stub_set_tick_threshold(float mult) {
+    (void)mult;  /* Suppress unused warning */
+    telem_sendf(TELEM_RESP, "ERR STUB SET_TICK_THRESHOLD not implemented\n");
+}
+
+static void stub_set_tick_adapt_down(float rate) {
+    (void)rate;
+    telem_sendf(TELEM_RESP, "ERR STUB SET_TICK_ADAPT_DOWN not implemented\n");
+}
+
+static void stub_set_tick_adapt_up(float rate) {
+    (void)rate;
+    telem_sendf(TELEM_RESP, "ERR STUB SET_TICK_ADAPT_UP not implemented\n");
+}
+
+/*============================================================================
+ * UDP Command Processor
+ *============================================================================*/
+static void process_modem_command(const char *cmd_buf, int len) {
+    /* Rate limiting check */
+    time_t now = time(NULL);
+    if (now != g_cmd_rate_limit_sec) {
+        g_cmd_rate_limit_sec = now;
+        g_cmd_count_this_sec = 0;
+    }
+    if (g_cmd_count_this_sec >= CMD_RATE_LIMIT_PER_SEC) {
+        telem_sendf(TELEM_RESP, "ERR RATE_LIMIT exceeded (%d/sec)\n", CMD_RATE_LIMIT_PER_SEC);
+        return;
+    }
+    g_cmd_count_this_sec++;
+
+    /* Null-terminate and log */
+    char cmd_str[CMD_MAX_LEN + 1];
+    int copy_len = (len < CMD_MAX_LEN) ? len : CMD_MAX_LEN;
+    memcpy(cmd_str, cmd_buf, copy_len);
+    cmd_str[copy_len] = '\0';
+    
+    /* Remove trailing newline */
+    char *nl = strchr(cmd_str, '\n');
+    if (nl) *nl = '\0';
+    char *cr = strchr(cmd_str, '\r');
+    if (cr) *cr = '\0';
+
+    telem_sendf(TELEM_CTRL, "%s\n", cmd_str);
+
+    /* Parse command */
+    char cmd_name[64];
+    float value;
+    int parsed = sscanf(cmd_str, "%63s %f", cmd_name, &value);
+    
+    if (parsed < 1) {
+        telem_sendf(TELEM_RESP, "ERR PARSE empty command\n");
+        return;
+    }
+
+    /* Telemetry control commands (working) */
+    if (strcmp(cmd_name, "ENABLE_TELEM") == 0) {
+        char channel_name[64];
+        if (sscanf(cmd_str, "%*s %63s", channel_name) == 1) {
+            if (strcmp(channel_name, "TICK") == 0) telem_enable(TELEM_TICKS);
+            else if (strcmp(channel_name, "MARK") == 0) telem_enable(TELEM_MARKERS);
+            else if (strcmp(channel_name, "SYNC") == 0) telem_enable(TELEM_SYNC);
+            else if (strcmp(channel_name, "CORR") == 0) telem_enable(TELEM_CORR);
+            else if (strcmp(channel_name, "CONS") == 0) telem_enable(TELEM_CONSOLE);
+            else {
+                telem_sendf(TELEM_RESP, "ERR UNKNOWN_CHANNEL %s\n", channel_name);
+                return;
+            }
+            telem_sendf(TELEM_RESP, "OK ENABLED %s\n", channel_name);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE ENABLE_TELEM requires channel name\n");
+        }
+        return;
+    }
+    
+    if (strcmp(cmd_name, "DISABLE_TELEM") == 0) {
+        char channel_name[64];
+        if (sscanf(cmd_str, "%*s %63s", channel_name) == 1) {
+            if (strcmp(channel_name, "TICK") == 0) telem_disable(TELEM_TICKS);
+            else if (strcmp(channel_name, "MARK") == 0) telem_disable(TELEM_MARKERS);
+            else if (strcmp(channel_name, "SYNC") == 0) telem_disable(TELEM_SYNC);
+            else if (strcmp(channel_name, "CORR") == 0) telem_disable(TELEM_CORR);
+            else if (strcmp(channel_name, "CONS") == 0) telem_disable(TELEM_CONSOLE);
+            else {
+                telem_sendf(TELEM_RESP, "ERR UNKNOWN_CHANNEL %s\n", channel_name);
+                return;
+            }
+            telem_sendf(TELEM_RESP, "OK DISABLED %s\n", channel_name);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE DISABLE_TELEM requires channel name\n");
+        }
+        return;
+    }
+
+    /* Detector parameter commands (STUB) */
+    if (strcmp(cmd_name, "SET_TICK_THRESHOLD") == 0) {
+        if (parsed == 2 && value > 0.0f && value < 10.0f) {
+            stub_set_tick_threshold(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR RANGE SET_TICK_THRESHOLD requires 0.0-10.0\n");
+        }
+        return;
+    }
+    
+    if (strcmp(cmd_name, "SET_TICK_ADAPT_DOWN") == 0) {
+        if (parsed == 2 && value > 0.0f && value < 1.0f) {
+            stub_set_tick_adapt_down(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR RANGE SET_TICK_ADAPT_DOWN requires 0.0-1.0\n");
+        }
+        return;
+    }
+    
+    if (strcmp(cmd_name, "SET_TICK_ADAPT_UP") == 0) {
+        if (parsed == 2 && value > 0.0f && value < 1.0f) {
+            stub_set_tick_adapt_up(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR RANGE SET_TICK_ADAPT_UP requires 0.0-1.0\n");
+        }
+        return;
+    }
+
+    /* Unknown command */
+    telem_sendf(TELEM_RESP, "ERR UNKNOWN_CMD %s\n", cmd_name);
 }
 
 static bool tcp_reconnect(void) {
@@ -1185,6 +1326,35 @@ int main(int argc, char *argv[]) {
     telem_init(3005);
     /* All channels enabled by default in telem_init() */
 
+    /* Initialize UDP command listener */
+    g_cmd_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (g_cmd_sock != SOCKET_INVALID) {
+        struct sockaddr_in cmd_addr;
+        memset(&cmd_addr, 0, sizeof(cmd_addr));
+        cmd_addr.sin_family = AF_INET;
+        cmd_addr.sin_port = htons(CMD_PORT);
+        cmd_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);  /* localhost only */
+        
+        if (bind(g_cmd_sock, (struct sockaddr*)&cmd_addr, sizeof(cmd_addr)) < 0) {
+            fprintf(stderr, "[CMD] Failed to bind UDP command socket on port %d\n", CMD_PORT);
+            socket_close(g_cmd_sock);
+            g_cmd_sock = SOCKET_INVALID;
+        } else {
+            /* Set non-blocking */
+#ifdef _WIN32
+            u_long mode = 1;
+            ioctlsocket(g_cmd_sock, FIONBIO, &mode);
+#else
+            int flags = fcntl(g_cmd_sock, F_GETFL, 0);
+            fcntl(g_cmd_sock, F_SETFL, flags | O_NONBLOCK);
+#endif
+            printf("[CMD] UDP command listener on localhost:%d (rate limit: %d/sec)\n", 
+                   CMD_PORT, CMD_RATE_LIMIT_PER_SEC);
+        }
+    } else {
+        fprintf(stderr, "[CMD] Failed to create UDP command socket\n");
+    }
+
     /* Output initial sync state to console and telemetry */
     telem_console("[SYNC] Startup state: %s (markers=%d, good_intervals=%d)\n",
                   sync_state_name(sync_detector_get_state(g_sync_detector)),
@@ -1222,6 +1392,15 @@ int main(int argc, char *argv[]) {
     bool running = true;
 
     while (running) {
+        /* Poll UDP command socket (non-blocking) */
+        if (g_cmd_sock != SOCKET_INVALID) {
+            char cmd_buf[CMD_MAX_LEN];
+            int n = recvfrom(g_cmd_sock, cmd_buf, sizeof(cmd_buf) - 1, 0, NULL, NULL);
+            if (n > 0) {
+                process_modem_command(cmd_buf, n);
+            }
+        }
+
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
@@ -1894,6 +2073,12 @@ int main(int argc, char *argv[]) {
     tone_tracker_destroy(g_tone_500);
     tone_tracker_destroy(g_tone_600);
     telem_cleanup();
+
+    /* Cleanup UDP command socket */
+    if (g_cmd_sock != SOCKET_INVALID) {
+        socket_close(g_cmd_sock);
+        g_cmd_sock = SOCKET_INVALID;
+    }
 
     if (g_tcp_mode && !g_test_pattern) {
         if (g_iq_sock != SOCKET_INVALID) {

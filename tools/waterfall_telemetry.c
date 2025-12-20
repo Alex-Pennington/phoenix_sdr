@@ -69,6 +69,8 @@ static const char *g_channel_prefixes[] = {
     "BCDE",  /* TELEM_BCD_ENV (100 Hz envelope) */
     "BCDS",  /* TELEM_BCDS (BCD symbols/time) */
     "CONS",  /* TELEM_CONSOLE (console messages) */
+    "CTRL",  /* TELEM_CTRL (control commands) */
+    "RESP",  /* TELEM_RESP (command responses) */
 };
 
 /*============================================================================
@@ -89,6 +91,8 @@ static int get_channel_index(telem_channel_t channel) {
         case TELEM_BCD_ENV: return 10;
         case TELEM_BCDS:    return 11;
         case TELEM_CONSOLE: return 12;
+        case TELEM_CTRL:    return 13;
+        case TELEM_RESP:    return 14;
         default:            return 0;
     }
 }

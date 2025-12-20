@@ -152,6 +152,12 @@ struct tick_detector {
     int flash_frames_remaining;
     bool detection_enabled;
 
+    /* Tunable parameters (runtime adjustable via UDP commands) */
+    float threshold_multiplier;     /* Detection sensitivity (1.0-5.0, default 2.0) */
+    float adapt_alpha_down;         /* Noise floor decay rate (0.9-0.999, default 0.995) */
+    float adapt_alpha_up;           /* Noise floor rise rate (0.001-0.1, default 0.02) */
+    float min_duration_ms;          /* Minimum pulse width (1.0-10.0, default 2.0) */
+
     /* Callback */
     tick_callback_fn callback;
     void *callback_user_data;
@@ -603,7 +609,7 @@ tick_detector_t *tick_detector_create(const char *csv_path) {
     /* Initialize state */
     td->state = STATE_IDLE;
     td->noise_floor = 0.01f;
-    td->threshold_high = td->noise_floor * TICK_THRESHOLD_MULT;
+    td->threshold_high = td->noise_floor * td->threshold_multiplier;
     td->threshold_low = td->threshold_high * TICK_HYSTERESIS_RATIO;
     td->detection_enabled = true;
     td->warmup_complete = false;
@@ -776,6 +782,22 @@ float tick_detector_get_current_energy(tick_detector_t *td) {
     return td ? td->current_energy : 0.0f;
 }
 
+float tick_detector_get_threshold_mult(tick_detector_t *td) {
+    return td ? td->threshold_multiplier : TICK_THRESHOLD_MULT;
+}
+
+float tick_detector_get_adapt_alpha_down(tick_detector_t *td) {
+    return td ? td->adapt_alpha_down : (1.0f - TICK_NOISE_ADAPT_DOWN);
+}
+
+float tick_detector_get_adapt_alpha_up(tick_detector_t *td) {
+    return td ? td->adapt_alpha_up : (1.0f - TICK_NOISE_ADAPT_UP);
+}
+
+float tick_detector_get_min_duration_ms(tick_detector_t *td) {
+    return td ? td->min_duration_ms : TICK_MIN_DURATION_MS;
+}
+
 int tick_detector_get_tick_count(tick_detector_t *td) {
     return td ? td->ticks_detected : 0;
 }
@@ -905,4 +927,34 @@ epoch_source_t tick_detector_get_epoch_source(tick_detector_t *td) {
 
 float tick_detector_get_epoch_confidence(tick_detector_t *td) {
     return td ? td->epoch_confidence : 0.0f;
+}
+
+/*============================================================================
+ * Runtime Tunable Parameters
+ *============================================================================*/
+
+bool tick_detector_set_threshold_mult(tick_detector_t *td, float value) {
+    if (!td || value < 1.0f || value > 5.0f) return false;
+    td->threshold_multiplier = value;
+    td->threshold_high = td->noise_floor * td->threshold_multiplier;
+    td->threshold_low = td->threshold_high * TICK_HYSTERESIS_RATIO;
+    return true;
+}
+
+bool tick_detector_set_adapt_alpha_down(tick_detector_t *td, float value) {
+    if (!td || value < 0.9f || value > 0.999f) return false;
+    td->adapt_alpha_down = value;
+    return true;
+}
+
+bool tick_detector_set_adapt_alpha_up(tick_detector_t *td, float value) {
+    if (!td || value < 0.001f || value > 0.1f) return false;
+    td->adapt_alpha_up = value;
+    return true;
+}
+
+bool tick_detector_set_min_duration_ms(tick_detector_t *td, float value) {
+    if (!td || value < 1.0f || value > 10.0f) return false;
+    td->min_duration_ms = value;
+    return true;
 }

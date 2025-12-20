@@ -135,6 +135,7 @@ static bool g_tcp_mode = true;
 static bool g_stdin_mode = false;
 static bool g_test_pattern = false;  /* Generate synthetic 1000Hz test tone */
 static bool g_log_csv = false;  /* Enable CSV logging (default: UDP only) */
+static bool g_reload_debug = false;  /* Reload tuned parameters from waterfall.ini */
 static char g_tcp_host[256] = "localhost";
 static int g_iq_port = DEFAULT_IQ_PORT;
 static socket_t g_iq_sock = SOCKET_INVALID;
@@ -464,24 +465,13 @@ static bool parse_tcp_arg(const char *arg) {
     return true;
 }
 
-/*============================================================================
- * STUB: Detector Parameter Setters (To Be Implemented)
- *============================================================================*/
-/* STUB: tick_detector setters - implementation deferred */
-static void stub_set_tick_threshold(float mult) {
-    (void)mult;  /* Suppress unused warning */
-    telem_sendf(TELEM_RESP, "ERR STUB SET_TICK_THRESHOLD not implemented\n");
-}
-
-static void stub_set_tick_adapt_down(float rate) {
-    (void)rate;
-    telem_sendf(TELEM_RESP, "ERR STUB SET_TICK_ADAPT_DOWN not implemented\n");
-}
-
-static void stub_set_tick_adapt_up(float rate) {
-    (void)rate;
-    telem_sendf(TELEM_RESP, "ERR STUB SET_TICK_ADAPT_UP not implemented\n");
-}
+/* Forward declarations for functions that use g_tick_detector (defined after detector globals) */
+static void save_tick_params_to_ini(void);
+static void load_tick_params_from_ini(void);
+static void set_tick_threshold(float mult);
+static void set_tick_adapt_down(float alpha);
+static void set_tick_adapt_up(float alpha);
+static void set_tick_min_duration(float ms);
 
 /*============================================================================
  * UDP Command Processor
@@ -562,30 +552,39 @@ static void process_modem_command(const char *cmd_buf, int len) {
         return;
     }
 
-    /* Detector parameter commands (STUB) */
+/* Tick detector parameter commands (fully functional) */
     if (strcmp(cmd_name, "SET_TICK_THRESHOLD") == 0) {
-        if (parsed == 2 && value > 0.0f && value < 10.0f) {
-            stub_set_tick_threshold(value);
+        if (parsed == 2) {
+            set_tick_threshold(value);
         } else {
-            telem_sendf(TELEM_RESP, "ERR RANGE SET_TICK_THRESHOLD requires 0.0-10.0\n");
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_TICK_THRESHOLD requires numeric value\n");
         }
         return;
     }
-
+    
     if (strcmp(cmd_name, "SET_TICK_ADAPT_DOWN") == 0) {
-        if (parsed == 2 && value > 0.0f && value < 1.0f) {
-            stub_set_tick_adapt_down(value);
+        if (parsed == 2) {
+            set_tick_adapt_down(value);
         } else {
-            telem_sendf(TELEM_RESP, "ERR RANGE SET_TICK_ADAPT_DOWN requires 0.0-1.0\n");
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_TICK_ADAPT_DOWN requires numeric value\n");
         }
         return;
     }
-
+    
     if (strcmp(cmd_name, "SET_TICK_ADAPT_UP") == 0) {
-        if (parsed == 2 && value > 0.0f && value < 1.0f) {
-            stub_set_tick_adapt_up(value);
+        if (parsed == 2) {
+            set_tick_adapt_up(value);
         } else {
-            telem_sendf(TELEM_RESP, "ERR RANGE SET_TICK_ADAPT_UP requires 0.0-1.0\n");
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_TICK_ADAPT_UP requires numeric value\n");
+        }
+        return;
+    }
+    
+    if (strcmp(cmd_name, "SET_TICK_MIN_DURATION") == 0) {
+        if (parsed == 2) {
+            set_tick_min_duration(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_TICK_MIN_DURATION requires numeric value\n");
         }
         return;
     }
@@ -696,6 +695,7 @@ static void print_usage(const char *progname) {
     printf("  -x, --pos-x X       Set window X position (default: centered)\n");
     printf("  -y, --pos-y Y       Set window Y position (default: centered)\n");
     printf("  -l, --log-csv       Enable CSV file logging (default: UDP telemetry only)\n");
+    printf("  --reload-debug      Reload tuned parameters from waterfall.ini\n");
     printf("  -h, --help          Show this help\n");
 }
 
@@ -727,6 +727,130 @@ static tone_tracker_t *g_tone_carrier = NULL;
 static tone_tracker_t *g_tone_500 = NULL;
 static tone_tracker_t *g_tone_600 = NULL;
 static tick_correlator_t *g_tick_correlator = NULL;
+
+/*============================================================================
+ * Tick Detector Parameter Control (calls setters + persists to INI)
+ *============================================================================*/
+
+static void set_tick_threshold(float mult) {
+    if (tick_detector_set_threshold_mult(g_tick_detector, mult)) {
+        save_tick_params_to_ini();
+        telem_sendf(TELEM_RESP, "OK threshold_multiplier=%.3f\n", mult);
+    } else {
+        telem_sendf(TELEM_RESP, "ERR 400 Invalid threshold_multiplier=%.3f (range 1.0-5.0)\n", mult);
+    }
+}
+
+static void set_tick_adapt_down(float alpha) {
+    if (tick_detector_set_adapt_alpha_down(g_tick_detector, alpha)) {
+        save_tick_params_to_ini();
+        telem_sendf(TELEM_RESP, "OK adapt_alpha_down=%.6f\n", alpha);
+    } else {
+        telem_sendf(TELEM_RESP, "ERR 400 Invalid adapt_alpha_down=%.6f (range 0.9-0.999)\n", alpha);
+    }
+}
+
+static void set_tick_adapt_up(float alpha) {
+    if (tick_detector_set_adapt_alpha_up(g_tick_detector, alpha)) {
+        save_tick_params_to_ini();
+        telem_sendf(TELEM_RESP, "OK adapt_alpha_up=%.6f\n", alpha);
+    } else {
+        telem_sendf(TELEM_RESP, "ERR 400 Invalid adapt_alpha_up=%.6f (range 0.001-0.1)\n", alpha);
+    }
+}
+
+static void set_tick_min_duration(float ms) {
+    if (tick_detector_set_min_duration_ms(g_tick_detector, ms)) {
+        save_tick_params_to_ini();
+        telem_sendf(TELEM_RESP, "OK min_duration_ms=%.2f\n", ms);
+    } else {
+        telem_sendf(TELEM_RESP, "ERR 400 Invalid min_duration_ms=%.2f (range 1.0-10.0)\n", ms);
+    }
+}
+
+/*============================================================================
+ * INI File Persistence for Tunable Parameters
+ *============================================================================*/
+
+static void save_tick_params_to_ini(void) {
+    FILE *f = fopen("waterfall.ini", "w");
+    if (!f) {
+        telem_sendf(TELEM_CONSOLE, "[WARN] Could not write waterfall.ini\n");
+        return;
+    }
+    
+    fprintf(f, "[tick_detector]\n");
+    fprintf(f, "threshold_multiplier=%.3f\n", tick_detector_get_threshold_mult(g_tick_detector));
+    fprintf(f, "adapt_alpha_down=%.6f\n", tick_detector_get_adapt_alpha_down(g_tick_detector));
+    fprintf(f, "adapt_alpha_up=%.6f\n", tick_detector_get_adapt_alpha_up(g_tick_detector));
+    fprintf(f, "min_duration_ms=%.2f\n", tick_detector_get_min_duration_ms(g_tick_detector));
+    
+    fclose(f);
+}
+
+static void load_tick_params_from_ini(void) {
+    FILE *f = fopen("waterfall.ini", "r");
+    if (!f) {
+        telem_sendf(TELEM_CONSOLE, "[INIT] No waterfall.ini found, using defaults\n");
+        return;
+    }
+    
+    char line[256];
+    bool in_tick_section = false;
+    int params_loaded = 0;
+    
+    while (fgets(line, sizeof(line), f)) {
+        /* Check for section header */
+        if (strstr(line, "[tick_detector]")) {
+            in_tick_section = true;
+            continue;
+        }
+        if (line[0] == '[') {
+            in_tick_section = false;
+            continue;
+        }
+        
+        if (!in_tick_section) continue;
+        
+        /* Parse key=value */
+        char *eq = strchr(line, '=');
+        if (!eq) continue;
+        
+        float value = (float)atof(eq + 1);
+        
+        if (strstr(line, "threshold_multiplier=")) {
+            if (tick_detector_set_threshold_mult(g_tick_detector, value)) {
+                params_loaded++;
+            } else {
+                telem_sendf(TELEM_CONSOLE, "[WARN] Invalid threshold_multiplier=%.3f in INI, using default\n", value);
+            }
+        } else if (strstr(line, "adapt_alpha_down=")) {
+            if (tick_detector_set_adapt_alpha_down(g_tick_detector, value)) {
+                params_loaded++;
+            } else {
+                telem_sendf(TELEM_CONSOLE, "[WARN] Invalid adapt_alpha_down=%.6f in INI, using default\n", value);
+            }
+        } else if (strstr(line, "adapt_alpha_up=")) {
+            if (tick_detector_set_adapt_alpha_up(g_tick_detector, value)) {
+                params_loaded++;
+            } else {
+                telem_sendf(TELEM_CONSOLE, "[WARN] Invalid adapt_alpha_up=%.6f in INI, using default\n", value);
+            }
+        } else if (strstr(line, "min_duration_ms=")) {
+            if (tick_detector_set_min_duration_ms(g_tick_detector, value)) {
+                params_loaded++;
+            } else {
+                telem_sendf(TELEM_CONSOLE, "[WARN] Invalid min_duration_ms=%.2f in INI, using default\n", value);
+            }
+        }
+    }
+    
+    fclose(f);
+    
+    if (params_loaded > 0) {
+        telem_sendf(TELEM_CONSOLE, "[INIT] Loaded %d debug parameters from waterfall.ini\n", params_loaded);
+    }
+}
 
 /*============================================================================
  * Sync Detector Callback Wrappers
@@ -1031,6 +1155,8 @@ int main(int argc, char *argv[]) {
             g_window_y = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--log-csv") == 0 || strcmp(argv[i], "-l") == 0) {
             g_log_csv = true;
+        } else if (strcmp(argv[i], "--reload-debug") == 0) {
+            g_reload_debug = true;
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
             return 0;
@@ -1225,6 +1351,11 @@ int main(int argc, char *argv[]) {
     if (!g_tick_detector) {
         fprintf(stderr, "Failed to create tick detector\n");
         return 1;
+    }
+
+    /* Load tuned parameters from INI if --reload-debug flag set */
+    if (g_reload_debug) {
+        load_tick_params_from_ini();
     }
 
     g_marker_detector = marker_detector_create(g_log_csv ? "wwv_markers.csv" : NULL);

@@ -1,10 +1,10 @@
 # Phoenix SDR - Progress & Status
 
-**Last Updated:** 2025-12-19
+**Last Updated:** 2025-12-20
 
-## Current Status: 🟢 LEADING-EDGE MARKER DETECTION COMPLETE
+## Current Status: 🟢 RUNTIME PARAMETER TUNING COMPLETE
 
-**Version:** v1.11.2+118 — Precise tick/marker alignment via leading-edge timestamping
+**Version:** v1.11.2+145 — UDP command interface for tick detector runtime tuning
 
 ## What's Working ✅
 
@@ -14,13 +14,41 @@
 | Simple AM Receiver | ✅ | Zero-IF + 450Hz offset, 6kHz RF BW |
 | Split-Screen Waterfall | ✅ | Left: FFT spectrum, Right: 7 bucket bars |
 | Tick Detection | ✅ | State machine with hysteresis, adaptive threshold |
-| Interval Tracking | ✅ | Per-tick interval + 15-second rolling average |
-| Purple Flash | ✅ | Visual indicator on 1000Hz bar when tick detected |
+| Marker Detection | ✅ | 800ms pulse detection at second 0 |
+| Sync Detection | ✅ | Multi-source correlation, confidence scoring |
+| Tick Correlation | ✅ | 998-1002ms gates, auto-discipline |
 | UDP Telemetry | ✅ | All detector data broadcast on port 3005 |
+| UDP Command Interface | ✅ NEW | Runtime parameter tuning on port 3006 |
+| INI Persistence | ✅ NEW | Auto-save/load tuned parameters |
 | Telemetry Logger | ✅ | System tray app logs UDP → CSV files |
-| Keyboard Controls | ✅ | D=toggle, S=stats, 0-7=params, +/-=adjust |
 
 ## Today's Achievement 🎯
+
+**Runtime parameter tuning system for tick detector:**
+
+- **UDP command listener** on localhost:3006 (non-blocking)
+- **4 tunable parameters** with range validation:
+  - `threshold_multiplier` (1.0-5.0) — Detection sensitivity
+  - `adapt_alpha_down` (0.9-0.999) — Noise floor decay rate
+  - `adapt_alpha_up` (0.001-0.1) — Noise floor rise rate
+  - `min_duration_ms` (1.0-10.0) — Minimum pulse width
+- **Immediate INI persistence** on parameter change
+- **--reload-debug flag** to restore saved parameters on startup
+- **CTRL/RESP telemetry channels** for command logging
+
+**Usage:**
+```powershell
+# Tune parameters at runtime
+.\test_udp_cmd.ps1 -Command "SET_TICK_THRESHOLD 2.5"
+
+# Response logged via TELEM_RESP:
+# OK threshold_multiplier=2.500
+
+# Restart with saved parameters
+.\bin\waterfall.exe --tcp localhost:4536 --reload-debug
+```
+
+## Today's Achievement (2025-12-19) 🎯
 
 **Split-screen waterfall with real-time tick detection:**
 
@@ -69,12 +97,29 @@ cmd /c ".\bin\simple_am_receiver.exe -f 10.000450 -g 50 -l 2 -o | .\bin\waterfal
 |-----|----------|
 | D | Toggle tick detection |
 | S | Print statistics |
-| 0 | Select gain adjustment |
-| 1-7 | Select frequency threshold |
-| +/- | Adjust selected parameter |
 | Q/Esc | Quit |
 
-## Files Changed Today
+## UDP Commands (port 3006)
+
+| Command | Range | Description |
+|---------|-------|-------------|
+| `SET_TICK_THRESHOLD <value>` | 1.0-5.0 | Detection sensitivity (lower = more sensitive) |
+| `SET_TICK_ADAPT_DOWN <value>` | 0.9-0.999 | Noise floor decay rate (higher = faster tracking) |
+| `SET_TICK_ADAPT_UP <value>` | 0.001-0.1 | Noise floor rise rate (lower = slower rise) |
+| `SET_TICK_MIN_DURATION <value>` | 1.0-10.0 | Minimum pulse width in ms |
+| `ENABLE_TELEM <channel>` | — | Enable telemetry channel (TICK/MARK/SYNC/CORR/CONS) |
+| `DISABLE_TELEM <channel>` | — | Disable telemetry channel |
+
+## Files Changed (v145 - 2025-12-20)
+
+- `tools/tick_detector.h` — Added setter/getter function declarations
+- `tools/tick_detector.c` — Converted #defines to struct members, added 8 new functions (4 setters, 4 getters)
+- `tools/waterfall.c` — Added UDP command socket, INI save/load functions, --reload-debug flag
+- `tools/waterfall_telemetry.h/c` — Added CTRL/RESP telemetry channels
+- `test_udp_cmd.ps1` — PowerShell UDP client for testing commands
+- `PROGRESS.md` — This file
+
+## Files Changed (2025-12-19)
 
 - `tools/waterfall.c` — Complete rewrite with split-screen, tick detector, interval tracking
 - `README.md` — Updated with new features
@@ -100,6 +145,86 @@ cd D:\claude_sandbox\phoenix_sdr
 - **Antenna:** HF antenna on Hi-Z port
 
 ## Session History
+
+### Dec 20 - Runtime Parameter Tuning System
+**Goal:** Enable runtime adjustment of tick detector parameters via UDP commands with INI persistence
+
+**Motivation:**
+- Different signal conditions require different detection sensitivities
+- Hard-coded #define parameters require recompilation to tune
+- Need operator-friendly way to optimize performance during operation
+- Must persist tuned parameters across restarts for repeatable configurations
+
+**Implementation:**
+
+1. **Converted #defines to struct members** in tick_detector:
+   - `TICK_THRESHOLD_MULT` → `threshold_multiplier` (1.0-5.0, default 2.0)
+   - `TICK_NOISE_ADAPT_DOWN` → `adapt_alpha_down` (0.9-0.999, default 0.995)
+   - `TICK_NOISE_ADAPT_UP` → `adapt_alpha_up` (0.001-0.1, default 0.02)
+   - `TICK_MIN_DURATION_MS` → `min_duration_ms` (1.0-10.0, default 2.0)
+
+2. **Added setter/getter functions** to tick_detector API:
+   ```c
+   bool tick_detector_set_threshold_mult(tick_detector_t *td, float value);
+   float tick_detector_get_threshold_mult(tick_detector_t *td);
+   // ... 3 more setter/getter pairs
+   ```
+
+3. **UDP command listener** on localhost:3006:
+   - Non-blocking socket, polled in main loop
+   - Rate limiting (10 commands/sec)
+   - Text-based protocol matching tcp_commands.c pattern
+   - Commands: SET_TICK_THRESHOLD, SET_TICK_ADAPT_DOWN, SET_TICK_ADAPT_UP, SET_TICK_MIN_DURATION
+
+4. **CTRL/RESP telemetry channels** for command logging:
+   - TELEM_CTRL (bit 12) — Logs received commands
+   - TELEM_RESP (bit 13) — Logs command responses
+   - telem_logger.exe captures both for audit trail
+
+5. **INI persistence** (waterfall.ini):
+   - Immediate save on successful UDP command
+   - Simple `[tick_detector]` section with `key=value` format
+   - Keys match C struct member names
+   - Invalid values → warn + use default (no crash)
+   - --reload-debug flag loads saved params on startup
+
+**Testing:**
+```powershell
+# Start waterfall
+.\bin\waterfall.exe --tcp localhost:4536
+
+# Tune parameters
+.\test_udp_cmd.ps1 -Command "SET_TICK_THRESHOLD 2.5"
+# Response: OK threshold_multiplier=2.500
+# waterfall.ini created immediately
+
+# Hand-edit waterfall.ini
+threshold_multiplier=3.0
+
+# Restart with saved params
+.\bin\waterfall.exe --tcp localhost:4536 --reload-debug
+# [INIT] Loaded 4 debug parameters from waterfall.ini
+```
+
+**Results:**
+- ✅ All 4 parameters tunable at runtime via UDP
+- ✅ Range validation prevents invalid values
+- ✅ Immediate INI save on parameter change
+- ✅ Conditional reload with --reload-debug flag
+- ✅ Hand-editable INI file for offline tuning
+- ✅ Build successful (v1.11.2+145)
+
+**Architecture Decision:**
+- Operator takes full risk of bad values (no safety nets beyond range limits)
+- telem_logger captures command/response history for debugging
+- Future: Expand pattern to marker_detector, sync_detector, tick_correlator
+
+**Files Modified:**
+- `tools/tick_detector.h` — Added setter/getter declarations, updated docs
+- `tools/tick_detector.c` — Converted #defines to struct fields, implemented 8 new functions
+- `tools/waterfall.c` — Added UDP command socket, INI save/load, --reload-debug flag
+- `tools/waterfall_telemetry.h/c` — Added CTRL/RESP channels
+- `test_udp_cmd.ps1` — PowerShell UDP client for testing
 
 ### Dec 19 - Leading-Edge Marker Detection
 **Goal:** Align tick detector epoch to minute marker leading edge (on-time marker) with <10ms precision

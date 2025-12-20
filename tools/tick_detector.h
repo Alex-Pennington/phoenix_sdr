@@ -211,6 +211,20 @@ bool tick_detector_is_gating_enabled(tick_detector_t *td);
 epoch_source_t tick_detector_get_epoch_source(tick_detector_t *td);
 float tick_detector_get_epoch_confidence(tick_detector_t *td);
 
+/**
+ * Runtime tunable parameters (UDP command interface)
+ * Ranges validated in setters, invalid values rejected with false return
+ */
+bool tick_detector_set_threshold_mult(tick_detector_t *td, float value);    /* 1.0-5.0 */
+bool tick_detector_set_adapt_alpha_down(tick_detector_t *td, float value);  /* 0.9-0.999 */
+bool tick_detector_set_adapt_alpha_up(tick_detector_t *td, float value);    /* 0.001-0.1 */
+bool tick_detector_set_min_duration_ms(tick_detector_t *td, float value);   /* 1.0-10.0 */
+
+float tick_detector_get_threshold_mult(tick_detector_t *td);
+float tick_detector_get_adapt_alpha_down(tick_detector_t *td);
+float tick_detector_get_adapt_alpha_up(tick_detector_t *td);
+float tick_detector_get_min_duration_ms(tick_detector_t *td);
+
 #ifdef __cplusplus
 }
 #endif

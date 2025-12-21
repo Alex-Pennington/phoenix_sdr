@@ -2,11 +2,65 @@
 
 **Last Updated:** 2025-12-20
 
-## Current Status: 🟢 RUNTIME PARAMETER TUNING COMPLETE
+## Current Status: 🎉 v2.0.0-beta RELEASE READY
 
-**Version:** v1.11.2+145 — UDP command interface for tick detector runtime tuning
+**Version:** v2.0.0-beta — Major Release with Remote Operation Support
 
-## What's Working ✅
+## v2.0.0-beta Release Summary (2025-12-20) 🎯
+
+**Major Milestone:** First beta release with production-ready remote operation capabilities.
+
+### Key Features
+
+1. **Signal Distribution Architecture**
+   - `sdr_server.exe` — TCP streaming server (I/Q data on port 4536, control on port 4535)
+   - `signal_splitter.exe` — Multi-client distribution with control path relay
+   - `signal_relay.exe` — TCP-to-TCP bridge for network routing
+   - Enables SDR hardware on one machine, visualization on many clients
+
+2. **Comprehensive UDP Telemetry Suite (15 Channels)**
+   - TICK, MARK, SYNC, CORR — Detection events with sub-millisecond timestamps
+   - BCDS, BCDE — BCD symbol and error tracking
+   - T500, T600, CARR, SUBC — Tone tracker data (500Hz, 600Hz, 1000Hz, 100Hz)
+   - CHAN, CONS — Channel SNR and console output
+   - CTRL, RESP — Command/response logging for runtime tuning
+   - All broadcast on UDP port 3005
+
+3. **Runtime Parameter Tuning System**
+   - UDP command interface on port 3006
+   - 4 tunable tick detector parameters with INI persistence
+   - Immediate feedback via RESP telemetry channel
+   - `--reload-debug` flag for saved parameter restoration
+
+4. **Documentation Overhaul**
+   - Created: [SDR_SERVER.md](docs/SDR_SERVER.md), [WATERFALL.md](docs/WATERFALL.md), [SIGNAL_SPLITTER.md](docs/SIGNAL_SPLITTER.md), [SIGNAL_RELAY.md](docs/SIGNAL_RELAY.md)
+   - Created: [DOCUMENTATION_AUDIT.md](docs/DOCUMENTATION_AUDIT.md) tracking all 30+ technical documents
+   - Updated: README.md with major features, documentation index, remote operation examples
+   - Comprehensive WWV signal analysis docs preserved and referenced
+
+### Tools Included
+
+| Executable | Purpose |
+|------------|---------|
+| `sdr_server.exe` | SDR hardware TCP streaming server |
+| `simple_am_receiver.exe` | All-in-one local receiver (SDR→waterfall pipe) |
+| `waterfall.exe` | Split-screen visualization + detector suite |
+| `signal_splitter.exe` | Multi-client signal distribution |
+| `signal_relay.exe` | TCP relay for network routing |
+| `telem_logger.exe` | System tray UDP→CSV telemetry logger |
+| `wormhole.exe` | MIL-STD-188-110A constellation display |
+| `test_tcp_commands.exe` | TCP control interface testing |
+| `test_telemetry.exe` | UDP telemetry protocol testing |
+
+### Release Artifacts
+
+- All executables (9 tools)
+- Required DLLs: `SDL2.dll`, `sdrplay_api.dll`
+- Complete documentation set (33 markdown files in `docs/`)
+- README.md with quick start examples
+- PROGRESS.md with full development history
+
+### What's Working ✅
 
 | Component | Status | Notes |
 |-----------|--------|-------|
@@ -21,8 +75,54 @@
 | UDP Command Interface | ✅ NEW | Runtime parameter tuning on port 3006 |
 | INI Persistence | ✅ NEW | Auto-save/load tuned parameters |
 | Telemetry Logger | ✅ | System tray app logs UDP → CSV files |
+| SDR Server | ✅ | TCP streaming server for remote operation |
+| Signal Splitter | ✅ | Multi-client distribution with control relay |
+| Signal Relay | ✅ | TCP-to-TCP bridge for network routing |
 
-## Today's Achievement 🎯
+## Release Preparation Activities (Dec 20, 2025) 🎯
+
+**Documentation overhaul for v2.0.0-beta:**
+
+1. **Created comprehensive system documentation:**
+   - [SDR_SERVER.md](docs/SDR_SERVER.md) — 200+ line specification of TCP streaming server
+   - [WATERFALL.md](docs/WATERFALL.md) — Complete waterfall architecture (signal paths, detectors, telemetry)
+   - [SIGNAL_SPLITTER.md](docs/SIGNAL_SPLITTER.md) — Multi-client distribution with control path relay
+   - [SIGNAL_RELAY.md](docs/SIGNAL_RELAY.md) — TCP relay server for network routing
+   - [DOCUMENTATION_AUDIT.md](docs/DOCUMENTATION_AUDIT.md) — Comprehensive index of all 30+ technical documents
+
+2. **Updated README.md with:**
+   - Major Features section highlighting v2.0.0 capabilities
+   - Documentation index organized by category (System, Telemetry, WWV Analysis, Build/Testing)
+   - Remote operation quick start examples
+   - Expanded version history
+
+3. **Verified WWV signal analysis documentation set:**
+   - [wwv_signal_characteristics.md](docs/wwv_signal_characteristics.md) — Broadcast format, timing specifications
+   - [wwv_bcd_decoder_algorithm.md](docs/wwv_bcd_decoder_algorithm.md) — BCD time code demodulation
+   - [wwv_csv_documentation.md](docs/wwv_csv_documentation.md) — CSV file format reference
+   - [fldigi_wwv_analysis.md](docs/fldigi_wwv_analysis.md) — Comparison with fldigi implementation
+   - [signal_path_18DEC2025.md](docs/signal_path_18DEC2025.md) — Current signal processing architecture
+   - [DSP filtering for WWV tickBCD separation.md](docs/DSP%20filtering%20for%20WWV%20tickBCD%20separation.md) — Filter design analysis
+
+4. **Release artifact inventory:**
+   - 9 executable tools in `bin/` directory
+   - 2 required DLLs (SDL2.dll, sdrplay_api.dll)
+   - 33 markdown documentation files in `docs/`
+   - README.md, PROGRESS.md, LICENSE files
+   - Build system (build.ps1, deploy_release.ps1)
+
+**Result:**
+- ✅ Complete documentation coverage for all major systems
+- ✅ README.md ready for public consumption
+- ✅ PROGRESS.md updated with release summary
+- ✅ All technical documentation verified and indexed
+- ✅ v2.0.0-beta ready for deployment
+
+---
+
+## Previous Achievements
+
+### Dec 20 - Runtime Parameter Tuning System (v1.11.2+145)
 
 **Runtime parameter tuning system for tick detector:**
 

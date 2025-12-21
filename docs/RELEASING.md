@@ -120,10 +120,11 @@ The tag push triggers GitHub Actions to build and publish the release.
 1. Same setup as CI
 2. Build with `-Release` flag (optimizations)
 3. Package release:
-   - All `.exe` files
-   - `SDL2.dll`
-   - Documentation
-4. Create zip archive
+   - **9 executables:** sdr_server.exe, simple_am_receiver.exe, waterfall.exe, signal_splitter.exe, signal_relay.exe, telem_logger.exe, wormhole.exe, test_tcp_commands.exe, test_telemetry.exe
+   - **2 DLLs:** SDL2.dll, sdrplay_api.dll
+   - **Documentation:** README.md, all docs/ folder (33 technical documents)
+   - **Build scripts:** build.ps1, deploy_release.ps1
+4. Create zip archive: `phoenix_sdr-v2.0.0-beta-win64.zip`
 5. Upload as GitHub artifact
 6. Create GitHub Release with attached zip
 

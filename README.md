@@ -1,8 +1,8 @@
-# Phoenix Nest MARS Suite — WWV Receiver Beta
+# Phoenix Nest MARS Suite — WWV Receiver
 
-**Purpose:** SDR hardware validation test. Receives WWV/WWVH time signals and detects timing pulses with real-time visualization.
+**Purpose:** Professional WWV/WWVH time signal receiver with comprehensive decoding, remote operation, and telemetry output.
 
-**Version:** v0.2.6 — Split-screen waterfall with tick detection
+**Version:** v2.0.0-beta — Major Release with Remote Operation Support
 
 ---
 
@@ -16,11 +16,35 @@
 
 ## Quick Start
 
+### Local Operation (All-in-One)
+
 ```powershell
+# Night reception (5 MHz WWV)
 cmd /c ".\bin\simple_am_receiver.exe -f 5.000450 -g 59 -l 0 -o | .\bin\waterfall.exe"
+
+# Daytime reception (10 MHz WWV)
+cmd /c ".\bin\simple_am_receiver.exe -f 10.000450 -g 50 -l 2 -o | .\bin\waterfall.exe"
 ```
 
-This tunes to 5 MHz WWV, pipes audio to the split-screen waterfall display with tick detection.
+### Remote Operation (SDR Server + Client)
+
+```powershell
+# On SDR machine (runs hardware)
+.\bin\sdr_server.exe -f 5.000450 -g 59
+
+# On remote machine (visualization)
+.\bin\waterfall.exe --tcp <sdr_ip>:4536
+```
+
+### Signal Relay (TCP-to-TCP Bridge)
+
+```powershell
+# Relay server at central location
+.\bin\signal_relay.exe --listen 0.0.0.0:4536 --upstream <sdr_ip>:4536
+
+# Multiple clients connect to relay
+.\bin\waterfall.exe --tcp <relay_ip>:4536
+```
 
 ---
 
@@ -183,16 +207,41 @@ timestamp_ms,tick_num,energy_peak,duration_ms,interval_ms,avg_interval_ms,noise_
 
 ---
 
+## Documentation
+
+### System Architecture
+- [SDR_SERVER.md](docs/SDR_SERVER.md) — SDR streaming server for remote operation
+- [WATERFALL.md](docs/WATERFALL.md) — Waterfall display, detector modules, signal processing
+- [SIGNAL_SPLITTER.md](docs/SIGNAL_SPLITTER.md) — Signal splitter for multi-client distribution
+- [SIGNAL_RELAY.md](docs/SIGNAL_RELAY.md) — TCP relay server for network routing
+
+### Telemetry & Data Output
+- [UDP_TELEMETRY_OUTPUT_PROTOCOL.md](docs/UDP_TELEMETRY_OUTPUT_PROTOCOL.md) — 15-channel telemetry specification
+- [TELEMETRY_LOGGER.md](docs/TELEMETRY_LOGGER.md) — System tray UDP→CSV logger tool
+- [wwv_csv_documentation.md](docs/wwv_csv_documentation.md) — CSV file format reference
+
+### WWV Signal Analysis (Technical)
+- [wwv_signal_characteristics.md](docs/wwv_signal_characteristics.md) — WWV/WWVH broadcast format, timing specs
+- [wwv_bcd_decoder_algorithm.md](docs/wwv_bcd_decoder_algorithm.md) — BCD time code demodulation
+- [fldigi_wwv_analysis.md](docs/fldigi_wwv_analysis.md) — Comparison with fldigi implementation
+- [signal_path_18DEC2025.md](docs/signal_path_18DEC2025.md) — Current signal processing architecture
+- [DSP filtering for WWV tickBCD separation.md](docs/DSP%20filtering%20for%20WWV%20tickBCD%20separation.md) — Filter design analysis
+
+### Build & Testing
+- [BUILDING.md](docs/BUILDING.md) — Build system, dependencies, compiler setup
+- [BETA_TESTING_GUIDE.md](docs/BETA_TESTING_GUIDE.md) — Beta testing procedures
+- [BETA_TESTING_WWV.md](docs/BETA_TESTING_WWV.md) — WWV-specific test scenarios
+
+---
+
 ## Build
 
-<<<<<<< HEAD
-Beta 0.2.4+8.2c99002  — Hardware validation release
-=======
 ```powershell
-.\build.ps1 -Clean
-.\build.ps1 -Target tools
+.\build.ps1              # Debug build (all tools)
+.\build.ps1 -Release     # Optimized release build
+.\build.ps1 -Target tools # Tools only (no tests)
+.\build.ps1 -Clean       # Clean artifacts
 ```
->>>>>>> feature/split-waterfall
 
 ---
 
@@ -200,9 +249,9 @@ Beta 0.2.4+8.2c99002  — Hardware validation release
 
 | Version | Date | Changes |
 |---------|------|---------|
-| v0.2.6 | 2024-12-14 | Split-screen display, tick detector with interval averaging |
-| v0.2.5 | 2024-12-14 | Waterfall with 7-band monitoring |
-| v0.2.0 | 2024-12-13 | Simple AM receiver, basic waterfall |
+| v2.0.0-beta | 2025-12-20 | Major release: Signal splitter/relay, UDP telemetry suite, comprehensive docs |
+| v1.11.2 | 2025-12-20 | Runtime parameter tuning, INI persistence, control path relay |
+| v1.0.0 | 2025-12-19 | UDP telemetry consolidation, telem_logger tool, multi-detector architecture |
 
 ---
 

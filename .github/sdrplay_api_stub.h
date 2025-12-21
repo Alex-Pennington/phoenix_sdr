@@ -16,6 +16,9 @@ typedef void *HANDLE;
 extern "C" {
 #endif
 
+// Device limits
+#define SDRPLAY_MAX_DEVICES 16
+
 // Error codes
 typedef enum {
     sdrplay_api_Success = 0,
@@ -56,8 +59,18 @@ typedef enum {
 typedef enum {
     sdrplay_api_TunerA = 0,
     sdrplay_api_TunerB = 1,
-    sdrplay_api_Tuner_Both = 2
+    sdrplay_api_Tuner_Both = 2,
+    sdrplay_api_Tuner_A = 0,  // Alias
+    sdrplay_api_Tuner_B = 1   // Alias
 } sdrplay_api_TunerSelectT;
+
+typedef enum {
+    sdrplay_api_LO_Undefined = 0,
+    sdrplay_api_LO_Auto = 1,
+    sdrplay_api_LO_120MHz = 2,
+    sdrplay_api_LO_144MHz = 3,
+    sdrplay_api_LO_168MHz = 4
+} sdrplay_api_LoModeT;
 
 typedef enum {
     sdrplay_api_IF_Undefined = -1,
@@ -169,6 +182,7 @@ typedef struct {
 typedef struct {
     sdrplay_api_Bw_MHzT bwType;
     sdrplay_api_If_kHzT ifType;
+    sdrplay_api_LoModeT loMode;
     sdrplay_api_RfFreqT rfFreq;
     sdrplay_api_GainT gain;
     sdrplay_api_MinGainReductionT minGr;
@@ -289,12 +303,12 @@ typedef struct {
 } sdrplay_api_StreamCbParamsT;
 
 // Callback function types
-typedef void (*sdrplay_api_StreamCallback_t)(short *xi, short *xq, 
-    sdrplay_api_StreamCbParamsT *params, unsigned int numSamples, 
+typedef void (*sdrplay_api_StreamCallback_t)(short *xi, short *xq,
+    sdrplay_api_StreamCbParamsT *params, unsigned int numSamples,
     unsigned int reset, void *cbContext);
 
-typedef void (*sdrplay_api_EventCallback_t)(sdrplay_api_EventT eventId, 
-    sdrplay_api_TunerSelectT tuner, sdrplay_api_EventParamsT *params, 
+typedef void (*sdrplay_api_EventCallback_t)(sdrplay_api_EventT eventId,
+    sdrplay_api_TunerSelectT tuner, sdrplay_api_EventParamsT *params,
     void *cbContext);
 
 typedef struct {
@@ -309,19 +323,19 @@ sdrplay_api_ErrT sdrplay_api_Close(void);
 sdrplay_api_ErrT sdrplay_api_ApiVersion(float *apiVer);
 sdrplay_api_ErrT sdrplay_api_LockDeviceApi(void);
 sdrplay_api_ErrT sdrplay_api_UnlockDeviceApi(void);
-sdrplay_api_ErrT sdrplay_api_GetDevices(sdrplay_api_DeviceT *devices, 
+sdrplay_api_ErrT sdrplay_api_GetDevices(sdrplay_api_DeviceT *devices,
     unsigned int *numDevs, unsigned int maxDevs);
 sdrplay_api_ErrT sdrplay_api_SelectDevice(sdrplay_api_DeviceT *device);
 sdrplay_api_ErrT sdrplay_api_ReleaseDevice(sdrplay_api_DeviceT *device);
 const char* sdrplay_api_GetErrorString(sdrplay_api_ErrT err);
 sdrplay_api_ErrT sdrplay_api_DebugEnable(HANDLE dev, sdrplay_api_DbgLvl_t dbgLvl);
-sdrplay_api_ErrT sdrplay_api_GetDeviceParams(HANDLE dev, 
+sdrplay_api_ErrT sdrplay_api_GetDeviceParams(HANDLE dev,
     sdrplay_api_DeviceParamsT **deviceParams);
-sdrplay_api_ErrT sdrplay_api_Init(HANDLE dev, sdrplay_api_CallbackFnsT *cbFns, 
+sdrplay_api_ErrT sdrplay_api_Init(HANDLE dev, sdrplay_api_CallbackFnsT *cbFns,
     void *cbContext);
 sdrplay_api_ErrT sdrplay_api_Uninit(HANDLE dev);
 sdrplay_api_ErrT sdrplay_api_Update(HANDLE dev, sdrplay_api_TunerSelectT tuner,
-    sdrplay_api_ReasonForUpdateT reasonForUpdate, 
+    sdrplay_api_ReasonForUpdateT reasonForUpdate,
     sdrplay_api_ReasonForUpdateExtension1T reasonForUpdateExt1);
 
 #ifdef __cplusplus

@@ -38,8 +38,12 @@ function Build-Object($source, $extraFlags) {
     Write-Status "Compiling $source..."
     $allFlags = $CFLAGS + $extraFlags
     $cmd = @($CC) + $allFlags + @("-c", "-o", "`"$objPath`"", "`"$source`"")
-    & $cmd[0] $cmd[1..($cmd.Length-1)]
-    if ($LASTEXITCODE -ne 0) { throw "Compilation failed for $source" }
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    & $cmd[0] $cmd[1..($cmd.Length-1)] 2>&1 | Out-Null
+    $exitCode = $LASTEXITCODE
+    $ErrorActionPreference = $prevEAP
+    if ($exitCode -ne 0) { throw "Compilation failed for $source" }
     return $objPath
 }
 
@@ -76,6 +80,11 @@ try {
     # Create directories
     if (-not (Test-Path $BuildDir)) { New-Item -ItemType Directory -Path $BuildDir | Out-Null }
     if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir | Out-Null }
+    if (-not (Test-Path "include\sdrplay")) { New-Item -ItemType Directory -Path "include\sdrplay" | Out-Null }
+
+    # Copy SDRplay stub header for CI builds
+    Write-Status "Setting up SDRplay stub header..."
+    Copy-Item -Path ".github\sdrplay_api_stub.h" -Destination "include\sdrplay\sdrplay_api.h" -Force
 
     # Build SDRplay stub library for CI
     Write-Status "Building SDRplay stub..."
@@ -211,8 +220,8 @@ try {
     $sdrServerObj = Build-Object "tools\sdr_server.c" @()
 
     Write-Status "Linking sdr_server.exe..."
-    $serverLdflags = @("-L`"$SDRplayLib`"", "-lsdrplay_api", "-lws2_32", "-lm", "-lwinmm")
-    $cmd = @($CC, "-o", "`"$BinDir\sdr_server.exe`"", "`"$sdrServerObj`"", "`"$tcpCmdObj`"", "`"$sdrStreamObj`"", "`"$sdrDeviceObj`"") + $serverLdflags
+    $serverLdflags = @("-lws2_32", "-lm", "-lwinmm")
+    $cmd = @($CC, "-o", "`"$BinDir\sdr_server.exe`"", "`"$sdrServerObj`"", "`"$tcpCmdObj`"", "`"$sdrStreamObj`"", "`"$sdrDeviceObj`"", "`"$sdrplayStubObj`"") + $serverLdflags
     & $cmd[0] $cmd[1..($cmd.Length-1)]
     if ($LASTEXITCODE -ne 0) { throw "Linking failed for sdr_server" }
     Write-Status "Built: $BinDir\sdr_server.exe"

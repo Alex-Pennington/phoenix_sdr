@@ -7,6 +7,12 @@ bin/
 # External libraries (downloaded locally)
 libs/
 
+# CI artifact directories (created during local CI testing)
+include/SDL2/
+include/sdrplay/
+lib/
+sdrplay_api_reference.h
+
 # Recordings (too large)
 *.iqr
 recordings/

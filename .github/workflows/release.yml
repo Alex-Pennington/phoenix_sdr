@@ -69,11 +69,11 @@ jobs:
 
         # Copy comprehensive stub header from repository
         Copy-Item .github\sdrplay_api_stub.h include\sdrplay\sdrplay_api.h
-        
+
         Write-Host "SDRplay API stub created for compilation"
-        
+
         # Create stub DEF file for linking (not used, real DLL required at runtime)
-        
+
 
     - name: Build Release
       shell: powershell

@@ -12,19 +12,19 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       with:
         fetch-depth: 0  # Full history for git commit hash
-    
+
     - name: Install MinGW
       uses: egor-tensin/setup-mingw@v2
       with:
         platform: x64
         version: 12.2.0
-    
+
     - name: Download SDL2
       shell: powershell
       run: |
@@ -33,17 +33,17 @@ jobs:
         $sdlUrl = "https://github.com/libsdl-org/SDL/releases/download/release-$sdlVersion/SDL2-devel-$sdlVersion-mingw.zip"
         Invoke-WebRequest -Uri $sdlUrl -OutFile "SDL2.zip"
         Expand-Archive -Path "SDL2.zip" -DestinationPath "."
-        
+
         # Copy to expected location
         New-Item -ItemType Directory -Force -Path "lib"
         New-Item -ItemType Directory -Force -Path "bin"
         Copy-Item "SDL2-$sdlVersion\x86_64-w64-mingw32\lib\*" -Destination "lib\" -Recurse
         Copy-Item "SDL2-$sdlVersion\x86_64-w64-mingw32\bin\SDL2.dll" -Destination "bin\" -Force
-        
+
         # Copy headers
         New-Item -ItemType Directory -Force -Path "include\SDL2"
         Copy-Item "SDL2-$sdlVersion\x86_64-w64-mingw32\include\SDL2\*" -Destination "include\SDL2\" -Recurse
-    
+
     - name: Download KissFFT
       shell: powershell
       run: |
@@ -51,35 +51,35 @@ jobs:
         $kissfftUrl = "https://github.com/mborgerding/kissfft/archive/refs/tags/v131.zip"
         Invoke-WebRequest -Uri $kissfftUrl -OutFile "kissfft.zip"
         Expand-Archive -Path "kissfft.zip" -DestinationPath "."
-        
+
         # Copy to expected location
         New-Item -ItemType Directory -Force -Path "lib\kissfft"
         Copy-Item "kissfft-131\kiss_fft.h" -Destination "lib\kissfft\"
         Copy-Item "kissfft-131\kiss_fft.c" -Destination "lib\kissfft\"
-    
+
     - name: Setup SDRplay API headers (stub)
       shell: powershell
       run: |
         # Note: SDRplay API requires manual installation on end-user machines
         # For CI, we create stub headers to allow compilation
         # The actual API DLL must be installed separately
-        
+
         New-Item -ItemType Directory -Force -Path "include\sdrplay"
         New-Item -ItemType Directory -Force -Path "lib"
-        
+
         # Create comprehensive stub header for compilation
         @"
         // SDRplay API v3.x stub for CI builds
         // Real API: https://www.sdrplay.com/api/
         #ifndef SDRPLAY_API_H
         #define SDRPLAY_API_H
-        
+
         #include <stdint.h>
-        
+
         #ifdef __cplusplus
         extern "C" {
         #endif
-        
+
         // Error codes
         typedef enum {
             sdrplay_api_Success = 0,
@@ -108,7 +108,7 @@ jobs:
             sdrplay_api_FailedVerification6 = 23,
             sdrplay_api_InvalidServiceVersion = 24
         } sdrplay_api_ErrT;
-        
+
         typedef enum {
             sdrplay_api_DbgLvl_Disable = 0,
             sdrplay_api_DbgLvl_Verbose = 1,
@@ -116,13 +116,13 @@ jobs:
             sdrplay_api_DbgLvl_Error = 3,
             sdrplay_api_DbgLvl_Message = 4
         } sdrplay_api_DbgLvl_t;
-        
+
         typedef enum {
             sdrplay_api_TunerA = 0,
             sdrplay_api_TunerB = 1,
             sdrplay_api_Tuner_Both = 2
         } sdrplay_api_TunerSelectT;
-        
+
         typedef enum {
             sdrplay_api_IF_Undefined = -1,
             sdrplay_api_IF_Zero = 0,
@@ -130,7 +130,7 @@ jobs:
             sdrplay_api_IF_1_620 = 2,
             sdrplay_api_IF_2_048 = 3
         } sdrplay_api_If_kHzT;
-        
+
         typedef enum {
             sdrplay_api_BW_Undefined = 0,
             sdrplay_api_BW_0_200 = 200,
@@ -142,7 +142,7 @@ jobs:
             sdrplay_api_BW_7_000 = 7000,
             sdrplay_api_BW_8_000 = 8000
         } sdrplay_api_Bw_MHzT;
-        
+
         typedef enum {
             sdrplay_api_AgcMode_DISABLE = 0,
             sdrplay_api_AgcMode_5HZ = 1,
@@ -150,12 +150,12 @@ jobs:
             sdrplay_api_AgcMode_100HZ = 3,
             sdrplay_api_AgcMode_CTRL_AGC = 4
         } sdrplay_api_AgcControlT;
-        
+
         typedef enum {
             sdrplay_api_EXTENDED_MIN_GR = 0,
             sdrplay_api_NORMAL_MIN_GR = 20
         } sdrplay_api_MinGainReductionT;
-        
+
         typedef enum {
             sdrplay_api_Update_None = 0x00000000,
             sdrplay_api_Update_Dev_Fs = 0x00000001,
@@ -191,53 +191,53 @@ jobs:
             sdrplay_api_Update_RspDuo_RfNotchControl = 0x40000000,
             sdrplay_api_Update_RspDuo_RfDabNotchControl = 0x80000000
         } sdrplay_api_ReasonForUpdateT;
-        
+
         typedef enum {
             sdrplay_api_Update_Ext1_None = 0x00000000
         } sdrplay_api_ReasonForUpdateExtension1T;
-        
+
         typedef enum {
             sdrplay_api_GainChange = 0,
             sdrplay_api_PowerOverloadChange = 1,
             sdrplay_api_DeviceRemoved = 2,
             sdrplay_api_RspDuoModeChange = 3
         } sdrplay_api_EventT;
-        
+
         typedef enum {
             sdrplay_api_Overload_Detected = 0,
             sdrplay_api_Overload_Corrected = 1
         } sdrplay_api_PowerOverloadChangeTypeT;
-        
+
         typedef struct {
             uint32_t gRdB;
             uint32_t lnaGRdB;
             double currGain;
         } sdrplay_api_GainCbParamT;
-        
+
         typedef struct {
             sdrplay_api_PowerOverloadChangeTypeT powerOverloadChangeType;
         } sdrplay_api_PowerOverloadCbParamT;
-        
+
         typedef struct {
             uint32_t gRdB;
             uint32_t lnaState;
             sdrplay_api_GainCbParamT gainParams;
             sdrplay_api_PowerOverloadCbParamT powerOverloadParams;
         } sdrplay_api_EventParamsT;
-        
+
         typedef struct {
             uint32_t fsHz;
             uint8_t syncUpdate;
             uint8_t reCal;
         } sdrplay_api_StreamCbParamsT;
-        
+
         typedef struct {
             void *dev;
             char SerNo[256];
             unsigned char hwVer;
             unsigned char devAvail;
         } sdrplay_api_DeviceT;
-        
+
         typedef struct {
             double rfHz;
             sdrplay_api_Bw_MHzT bwType;
@@ -245,18 +245,18 @@ jobs:
             sdrplay_api_MinGainReductionT minGr;
             unsigned char gainReductionDb;
         } sdrplay_api_TunerParamsT;
-        
+
         typedef struct {
             unsigned char DCenable;
             unsigned char IQenable;
         } sdrplay_api_DcOffsetTunerT;
-        
+
         typedef struct {
             unsigned char enable;
             unsigned char decimationFactor;
             unsigned char wideBandSignal;
         } sdrplay_api_DecimationT;
-        
+
         typedef struct {
             sdrplay_api_AgcControlT enable;
             int setPoint_dBfs;
@@ -266,73 +266,73 @@ jobs:
             unsigned short decay_threshold_dB;
             int syncUpdate;
         } sdrplay_api_AgcT;
-        
+
         typedef struct {
             sdrplay_api_DcOffsetTunerT dcOffset;
             sdrplay_api_DecimationT decimation;
             sdrplay_api_AgcT agc;
         } sdrplay_api_ControlParamsT;
-        
+
         typedef struct {
             sdrplay_api_TunerParamsT tunerParams;
             sdrplay_api_ControlParamsT ctrlParams;
         } sdrplay_api_RxChannelParamsT;
-        
+
         typedef struct {
             double ppm;
             uint32_t fsHz;
             uint8_t syncUpdate;
             uint8_t reCal;
         } sdrplay_api_DevParamsT;
-        
+
         typedef struct {
             sdrplay_api_DevParamsT devParams;
             sdrplay_api_RxChannelParamsT *rxChannelA;
             sdrplay_api_RxChannelParamsT *rxChannelB;
         } sdrplay_api_DeviceParamsT;
-        
-        typedef void (*sdrplay_api_StreamCallback_t)(short *xi, short *xq, 
-            sdrplay_api_StreamCbParamsT *params, unsigned int numSamples, 
+
+        typedef void (*sdrplay_api_StreamCallback_t)(short *xi, short *xq,
+            sdrplay_api_StreamCbParamsT *params, unsigned int numSamples,
             unsigned int reset, void *cbContext);
-        
-        typedef void (*sdrplay_api_EventCallback_t)(sdrplay_api_EventT eventId, 
-            sdrplay_api_TunerSelectT tuner, sdrplay_api_EventParamsT *params, 
+
+        typedef void (*sdrplay_api_EventCallback_t)(sdrplay_api_EventT eventId,
+            sdrplay_api_TunerSelectT tuner, sdrplay_api_EventParamsT *params,
             void *cbContext);
-        
+
         typedef struct {
             sdrplay_api_StreamCallback_t StreamACbFn;
             sdrplay_api_StreamCallback_t StreamBCbFn;
             sdrplay_api_EventCallback_t EventCbFn;
         } sdrplay_api_CallbackFnsT;
-        
+
         // Stub function declarations (will not link without real DLL)
         sdrplay_api_ErrT sdrplay_api_Open(void);
         sdrplay_api_ErrT sdrplay_api_Close(void);
         sdrplay_api_ErrT sdrplay_api_ApiVersion(float *apiVer);
         sdrplay_api_ErrT sdrplay_api_LockDeviceApi(void);
         sdrplay_api_ErrT sdrplay_api_UnlockDeviceApi(void);
-        sdrplay_api_ErrT sdrplay_api_GetDevices(sdrplay_api_DeviceT *devices, 
+        sdrplay_api_ErrT sdrplay_api_GetDevices(sdrplay_api_DeviceT *devices,
             unsigned int *numDevs, unsigned int maxDevs);
         sdrplay_api_ErrT sdrplay_api_SelectDevice(sdrplay_api_DeviceT *device);
         sdrplay_api_ErrT sdrplay_api_ReleaseDevice(sdrplay_api_DeviceT *device);
         const char* sdrplay_api_GetErrorString(sdrplay_api_ErrT err);
         sdrplay_api_ErrT sdrplay_api_DebugEnable(void *dev, sdrplay_api_DbgLvl_t dbgLvl);
-        sdrplay_api_ErrT sdrplay_api_GetDeviceParams(void *dev, 
+        sdrplay_api_ErrT sdrplay_api_GetDeviceParams(void *dev,
             sdrplay_api_DeviceParamsT **deviceParams);
-        sdrplay_api_ErrT sdrplay_api_Init(void *dev, sdrplay_api_CallbackFnsT *cbFns, 
+        sdrplay_api_ErrT sdrplay_api_Init(void *dev, sdrplay_api_CallbackFnsT *cbFns,
             void *cbContext);
         sdrplay_api_ErrT sdrplay_api_Uninit(void *dev);
         sdrplay_api_ErrT sdrplay_api_Update(void *dev, sdrplay_api_TunerSelectT tuner,
-            sdrplay_api_ReasonForUpdateT reasonForUpdate, 
+            sdrplay_api_ReasonForUpdateT reasonForUpdate,
             sdrplay_api_ReasonForUpdateExtension1T reasonForUpdateExt1);
-        
+
         #ifdef __cplusplus
         }
         #endif
-        
+
         #endif // SDRPLAY_API_H
         "@ | Out-File -FilePath "include\sdrplay\sdrplay_api.h" -Encoding UTF8
-        
+
         # Create stub library file
         @"
         LIBRARY sdrplay_api
@@ -347,47 +347,47 @@ jobs:
             sdrplay_api_Update
             sdrplay_api_GetErrorString
         "@ | Out-File -FilePath "lib\sdrplay_api.def" -Encoding UTF8
-        
+
         Write-Host "Note: SDRplay API stub created. Binaries will compile but require real DLL to run."
-    
+
     - name: Build Release
       shell: powershell
       run: |
         # Build with release optimizations
         .\.github\ci_build.ps1 -Release
-    
+
     - name: Package Release
       shell: powershell
       run: |
         # Get version from tag or version.h
         $version = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { "dev" }
-        
+
         # Create release package
         $packageName = "phoenix_sdr-$version-win64"
         New-Item -ItemType Directory -Force -Path "release\$packageName"
-        
+
         # Copy executables
         Copy-Item "bin\*.exe" -Destination "release\$packageName\" -ErrorAction SilentlyContinue
-        
+
         # Copy required DLLs
         Copy-Item "bin\SDL2.dll" -Destination "release\$packageName\" -ErrorAction SilentlyContinue
-        
+
         # Copy documentation
         Copy-Item "README.md" -Destination "release\$packageName\" -ErrorAction SilentlyContinue
         Copy-Item "docs\BETA_TESTING_GUIDE.md" -Destination "release\$packageName\" -ErrorAction SilentlyContinue
-        
+
         # Create zip
         Compress-Archive -Path "release\$packageName" -DestinationPath "release\$packageName.zip"
-        
+
         Write-Host "Created release package: release\$packageName.zip"
-    
+
     - name: Upload Build Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: phoenix_sdr-build
         path: release/*.zip
         retention-days: 30
-    
+
     - name: Create GitHub Release
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v1

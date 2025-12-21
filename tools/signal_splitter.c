@@ -124,8 +124,10 @@ typedef struct {
 
 #define DEFAULT_SDR_HOST        "localhost"
 #define DEFAULT_SDR_PORT        4536
+#define DEFAULT_SDR_CTRL_PORT   4535
 #define DEFAULT_RELAY_PORT_DET  4410
 #define DEFAULT_RELAY_PORT_DISP 4411
+#define DEFAULT_RELAY_CTRL_PORT 4409
 
 /*============================================================================
  * Ring Buffer
@@ -218,6 +220,14 @@ static bool g_relay_det_connected = false;
 static bool g_relay_disp_connected = false;
 static uint32_t g_relay_det_sequence = 0;
 static uint32_t g_relay_disp_sequence = 0;
+
+/* Control connections (text protocol passthrough) */
+static socket_t g_sdr_ctrl_socket = SOCKET_INVALID;
+static socket_t g_relay_ctrl_socket = SOCKET_INVALID;
+static int g_sdr_ctrl_port = DEFAULT_SDR_CTRL_PORT;
+static int g_relay_ctrl_port = DEFAULT_RELAY_CTRL_PORT;
+static bool g_sdr_ctrl_connected = false;
+static bool g_relay_ctrl_connected = false;
 
 /* DSP State - exact copy of waterfall.c */
 static wf_lowpass_t g_detector_lowpass_i;
@@ -458,6 +468,78 @@ static void disconnect_from_relay(void) {
 }
 
 /*============================================================================
+ * Control Path Connections (Text Protocol Passthrough)
+ *============================================================================*/
+
+static bool connect_to_sdr_control(void) {
+    if (g_sdr_ctrl_connected) return true;
+
+    fprintf(stderr, "[SDR-CTRL] Connecting to %s:%d...\n", g_sdr_host, g_sdr_ctrl_port);
+
+    g_sdr_ctrl_socket = tcp_connect(g_sdr_host, g_sdr_ctrl_port);
+    if (g_sdr_ctrl_socket == SOCKET_INVALID) {
+        fprintf(stderr, "[SDR-CTRL] Connection failed\n");
+        return false;
+    }
+
+    fprintf(stderr, "[SDR-CTRL] Connected (text protocol)\n");
+    g_sdr_ctrl_connected = true;
+    return true;
+}
+
+static bool connect_to_relay_control(void) {
+    if (g_relay_ctrl_connected) return true;
+
+    fprintf(stderr, "[RELAY-CTRL] Connecting to %s:%d...\n", g_relay_host, g_relay_ctrl_port);
+
+    g_relay_ctrl_socket = tcp_connect(g_relay_host, g_relay_ctrl_port);
+    if (g_relay_ctrl_socket == SOCKET_INVALID) {
+        fprintf(stderr, "[RELAY-CTRL] Connection failed\n");
+        return false;
+    }
+
+    fprintf(stderr, "[RELAY-CTRL] Connected (text protocol passthrough)\n");
+    g_relay_ctrl_connected = true;
+    return true;
+}
+
+static void disconnect_from_control(void) {
+    if (g_sdr_ctrl_socket != SOCKET_INVALID) {
+        socket_close(g_sdr_ctrl_socket);
+        g_sdr_ctrl_socket = SOCKET_INVALID;
+    }
+    g_sdr_ctrl_connected = false;
+
+    if (g_relay_ctrl_socket != SOCKET_INVALID) {
+        socket_close(g_relay_ctrl_socket);
+        g_relay_ctrl_socket = SOCKET_INVALID;
+    }
+    g_relay_ctrl_connected = false;
+}
+
+static void forward_control_data(socket_t from_sock, socket_t to_sock, const char *label) {
+    char buffer[4096];
+    ssize_t received = recv(from_sock, buffer, sizeof(buffer) - 1, 0);
+
+    if (received <= 0) {
+        if (received < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            return;  /* No data available */
+        }
+        fprintf(stderr, "[CTRL-%s] Connection lost\n", label);
+        disconnect_from_control();
+        return;
+    }
+
+    buffer[received] = '\0';
+
+    /* Forward to destination */
+    if (send(to_sock, buffer, received, 0) < 0) {
+        fprintf(stderr, "[CTRL-%s] Forward failed\n", label);
+        disconnect_from_control();
+    }
+}
+
+/*============================================================================
  * Relay Frame Transmission
  *============================================================================*/
 
@@ -648,10 +730,12 @@ static void print_status(void) {
     if (now - g_last_status_time < (STATUS_INTERVAL_MS / 1000)) return;
     g_last_status_time = now;
 
-    fprintf(stderr, "\n[STATUS] Connections: SDR=%s DET=%s DISP=%s\n",
+    fprintf(stderr, "\n[STATUS] Connections: SDR=%s DET=%s DISP=%s CTRL=%s/%s\n",
             g_sdr_connected ? "UP" : "DOWN",
             g_relay_det_connected ? "UP" : "DOWN",
-            g_relay_disp_connected ? "UP" : "DOWN");
+            g_relay_disp_connected ? "UP" : "DOWN",
+            g_sdr_ctrl_connected ? "SDR" : "---",
+            g_relay_ctrl_connected ? "RLY" : "---");
 
     fprintf(stderr, "[STATUS] Samples: RX=%llu DET_TX=%llu DISP_TX=%llu\n",
             (unsigned long long)g_samples_received,
@@ -716,6 +800,27 @@ static void run(void) {
             (now - last_reconnect >= (RECONNECT_DELAY_MS / 1000))) {
             connect_to_relay_display();
             last_reconnect = now;
+        }
+
+        /* Connect control paths */
+        if (!g_sdr_ctrl_connected && g_sdr_connected &&
+            (now - last_reconnect >= (RECONNECT_DELAY_MS / 1000))) {
+            connect_to_sdr_control();
+            last_reconnect = now;
+        }
+
+        if (!g_relay_ctrl_connected && strlen(g_relay_host) > 0 &&
+            (now - last_reconnect >= (RECONNECT_DELAY_MS / 1000))) {
+            connect_to_relay_control();
+            last_reconnect = now;
+        }
+
+        /* Forward control data bidirectionally */
+        if (g_sdr_ctrl_connected && g_relay_ctrl_connected) {
+            /* Relay → SDR */
+            forward_control_data(g_relay_ctrl_socket, g_sdr_ctrl_socket, "RELAY->SDR");
+            /* SDR → Relay */
+            forward_control_data(g_sdr_ctrl_socket, g_relay_ctrl_socket, "SDR->RELAY");
         }
 
         /* Receive and process data from SDR */
@@ -853,6 +958,7 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "\n[SHUTDOWN] Closing connections...\n");
     disconnect_from_sdr();
     disconnect_from_relay();
+    disconnect_from_control();
     ring_buffer_destroy(g_detector_ring);
     ring_buffer_destroy(g_display_ring);
     tcp_cleanup();

@@ -5,25 +5,26 @@ Splits 2 MHz I/Q from SDR server into detector (50 kHz) and display (12 kHz) str
 ## Architecture
 
 ```
-┌─────────────────┐
-│  sdr_server     │  Local mountain-top system
-│  localhost:4536 │  2 MHz I/Q (int16)
-└────────┬────────┘
+┌─────────────────┐  ┌─────────────────┐
+│  sdr_server     │  │  sdr_server     │  Local mountain-top system
+│  localhost:4536 │  │  localhost:4535 │  I/Q stream + Control port
+│  (I/Q stream)   │  │  (Control)      │
+└────────┬────────┘  └────────┬────────┘
+         │                    │
+         ▼                    ▼
+┌─────────────────────────────────────────┐
+│            signal_splitter              │  Local processor
+│  - Receives 2 MHz I/Q                   │  - Forwards control commands
+│  - Signal divergence (waterfall.c copy) │  - Bidirectional text relay
+│  - 30-second ring buffers               │
+└────────┬────────────────────────────────┘
          │
-         ▼
-┌─────────────────┐
-│ signal_splitter │  Local processor
-│                 │  - Receives 2 MHz I/Q
-│                 │  - Signal divergence (exact waterfall.c copy)
-│                 │  - 30-second ring buffers
-└────────┬────────┘
-         │
-         ├─────────────────┬─────────────────┐
-         ▼                 ▼                 ▼
-    Remote Relay      Remote Relay      Remote Relay
-    50 kHz I/Q        12 kHz I/Q        (DO droplet)
-    float32           float32           Linux
-    Port 4410         Port 4411
+         ├─────────────────┬─────────────────┬─────────────────┐
+         ▼                 ▼                 ▼                 ▼
+    Remote Relay      Remote Relay      Remote Relay      Remote Relay
+    50 kHz I/Q        12 kHz I/Q        Control           (DO droplet)
+    float32           float32           Text              Linux
+    Port 4410         Port 4411         Port 4409
 ```
 
 ## Signal Processing
@@ -33,6 +34,15 @@ Splits 2 MHz I/Q from SDR server into detector (50 kHz) and display (12 kHz) str
 1. **Normalize:** int16 → float [-1, 1]
 2. **Detector Path:** 5 kHz lowpass → decimate 40:1 → 50 kHz I/Q
 3. **Display Path:** 5 kHz lowpass → decimate 166:1 → 12 kHz I/Q
+4. **Control Path:** Bidirectional text relay (no modification)
+
+## Control Path
+
+Commands flow bidirectionally:
+- **Client → SDR:** `freq 5.0005`, `gain 59`, `status`
+- **SDR → Client:** Responses and status updates
+
+Forwarding is transparent passthrough with no command parsing or validation.
 
 ## Usage
 
@@ -49,11 +59,13 @@ Splits 2 MHz I/Q from SDR server into detector (50 kHz) and display (12 kHz) str
 ### Command-Line Options
 
 ```
---sdr-host HOST      SDR server hostname (default: localhost)
---sdr-port PORT      SDR server port (default: 4536)
---relay-host HOST    Relay server hostname (required)
---relay-det PORT     Relay detector port (default: 4410)
---relay-disp PORT    Relay display port (default: 4411)
+--sdr-host HOST        SDR server hostname (default: localhost)
+--sdr-port PORT        SDR I/Q port (default: 4536)
+--sdr-ctrl-port PORT   SDR control port (default: 4535)
+--relay-host HOST      Relay server hostname (required)
+--relay-det PORT       Relay detector port (default: 4410)
+--relay-disp PORT      Relay display port (default: 4411)
+--relay-ctrl PORT      Relay control port (default: 4409)
 ```
 
 ## Connection Tolerance
@@ -122,6 +134,29 @@ struct relay_data_frame {
 ### Byte Order
 - **Native float32** (no endian conversion)
 - Works for x86 Windows → x86 Linux (both little-endian)
+- Control path: UTF-8 text (no encoding issues)
+
+## Operational Model
+
+### Security Approach
+- **No authentication** (low-risk RX-only equipment)
+- **Manual start/stop** via SSH (hands-on supervision)
+- **Firewall access control** (DigitalOcean droplet IP whitelist)
+- **Shutdown when not in use** (remote client leaves → splitter stops)
+
+### Typical Workflow
+1. Root SSHs to mountain-top system
+2. Starts `sdr_server.exe` and `signal_splitter.exe`
+3. Remote client connects to relay server
+4. Root monitors telemetry/logs
+5. Client finishes session → root Ctrl+C to stop programs
+6. System idle until next session
+
+### Control Path Security
+- **Simple bidirectional relay** (no command filtering)
+- Commands: `freq`, `gain`, `status`, etc.
+- Trust model: Only authorized users have relay server access
+- Risk: Minimal (worst case = retune receiver to wrong frequency)
 
 ## Example: Remote Desktop to Mountain-Top
 
@@ -142,6 +177,7 @@ ssh root@mountaintop
 **Relay server receives:**
 - Port 4410: Detector stream (50 kHz float32 I/Q)
 - Port 4411: Display stream (12 kHz float32 I/Q)
+- Port 4409: Control relay (bidirectional text)
 
 ## Performance
 
@@ -154,6 +190,9 @@ ssh root@mountaintop
 **Display Path:**
 - 12,000 samples/sec × 2 (I/Q) × 4 bytes (float32) = **96 KB/sec**
 - With TCP overhead: ~110 KB/sec
+
+**Control Path:**
+- Negligible (~1 KB/sec typical, sporadic commands/responses)
 
 **Total:** ~560 KB/sec (~4.5 Mbps)
 

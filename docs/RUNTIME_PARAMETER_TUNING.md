@@ -307,7 +307,7 @@ class WaterfallController:
     def __init__(self, host='127.0.0.1', port=3006):
         self.host = host
         self.port = port
-    
+
     def send_command(self, cmd, value):
         """Send UDP command to waterfall"""
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -315,13 +315,13 @@ class WaterfallController:
         sock.sendto(message.encode('ascii'), (self.host, self.port))
         sock.close()
         time.sleep(0.05)  # Rate limit
-    
+
     def set_tick_threshold(self, value):
         self.send_command('SET_TICK_THRESHOLD', value)
-    
+
     def set_tick_adapt_down(self, value):
         self.send_command('SET_TICK_ADAPT_DOWN', value)
-    
+
     def set_sync_locked_threshold(self, value):
         self.send_command('SET_SYNC_LOCKED_THRESHOLD', value)
 
@@ -330,7 +330,7 @@ class TelemetryListener:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(('127.0.0.1', port))
         self.sock.settimeout(0.1)
-    
+
     def get_correlation_metrics(self, duration=10.0):
         """Collect tick timing variance from CORR telemetry"""
         variances = []
@@ -356,11 +356,11 @@ listener = TelemetryListener()
 def objective(params):
     """Minimize tick timing variance"""
     threshold, adapt_down, locked_thresh = params
-    
+
     controller.set_tick_threshold(threshold)
     controller.set_tick_adapt_down(adapt_down)
     controller.set_sync_locked_threshold(locked_thresh)
-    
+
     # Collect metrics
     variance = listener.get_correlation_metrics(duration=30.0)
     return variance
@@ -374,7 +374,7 @@ bounds = [(1.0, 5.0),      # threshold_multiplier
           (0.5, 0.9)]      # locked_threshold
 
 # Optimize
-result = minimize(objective, x0, method='Nelder-Mead', 
+result = minimize(objective, x0, method='Nelder-Mead',
                   bounds=bounds, options={'maxiter': 100})
 
 print(f"Optimal parameters: {result.x}")
@@ -651,5 +651,5 @@ timestamp_ms,detector,parameter,old_value,new_value,source
 
 ---
 
-**Last Updated:** December 20, 2025  
+**Last Updated:** December 20, 2025
 **Phoenix SDR Version:** 1.11.2+157

@@ -110,10 +110,54 @@ static void dc_block_init(dc_block_t *dc) {
 }
 
 static float dc_block_process(dc_block_t *dc, float x) {
-    float y = x - dc->x_prev + 0.995f * dc->y_prev;
+    float y = x - dc->x_prev + 0.99f * dc->y_prev;  /* 0.99 for voice (was 0.995 for pulse detection) */
     dc->x_prev = x;
     dc->y_prev = y;
     return y;
+}
+
+/*============================================================================
+ * Audio AGC (Automatic Gain Control)
+ *============================================================================*/
+
+typedef struct {
+    float level;        /* Running average of signal level */
+    float target;       /* Target output level */
+    float attack;       /* Attack time constant (fast) */
+    float decay;        /* Decay time constant (slow) */
+    int warmup;         /* Warmup counter */
+} audio_agc_t;
+
+static void audio_agc_init(audio_agc_t *agc, float target) {
+    agc->level = 0.0001f;
+    agc->target = target;
+    agc->attack = 0.01f;   /* Fast attack for loud signals */
+    agc->decay = 0.0001f;  /* Slow decay for quiet signals */
+    agc->warmup = 0;
+}
+
+static float audio_agc_process(audio_agc_t *agc, float x) {
+    float mag = fabsf(x);
+
+    /* Track signal level with asymmetric time constants */
+    if (mag > agc->level) {
+        agc->level += agc->attack * (mag - agc->level);  /* Fast attack */
+    } else {
+        agc->level += agc->decay * (mag - agc->level);   /* Slow decay */
+    }
+
+    /* Prevent division by zero */
+    if (agc->level < 0.0001f) agc->level = 0.0001f;
+
+    /* Calculate gain to reach target level */
+    float gain = agc->target / agc->level;
+
+    /* Limit gain to prevent over-amplification during silence */
+    if (gain > 100.0f) gain = 100.0f;
+    if (gain < 0.1f) gain = 0.1f;
+
+    /* Apply gain */
+    return x * gain;
 }
 
 /*============================================================================
@@ -209,6 +253,7 @@ static sdrplay_api_DeviceParamsT *g_params = NULL;
 static lowpass_t g_lowpass_i;   /* Lowpass for I channel */
 static lowpass_t g_lowpass_q;   /* Lowpass for Q channel */
 static dc_block_t g_dc_block;
+static audio_agc_t g_audio_agc;
 static int g_decim_counter = 0;
 
 /* Audio output buffer */
@@ -257,13 +302,16 @@ static void stream_callback(
         /* Step 3: Envelope detection on filtered signal */
         float magnitude = sqrtf(I_filt * I_filt + Q_filt * Q_filt);
 
-        /* Step 4: Decimation (keep every 42nd sample) */
+        /* Step 4: DC removal (BEFORE decimation - keeps modulation clean) */
+        float audio = dc_block_process(&g_dc_block, magnitude);
+
+        /* Step 5: Audio AGC (automatic gain control for consistent volume) */
+        audio = audio_agc_process(&g_audio_agc, audio);
+
+        /* Step 6: Decimation (keep every 42nd sample) */
         g_decim_counter++;
         if (g_decim_counter >= DECIMATION_FACTOR) {
             g_decim_counter = 0;
-
-            /* Step 5: DC removal */
-            float audio = dc_block_process(&g_dc_block, magnitude);
 
             /* Scale to audio level */
             audio = audio * g_volume;
@@ -275,7 +323,7 @@ static void stream_callback(
             /* Store in output buffer */
             g_audio_out[g_audio_out_count++] = (int16_t)audio;
 
-            /* Step 6: Output when buffer full */
+            /* Step 7: Output when buffer full */
             if (g_audio_out_count >= AUDIO_BUFFER_SIZE) {
                 if (g_stdout_mode) {
                     fwrite(g_audio_out, sizeof(int16_t), g_audio_out_count, stdout);
@@ -334,7 +382,7 @@ static void signal_handler(int sig) {
 
 int main(int argc, char *argv[]) {
     print_version("Phoenix SDR - AM Receiver");
-    
+
     sdrplay_api_ErrT err;
     float freq_mhz = DEFAULT_FREQ_MHZ;
     int gain_db = DEFAULT_GAIN_DB;
@@ -388,6 +436,7 @@ int main(int argc, char *argv[]) {
     lowpass_init(&g_lowpass_i, IQ_FILTER_CUTOFF, SDR_SAMPLE_RATE);
     lowpass_init(&g_lowpass_q, IQ_FILTER_CUTOFF, SDR_SAMPLE_RATE);
     dc_block_init(&g_dc_block);
+    audio_agc_init(&g_audio_agc, 5000.0f);  /* Target level for 16-bit audio */
 
     /* Initialize audio if enabled */
     if (g_audio_enabled) {

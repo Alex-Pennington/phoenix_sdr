@@ -238,7 +238,7 @@ Mountain-Top                     Internet                 Remote Site
 ### Open (0.0.0.0)
 - **Access:** All network interfaces
 - **Risk:** Medium (no authentication)
-- **Mitigation:** 
+- **Mitigation:**
   - Firewall rules (allow specific IPs)
   - Non-routable network (192.168.x.x)
   - VPN tunnel

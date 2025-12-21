@@ -45,7 +45,7 @@ function Build-Object($source, $extraFlags) {
 
 try {
     Push-Location (Join-Path $PSScriptRoot "..")
-    
+
     Write-Status "CI Build starting (FULL SUITE)..."
     Write-Status "GCC version: $(gcc --version | Select-Object -First 1)"
 

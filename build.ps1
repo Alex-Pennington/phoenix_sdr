@@ -303,6 +303,22 @@ try {
     if ($process.ExitCode -ne 0) { throw "Linking failed for wormhole" }
     Write-Status "Built: $BinDir\wormhole.exe"
 
+    # Build signal_splitter (split 2MHz I/Q into detector and display streams)
+    Write-Status "Building signal_splitter..."
+
+    $signalSplitterObj = Build-Object "tools\signal_splitter.c" @()
+
+    Write-Status "Linking signal_splitter.exe..."
+    $signalSplitterLdflags = @(
+        "-lm",
+        "-lws2_32"
+    )
+    $allArgs = @("-o", "`"$BinDir\signal_splitter.exe`"", "`"$signalSplitterObj`"", "`"$waterfallDspObj`"") + $signalSplitterLdflags
+    $argString = $allArgs -join " "
+    $process = Start-Process -FilePath "`"$CC`"" -ArgumentList $argString -NoNewWindow -Wait -PassThru
+    if ($process.ExitCode -ne 0) { throw "Linking failed for signal_splitter" }
+    Write-Status "Built: $BinDir\signal_splitter.exe"
+
     # Build test_tcp_commands (TCP command parser unit tests)
     Write-Status "Building test_tcp_commands..."
 

@@ -147,12 +147,56 @@ try {
     # Build kiss_fft (shared)
     $kissObj = Build-Object "src\kiss_fft.c" @()
 
-    # Build waterfall (SDL2 tool)
+    # Build waterfall (SDL2 tool) with all detector modules
     Write-Status "Building waterfall..."
+    $wwvClockObj = Build-Object "tools\wwv_clock.c" @()
+    $channelFiltersObj = Build-Object "tools\channel_filters.c" @()
+    $tickCombFilterObj = Build-Object "tools\tick_comb_filter.c" @()
+    $tickDetectorObj = Build-Object "tools\tick_detector.c" @()
+    $markerDetectorObj = Build-Object "tools\marker_detector.c" @()
+    $slowMarkerDetectorObj = Build-Object "tools\slow_marker_detector.c" @()
+    $markerCorrelatorObj = Build-Object "tools\marker_correlator.c" @()
+    $syncDetectorObj = Build-Object "tools\sync_detector.c" @()
+    $toneTrackerObj = Build-Object "tools\tone_tracker.c" @()
+    $tickCorrelatorObj = Build-Object "tools\tick_correlator.c" @()
+    $subcarrierDetectorObj = Build-Object "tools\subcarrier_detector.c" @()
+    $bcdEnvelopeObj = Build-Object "tools\bcd_envelope.c" @()
+    $bcdDecoderObj = Build-Object "tools\bcd_decoder.c" @()
+    $bcdTimeDetectorObj = Build-Object "tools\bcd_time_detector.c" @()
+    $bcdFreqDetectorObj = Build-Object "tools\bcd_freq_detector.c" @()
+    $bcdCorrelatorObj = Build-Object "tools\bcd_correlator.c" @()
+    $waterfallFlashObj = Build-Object "tools\waterfall_flash.c" @()
+    $waterfallDspObj = Build-Object "tools\waterfall_dsp.c" @()
+    $waterfallAudioObj = Build-Object "tools\waterfall_audio.c" @()
+    $waterfallTelemObj = Build-Object "tools\waterfall_telemetry.c" @()
     $waterfallObj = Build-Object "tools\waterfall.c" @("-I`"$SDL2Include`"")
 
     Write-Status "Linking waterfall.exe..."
-    $cmd = "$CC -o `"$BinDir\waterfall.exe`" `"$waterfallObj`" `"$kissObj`" -L`"$SDL2Lib`" -lmingw32 -lSDL2main -lSDL2 -lm"
+    $waterfallObjs = @(
+        "`"$waterfallObj`"",
+        "`"$channelFiltersObj`"",
+        "`"$tickCombFilterObj`"",
+        "`"$tickDetectorObj`"",
+        "`"$markerDetectorObj`"",
+        "`"$slowMarkerDetectorObj`"",
+        "`"$markerCorrelatorObj`"",
+        "`"$syncDetectorObj`"",
+        "`"$toneTrackerObj`"",
+        "`"$tickCorrelatorObj`"",
+        "`"$subcarrierDetectorObj`"",
+        "`"$bcdEnvelopeObj`"",
+        "`"$bcdDecoderObj`"",
+        "`"$bcdTimeDetectorObj`"",
+        "`"$bcdFreqDetectorObj`"",
+        "`"$bcdCorrelatorObj`"",
+        "`"$waterfallFlashObj`"",
+        "`"$wwvClockObj`"",
+        "`"$waterfallDspObj`"",
+        "`"$waterfallAudioObj`"",
+        "`"$waterfallTelemObj`"",
+        "`"$kissObj`""
+    )
+    $cmd = "$CC -o `"$BinDir\waterfall.exe`" $($waterfallObjs -join ' ') -L`"$SDL2Lib`" -lmingw32 -lSDL2main -lSDL2 -lm -lws2_32 -lwinmm"
     Write-Host $cmd -ForegroundColor DarkGray
     Invoke-Expression $cmd
     if ($LASTEXITCODE -ne 0) { throw "Linking failed for waterfall" }

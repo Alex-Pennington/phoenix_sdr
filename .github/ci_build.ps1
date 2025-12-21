@@ -66,9 +66,9 @@ try {
         Write-Status "Debug build"
     }
 
+    # Note: -lsdrplay_api omitted for CI (stub headers only, no lib file)
+    # Executables will compile but require real sdrplay_api.dll at runtime
     $LDFLAGS = @(
-        "-L`"$SDRplayLib`"",
-        "-lsdrplay_api",
         "-lm",
         "-lwinmm"
     )
@@ -77,6 +77,10 @@ try {
     if (-not (Test-Path $BuildDir)) { New-Item -ItemType Directory -Path $BuildDir | Out-Null }
     if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir | Out-Null }
 
+    # Build SDRplay stub library for CI
+    Write-Status "Building SDRplay stub..."
+    $sdrplayStubObj = Build-Object ".github\sdrplay_api_stub.c" @()
+
     #==========================================================================
     # 1. simple_am_receiver.exe
     #==========================================================================
@@ -84,7 +88,7 @@ try {
     $simpleAmObj = Build-Object "tools\simple_am_receiver.c" @()
 
     Write-Status "Linking simple_am_receiver.exe..."
-    $cmd = @($CC, "-o", "`"$BinDir\simple_am_receiver.exe`"", "`"$simpleAmObj`"") + $LDFLAGS
+    $cmd = @($CC, "-o", "`"$BinDir\simple_am_receiver.exe`"", "`"$simpleAmObj`"", "`"$sdrplayStubObj`"") + $LDFLAGS
     & $cmd[0] $cmd[1..($cmd.Length-1)]
     if ($LASTEXITCODE -ne 0) { throw "Linking failed for simple_am_receiver" }
     Write-Status "Built: $BinDir\simple_am_receiver.exe"

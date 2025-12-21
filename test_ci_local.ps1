@@ -40,15 +40,15 @@ if ($Clean) {
 # Setup CI environment
 if ($Setup -or $Build) {
     Write-Host "Setting up CI environment..." -ForegroundColor Yellow
-    
+
     # Create CI test directory
     New-Item -ItemType Directory -Force -Path "ci_test" | Out-Null
-    
+
     # Setup stub SDRplay headers (exactly as CI does)
     Write-Host "  - Creating SDRplay stub headers..." -ForegroundColor Gray
     New-Item -ItemType Directory -Force -Path "include\sdrplay" | Out-Null
     Copy-Item ".github\sdrplay_api_stub.h" -Destination "include\sdrplay\sdrplay_api.h" -Force
-    
+
     Write-Host "Setup complete" -ForegroundColor Green
 }
 
@@ -60,10 +60,10 @@ if ($Build) {
     Write-Host "  Compiler: GCC $gccVersion" -ForegroundColor Gray
     Write-Host "  Headers: Stub (include\sdrplay\sdrplay_api.h)" -ForegroundColor Gray
     Write-Host ""
-    
+
     # Run the exact CI build script
     & .\.github\ci_build.ps1 -Release
-    
+
     if ($LASTEXITCODE -eq 0) {
         Write-Host ""
         Write-Host "=== BUILD SUCCESS ===" -ForegroundColor Green

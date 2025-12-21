@@ -144,18 +144,27 @@ jobs:
         } sdrplay_api_Bw_MHzT;
 
         typedef enum {
-            sdrplay_api_AgcMode_DISABLE = 0,
-            sdrplay_api_AgcMode_5HZ = 1,
-            sdrplay_api_AgcMode_50HZ = 2,
-            sdrplay_api_AgcMode_100HZ = 3,
-            sdrplay_api_AgcMode_CTRL_AGC = 4
+            sdrplay_api_AGC_DISABLE = 0,
+            sdrplay_api_AGC_100HZ = 1,
+            sdrplay_api_AGC_50HZ = 2,
+            sdrplay_api_AGC_5HZ = 3,
+            sdrplay_api_AGC_CTRL = 4
         } sdrplay_api_AgcControlT;
-
+        
         typedef enum {
             sdrplay_api_EXTENDED_MIN_GR = 0,
             sdrplay_api_NORMAL_MIN_GR = 20
         } sdrplay_api_MinGainReductionT;
-
+        
+        typedef enum {
+            sdrplay_api_Rsp2_AMPORT_1 = 0,
+            sdrplay_api_Rsp2_AMPORT_2 = 1
+        } sdrplay_api_Rsp2_AmPortSelectT;
+        
+        typedef enum {
+            sdrplay_api_Rsp2_ANTENNA_A = 0,
+            sdrplay_api_Rsp2_ANTENNA_B = 1
+        } sdrplay_api_Rsp2_AntennaSelectT;
         typedef enum {
             sdrplay_api_Update_None = 0x00000000,
             sdrplay_api_Update_Dev_Fs = 0x00000001,
@@ -274,15 +283,17 @@ jobs:
         } sdrplay_api_ControlParamsT;
 
         typedef struct {
+            unsigned char biasTEnable;
+            sdrplay_api_Rsp2_AmPortSelectT amPortSel;
+            sdrplay_api_Rsp2_AntennaSelectT antennaSel;
+            unsigned char rfNotchEnable;
+            unsigned char extRefOutputEn;
+        } sdrplay_api_Rsp2TunerParamsT;
+        
+        typedef struct {
             sdrplay_api_TunerParamsT tunerParams;
             sdrplay_api_ControlParamsT ctrlParams;
-        } sdrplay_api_RxChannelParamsT;
-
-        typedef struct {
-            double ppm;
-            uint32_t fsHz;
-            uint8_t syncUpdate;
-            uint8_t reCal;
+            sdrplay_api_Rsp2TunerParamsT rsp2TunerParams;
         } sdrplay_api_DevParamsT;
 
         typedef struct {

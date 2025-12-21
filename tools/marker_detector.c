@@ -258,23 +258,26 @@ static void run_state_machine(marker_detector_t *md) {
                            timestamp_ms / 1000.0f, md->markers_detected,
                            duration_ms, since_last, md->marker_peak_energy);
 
+                    /* CSV logging and telemetry */
+                    char time_str[16];
+                    get_wall_time_str(md, timestamp_ms, time_str, sizeof(time_str));
+                    wwv_time_t wwv = md->wwv_clock ? wwv_clock_now(md->wwv_clock) : (wwv_time_t){0};
+
                     if (md->csv_file) {
-                        char time_str[16];
-                        get_wall_time_str(md, timestamp_ms, time_str, sizeof(time_str));
-                        wwv_time_t wwv = md->wwv_clock ? wwv_clock_now(md->wwv_clock) : (wwv_time_t){0};
                         fprintf(md->csv_file, "%s,%.1f,M%d,%d,%s,%.6f,%.1f,%.1f,%.6f,%.6f\n",
                                 time_str, timestamp_ms, md->markers_detected, wwv.second,
                                 wwv_event_name(wwv.expected_event),
                                 md->marker_peak_energy, duration_ms, since_last,
                                 md->baseline_energy, md->threshold);
                         fflush(md->csv_file);
-
-                        telem_sendf(TELEM_MARKERS, "%s,%.1f,M%d,%d,%s,%.6f,%.1f,%.1f,%.6f,%.6f",
-                                    time_str, timestamp_ms, md->markers_detected, wwv.second,
-                                    wwv_event_name(wwv.expected_event),
-                                    md->marker_peak_energy, duration_ms, since_last,
-                                    md->baseline_energy, md->threshold);
                     }
+
+                    /* UDP telemetry */
+                    telem_sendf(TELEM_MARKERS, "%s,%.1f,M%d,%d,%s,%.6f,%.1f,%.1f,%.6f,%.6f",
+                                time_str, timestamp_ms, md->markers_detected, wwv.second,
+                                wwv_event_name(wwv.expected_event),
+                                md->marker_peak_energy, duration_ms, since_last,
+                                md->baseline_energy, md->threshold);
 
                     if (md->callback) {
                         marker_event_t event = {

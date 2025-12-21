@@ -477,6 +477,19 @@ static void set_corr_max_misses(int max_misses);
 static void set_marker_threshold(float mult);
 static void set_marker_adapt_rate(float rate);
 static void set_marker_min_duration(float ms);
+static void set_sync_weight_tick(float weight);
+static void set_sync_weight_marker(float weight);
+static void set_sync_weight_p_marker(float weight);
+static void set_sync_weight_tick_hole(float weight);
+static void set_sync_weight_combined(float weight);
+static void set_sync_locked_threshold(float threshold);
+static void set_sync_min_retain(float threshold);
+static void set_sync_tentative_init(float threshold);
+static void set_sync_decay_normal(float decay);
+static void set_sync_decay_recovering(float decay);
+static void set_sync_tick_tolerance(float ms);
+static void set_sync_marker_tolerance(float ms);
+static void set_sync_p_marker_tolerance(float ms);
 
 /*============================================================================
  * UDP Command Processor
@@ -637,6 +650,124 @@ static void process_modem_command(const char *cmd_buf, int len) {
             set_marker_min_duration(value);
         } else {
             telem_sendf(TELEM_RESP, "ERR PARSE SET_MARKER_MIN_DURATION requires numeric value\n");
+        }
+        return;
+    }
+
+    /* Sync detector parameter commands */
+    if (strcmp(cmd_name, "SET_SYNC_WEIGHT_TICK") == 0) {
+        if (parsed == 2) {
+            set_sync_weight_tick(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_SYNC_WEIGHT_TICK requires numeric value\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd_name, "SET_SYNC_WEIGHT_MARKER") == 0) {
+        if (parsed == 2) {
+            set_sync_weight_marker(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_SYNC_WEIGHT_MARKER requires numeric value\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd_name, "SET_SYNC_WEIGHT_P_MARKER") == 0) {
+        if (parsed == 2) {
+            set_sync_weight_p_marker(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_SYNC_WEIGHT_P_MARKER requires numeric value\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd_name, "SET_SYNC_WEIGHT_TICK_HOLE") == 0) {
+        if (parsed == 2) {
+            set_sync_weight_tick_hole(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_SYNC_WEIGHT_TICK_HOLE requires numeric value\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd_name, "SET_SYNC_WEIGHT_COMBINED") == 0) {
+        if (parsed == 2) {
+            set_sync_weight_combined(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_SYNC_WEIGHT_COMBINED requires numeric value\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd_name, "SET_SYNC_LOCKED_THRESHOLD") == 0) {
+        if (parsed == 2) {
+            set_sync_locked_threshold(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_SYNC_LOCKED_THRESHOLD requires numeric value\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd_name, "SET_SYNC_MIN_RETAIN") == 0) {
+        if (parsed == 2) {
+            set_sync_min_retain(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_SYNC_MIN_RETAIN requires numeric value\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd_name, "SET_SYNC_TENTATIVE_INIT") == 0) {
+        if (parsed == 2) {
+            set_sync_tentative_init(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_SYNC_TENTATIVE_INIT requires numeric value\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd_name, "SET_SYNC_DECAY_NORMAL") == 0) {
+        if (parsed == 2) {
+            set_sync_decay_normal(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_SYNC_DECAY_NORMAL requires numeric value\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd_name, "SET_SYNC_DECAY_RECOVERING") == 0) {
+        if (parsed == 2) {
+            set_sync_decay_recovering(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_SYNC_DECAY_RECOVERING requires numeric value\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd_name, "SET_SYNC_TICK_TOLERANCE") == 0) {
+        if (parsed == 2) {
+            set_sync_tick_tolerance(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_SYNC_TICK_TOLERANCE requires numeric value\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd_name, "SET_SYNC_MARKER_TOLERANCE") == 0) {
+        if (parsed == 2) {
+            set_sync_marker_tolerance(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_SYNC_MARKER_TOLERANCE requires numeric value\n");
+        }
+        return;
+    }
+
+    if (strcmp(cmd_name, "SET_SYNC_P_MARKER_TOLERANCE") == 0) {
+        if (parsed == 2) {
+            set_sync_p_marker_tolerance(value);
+        } else {
+            telem_sendf(TELEM_RESP, "ERR PARSE SET_SYNC_P_MARKER_TOLERANCE requires numeric value\n");
         }
         return;
     }
@@ -850,6 +981,84 @@ static void set_marker_min_duration(float ms) {
     telem_sendf(TELEM_RESP, "OK marker_min_duration_ms=%.2f\n", ms);
 }
 
+static void set_sync_weight_tick(float weight) {
+    sync_detector_set_weight_tick(g_sync_detector, weight);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK weight_tick=%.3f\n", weight);
+}
+
+static void set_sync_weight_marker(float weight) {
+    sync_detector_set_weight_marker(g_sync_detector, weight);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK weight_marker=%.3f\n", weight);
+}
+
+static void set_sync_weight_p_marker(float weight) {
+    sync_detector_set_weight_p_marker(g_sync_detector, weight);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK weight_p_marker=%.3f\n", weight);
+}
+
+static void set_sync_weight_tick_hole(float weight) {
+    sync_detector_set_weight_tick_hole(g_sync_detector, weight);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK weight_tick_hole=%.3f\n", weight);
+}
+
+static void set_sync_weight_combined(float weight) {
+    sync_detector_set_weight_combined(g_sync_detector, weight);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK weight_combined_hole_marker=%.3f\n", weight);
+}
+
+static void set_sync_locked_threshold(float threshold) {
+    sync_detector_set_locked_threshold(g_sync_detector, threshold);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK confidence_locked_threshold=%.3f\n", threshold);
+}
+
+static void set_sync_min_retain(float threshold) {
+    sync_detector_set_min_retain(g_sync_detector, threshold);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK confidence_min_retain=%.3f\n", threshold);
+}
+
+static void set_sync_tentative_init(float threshold) {
+    sync_detector_set_tentative_init(g_sync_detector, threshold);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK confidence_tentative_init=%.3f\n", threshold);
+}
+
+static void set_sync_decay_normal(float decay) {
+    sync_detector_set_decay_normal(g_sync_detector, decay);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK confidence_decay_normal=%.4f\n", decay);
+}
+
+static void set_sync_decay_recovering(float decay) {
+    sync_detector_set_decay_recovering(g_sync_detector, decay);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK confidence_decay_recovering=%.4f\n", decay);
+}
+
+static void set_sync_tick_tolerance(float ms) {
+    sync_detector_set_tick_tolerance(g_sync_detector, ms);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK tick_phase_tolerance_ms=%.1f\n", ms);
+}
+
+static void set_sync_marker_tolerance(float ms) {
+    sync_detector_set_marker_tolerance(g_sync_detector, ms);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK marker_tolerance_ms=%.1f\n", ms);
+}
+
+static void set_sync_p_marker_tolerance(float ms) {
+    sync_detector_set_p_marker_tolerance(g_sync_detector, ms);
+    save_tick_params_to_ini();
+    telem_sendf(TELEM_RESP, "OK p_marker_tolerance_ms=%.1f\n", ms);
+}
+
 /*============================================================================
  * INI File Persistence for Tunable Parameters
  *============================================================================*/
@@ -876,6 +1085,21 @@ static void save_tick_params_to_ini(void) {
     fprintf(f, "noise_adapt_rate=%.6f\n", marker_detector_get_noise_adapt_rate(g_marker_detector));
     fprintf(f, "min_duration_ms=%.2f\n", marker_detector_get_min_duration_ms(g_marker_detector));
 
+    fprintf(f, "\n[sync_detector]\n");
+    fprintf(f, "weight_tick=%.3f\n", sync_detector_get_weight_tick(g_sync_detector));
+    fprintf(f, "weight_marker=%.3f\n", sync_detector_get_weight_marker(g_sync_detector));
+    fprintf(f, "weight_p_marker=%.3f\n", sync_detector_get_weight_p_marker(g_sync_detector));
+    fprintf(f, "weight_tick_hole=%.3f\n", sync_detector_get_weight_tick_hole(g_sync_detector));
+    fprintf(f, "weight_combined_hole_marker=%.3f\n", sync_detector_get_weight_combined(g_sync_detector));
+    fprintf(f, "confidence_locked_threshold=%.3f\n", sync_detector_get_locked_threshold(g_sync_detector));
+    fprintf(f, "confidence_min_retain=%.3f\n", sync_detector_get_min_retain(g_sync_detector));
+    fprintf(f, "confidence_tentative_init=%.3f\n", sync_detector_get_tentative_init(g_sync_detector));
+    fprintf(f, "confidence_decay_normal=%.4f\n", sync_detector_get_decay_normal(g_sync_detector));
+    fprintf(f, "confidence_decay_recovering=%.4f\n", sync_detector_get_decay_recovering(g_sync_detector));
+    fprintf(f, "tick_phase_tolerance_ms=%.1f\n", sync_detector_get_tick_tolerance(g_sync_detector));
+    fprintf(f, "marker_tolerance_ms=%.1f\n", sync_detector_get_marker_tolerance(g_sync_detector));
+    fprintf(f, "p_marker_tolerance_ms=%.1f\n", sync_detector_get_p_marker_tolerance(g_sync_detector));
+
     fclose(f);
 }
 
@@ -890,6 +1114,7 @@ static void load_tick_params_from_ini(void) {
     bool in_tick_section = false;
     bool in_corr_section = false;
     bool in_marker_section = false;
+    bool in_sync_section = false;
     int params_loaded = 0;
 
     while (fgets(line, sizeof(line), f)) {
@@ -910,12 +1135,21 @@ static void load_tick_params_from_ini(void) {
             in_tick_section = false;
             in_corr_section = false;
             in_marker_section = true;
+            in_sync_section = false;
+            continue;
+        }
+        if (strstr(line, "[sync_detector]")) {
+            in_tick_section = false;
+            in_corr_section = false;
+            in_marker_section = false;
+            in_sync_section = true;
             continue;
         }
         if (line[0] == '[') {
             in_tick_section = false;
             in_corr_section = false;
             in_marker_section = false;
+            in_sync_section = false;
             continue;
         }
 
@@ -968,6 +1202,47 @@ static void load_tick_params_from_ini(void) {
                 params_loaded++;
             } else if (strstr(line, "min_duration_ms=")) {
                 marker_detector_set_min_duration_ms(g_marker_detector, value);
+                params_loaded++;
+            }
+        } else if (in_sync_section) {
+            if (strstr(line, "weight_tick=")) {
+                sync_detector_set_weight_tick(g_sync_detector, value);
+                params_loaded++;
+            } else if (strstr(line, "weight_marker=")) {
+                sync_detector_set_weight_marker(g_sync_detector, value);
+                params_loaded++;
+            } else if (strstr(line, "weight_p_marker=")) {
+                sync_detector_set_weight_p_marker(g_sync_detector, value);
+                params_loaded++;
+            } else if (strstr(line, "weight_tick_hole=")) {
+                sync_detector_set_weight_tick_hole(g_sync_detector, value);
+                params_loaded++;
+            } else if (strstr(line, "weight_combined_hole_marker=")) {
+                sync_detector_set_weight_combined(g_sync_detector, value);
+                params_loaded++;
+            } else if (strstr(line, "confidence_locked_threshold=")) {
+                sync_detector_set_locked_threshold(g_sync_detector, value);
+                params_loaded++;
+            } else if (strstr(line, "confidence_min_retain=")) {
+                sync_detector_set_min_retain(g_sync_detector, value);
+                params_loaded++;
+            } else if (strstr(line, "confidence_tentative_init=")) {
+                sync_detector_set_tentative_init(g_sync_detector, value);
+                params_loaded++;
+            } else if (strstr(line, "confidence_decay_normal=")) {
+                sync_detector_set_decay_normal(g_sync_detector, value);
+                params_loaded++;
+            } else if (strstr(line, "confidence_decay_recovering=")) {
+                sync_detector_set_decay_recovering(g_sync_detector, value);
+                params_loaded++;
+            } else if (strstr(line, "tick_phase_tolerance_ms=")) {
+                sync_detector_set_tick_tolerance(g_sync_detector, value);
+                params_loaded++;
+            } else if (strstr(line, "marker_tolerance_ms=")) {
+                sync_detector_set_marker_tolerance(g_sync_detector, value);
+                params_loaded++;
+            } else if (strstr(line, "p_marker_tolerance_ms=")) {
+                sync_detector_set_p_marker_tolerance(g_sync_detector, value);
                 params_loaded++;
             }
         }

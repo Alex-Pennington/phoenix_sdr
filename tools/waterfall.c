@@ -871,15 +871,18 @@ static bool tcp_reconnect(void) {
 static void print_usage(const char *progname) {
     printf("Usage: %s [options]\n", progname);
     printf("  -t, --tcp HOST[:PORT]   Connect to SDR server I/Q port (default localhost:%d)\n", DEFAULT_IQ_PORT);
-    printf("  --stdin             Read from stdin instead of TCP\n");
-    printf("  --test-pattern      Generate synthetic 1000Hz test tone (no SDR needed)\n");
-    printf("  -w, --width WIDTH   Set waterfall width (default: %d)\n", DEFAULT_WATERFALL_WIDTH);
-    printf("  -H, --height HEIGHT Set window height (default: %d)\n", DEFAULT_WINDOW_HEIGHT);
-    printf("  -x, --pos-x X       Set window X position (default: centered)\n");
-    printf("  -y, --pos-y Y       Set window Y position (default: centered)\n");
-    printf("  -l, --log-csv       Enable CSV file logging (default: UDP telemetry only)\n");
-    printf("  --reload-debug      Reload tuned parameters from waterfall.ini\n");
-    printf("  -h, --help          Show this help\n");
+    printf("  --stdin                 Read from stdin instead of TCP\n");
+    printf("  --test-pattern          Generate synthetic 1000Hz test tone (no SDR needed)\n");
+    printf("  -w, --width WIDTH       Set waterfall width (default: %d)\n", DEFAULT_WATERFALL_WIDTH);
+    printf("  -H, --height HEIGHT     Set window height (default: %d)\n", DEFAULT_WINDOW_HEIGHT);
+    printf("  -x, --pos-x X           Set window X position (default: centered)\n");
+    printf("  -y, --pos-y Y           Set window Y position (default: centered)\n");
+    printf("  -l, --log-csv           Enable CSV file logging (default: UDP telemetry only)\n");
+    printf("  --reload-debug          Reload tuned parameters from waterfall.ini\n");
+    printf("  -h, --help              Show this help\n\n");
+    printf("UDP Telemetry:          Broadcast on port 3005 (always enabled)\n");
+    printf("Control Interface:      Type commands in console (freq, gain, status, etc.)\n");
+    printf("See: docs/UDP_TELEMETRY_OUTPUT_PROTOCOL.md\n");
 }
 
 /*============================================================================

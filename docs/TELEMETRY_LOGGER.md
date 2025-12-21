@@ -21,15 +21,22 @@ Right-click the system tray icon to:
 ## Usage
 
 ```
-telem_logger.exe [options]
+Phoenix SDR Telemetry Logger v0.8.11-beta
+Usage: telem_logger.exe [options]
 
 Options:
   -p <port>       UDP port to listen on (default: 3005)
-  -o <dir>        Output directory for CSV files (default: current directory)
+  -o <dir>        Output directory for CSV files (default: current dir)
   -c <channels>   Comma-separated list of channels to log (default: all)
+                  Available: CHAN,TICK,MARK,CARR,SYNC,SUBC,T500,T600,BCDS
   -v              Verbose mode (print messages to console)
-  --no-tray       Disable system tray icon (console only mode)
-  -h              Show help
+  --no-tray       Disable system tray icon (console only mode)  [Windows only]
+  -h              Show this help
+
+Examples:
+  telem_logger.exe                          # Log all channels to current directory
+  telem_logger.exe -o logs/ -v              # Log to logs/ with console output
+  telem_logger.exe -c TICK,MARK,SYNC        # Log only tick, marker, and sync channels
 ```
 
 ## Examples

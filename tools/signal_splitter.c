@@ -872,16 +872,20 @@ static void print_usage(const char *prog) {
     printf("Signal Splitter - Split 2 MHz I/Q into detector and display streams\n\n");
     printf("Usage: %s [options]\n\n", prog);
     printf("Options:\n");
-    printf("  --sdr-host HOST      SDR server hostname (default: %s)\n", DEFAULT_SDR_HOST);
-    printf("  --sdr-port PORT      SDR server port (default: %d)\n", DEFAULT_SDR_PORT);
-    printf("  --relay-host HOST    Relay server hostname (required)\n");
-    printf("  --relay-det PORT     Relay detector port (default: %d)\n", DEFAULT_RELAY_PORT_DET);
-    printf("  --relay-disp PORT    Relay display port (default: %d)\n", DEFAULT_RELAY_PORT_DISP);
-    printf("  -h, --help           Show this help\n\n");
+    printf("  --sdr-host HOST        SDR server hostname (default: %s)\n", DEFAULT_SDR_HOST);
+    printf("  --sdr-port PORT        SDR I/Q port (default: %d)\n", DEFAULT_SDR_PORT);
+    printf("  --sdr-ctrl-port PORT   SDR control port (default: %d)\n", DEFAULT_SDR_CTRL_PORT);
+    printf("  --relay-host HOST      Relay server hostname (required)\n");
+    printf("  --relay-det PORT       Relay detector port (default: %d)\n", DEFAULT_RELAY_PORT_DET);
+    printf("  --relay-disp PORT      Relay display port (default: %d)\n", DEFAULT_RELAY_PORT_DISP);
+    printf("  --relay-ctrl PORT      Relay control port (default: %d)\n", DEFAULT_RELAY_CTRL_PORT);
+    printf("  -h, --help             Show this help\n\n");
     printf("Streams:\n");
     printf("  Input:  SDR server @ HOST:PORT (2 MHz I/Q, int16)\n");
     printf("  Output: Detector @ HOST:%d (50 kHz I/Q, float32)\n", DEFAULT_RELAY_PORT_DET);
-    printf("  Output: Display @ HOST:%d (12 kHz I/Q, float32)\n\n", DEFAULT_RELAY_PORT_DISP);
+    printf("  Output: Display @ HOST:%d (12 kHz I/Q, float32)\n", DEFAULT_RELAY_PORT_DISP);
+    printf("  Relay:  Control @ HOST:%d (bidirectional text)\n\n", DEFAULT_RELAY_CTRL_PORT);
+    printf("See: docs/SIGNAL_SPLITTER.md\n");
 }
 
 int main(int argc, char *argv[]) {

@@ -1,5 +1,5 @@
 # Phoenix SDR - CI Build Script
-# Simplified build for GitHub Actions environment
+# Complete build for GitHub Actions environment - ALL TOOLS
 
 param(
     [switch]$Release
@@ -21,6 +21,7 @@ $SDL2Lib = "$PSScriptRoot\..\lib"
 
 # SDRplay stub for CI
 $SDRplayInclude = "$PSScriptRoot\..\include\sdrplay"
+$SDRplayLib = "$PSScriptRoot\..\lib"  # Stub location
 
 # Compiler from PATH (set up by setup-mingw action)
 $CC = "gcc"
@@ -30,86 +31,14 @@ function Write-Status($msg) {
     Write-Host $msg
 }
 
-function Update-VersionHeader {
-    # Read current version.h
-    $content = Get-Content $VersionFile -Raw
-    
-    # Extract current values
-    $major = 0; $minor = 2; $patch = 5; $build = 0
-    if ($content -match 'PHOENIX_VERSION_MAJOR\s+(\d+)') { $major = [int]$matches[1] }
-    if ($content -match 'PHOENIX_VERSION_MINOR\s+(\d+)') { $minor = [int]$matches[1] }
-    if ($content -match 'PHOENIX_VERSION_PATCH\s+(\d+)') { $patch = [int]$matches[1] }
-    if ($content -match 'PHOENIX_VERSION_BUILD\s+(\d+)') { $build = [int]$matches[1] }
-    
-    # Increment build number
-    $build++
-    
-    # Get git info
-    $commit = "unknown"
-    try {
-        $commit = (git rev-parse --short HEAD 2>$null).Trim()
-    } catch { }
-    
-    $dirty = $false
-    try {
-        $status = git status --porcelain 2>$null
-        if ($status) { $dirty = $true }
-    } catch { }
-    
-    $dirtyFlag = if ($dirty) { "-dirty" } else { "" }
-    $versionString = "$major.$minor.$patch"
-    $fullVersion = "$versionString+$build.$commit$dirtyFlag"
-    
-    $newContent = @"
-/**
- * @file version.h
- * @brief Phoenix SDR version information
- * 
- * Version format: MAJOR.MINOR.PATCH+BUILD.COMMIT[-dirty]
- * Example: 0.2.5+9.abc1234 or 0.2.5+9.abc1234-dirty
- * 
- * Build number increments every build. Commit hash from git.
- */
-
-#ifndef PHOENIX_VERSION_H
-#define PHOENIX_VERSION_H
-
-#define PHOENIX_VERSION_MAJOR   $major
-#define PHOENIX_VERSION_MINOR   $minor
-#define PHOENIX_VERSION_PATCH   $patch
-#define PHOENIX_VERSION_BUILD   $build
-#define PHOENIX_VERSION_STRING  "$versionString"
-#define PHOENIX_VERSION_FULL    "$fullVersion"
-#define PHOENIX_GIT_COMMIT      "$commit"
-#define PHOENIX_GIT_DIRTY       $($dirty.ToString().ToLower())
-
-/* Build timestamp - set by compiler */
-#define PHOENIX_BUILD_DATE      __DATE__
-#define PHOENIX_BUILD_TIME      __TIME__
-
-#include <stdio.h>
-
-static inline void print_version(const char *tool_name) {
-    printf("%s v%s (built %s %s)\n", 
-           tool_name, PHOENIX_VERSION_FULL, 
-           PHOENIX_BUILD_DATE, PHOENIX_BUILD_TIME);
-}
-
-#endif /* PHOENIX_VERSION_H */
-"@
-    
-    Set-Content -Path $VersionFile -Value $newContent -NoNewline
-    Write-Status "Version: $fullVersion"
-}
-
 function Build-Object($source, $extraFlags) {
     $objName = [System.IO.Path]::GetFileNameWithoutExtension($source)
     $objPath = "$BuildDir\$objName.o"
 
     Write-Status "Compiling $source..."
-    $cmd = "$CC $($CFLAGS -join ' ') $($extraFlags -join ' ') -c -o `"$objPath`" `"$source`""
-    Write-Host $cmd -ForegroundColor DarkGray
-    Invoke-Expression $cmd
+    $allFlags = $CFLAGS + $extraFlags
+    $cmd = @($CC) + $allFlags + @("-c", "-o", "`"$objPath`"", "`"$source`"")
+    & $cmd[0] $cmd[1..($cmd.Length-1)]
     if ($LASTEXITCODE -ne 0) { throw "Compilation failed for $source" }
     return $objPath
 }
@@ -117,11 +46,8 @@ function Build-Object($source, $extraFlags) {
 try {
     Push-Location (Join-Path $PSScriptRoot "..")
     
-    Write-Status "CI Build starting..."
+    Write-Status "CI Build starting (FULL SUITE)..."
     Write-Status "GCC version: $(gcc --version | Select-Object -First 1)"
-
-    # Generate version.h (not in repo, auto-generated)
-    Update-VersionHeader
 
     # Set compiler flags
     $CFLAGS = @(
@@ -140,15 +66,34 @@ try {
         Write-Status "Debug build"
     }
 
+    $LDFLAGS = @(
+        "-L`"$SDRplayLib`"",
+        "-lsdrplay_api",
+        "-lm",
+        "-lwinmm"
+    )
+
     # Create directories
     if (-not (Test-Path $BuildDir)) { New-Item -ItemType Directory -Path $BuildDir | Out-Null }
     if (-not (Test-Path $BinDir)) { New-Item -ItemType Directory -Path $BinDir | Out-Null }
 
-    # Build kiss_fft (shared)
-    $kissObj = Build-Object "src\kiss_fft.c" @()
+    #==========================================================================
+    # 1. simple_am_receiver.exe
+    #==========================================================================
+    Write-Status "Building simple_am_receiver..."
+    $simpleAmObj = Build-Object "tools\simple_am_receiver.c" @()
 
-    # Build waterfall (SDL2 tool) with all detector modules
+    Write-Status "Linking simple_am_receiver.exe..."
+    $cmd = @($CC, "-o", "`"$BinDir\simple_am_receiver.exe`"", "`"$simpleAmObj`"") + $LDFLAGS
+    & $cmd[0] $cmd[1..($cmd.Length-1)]
+    if ($LASTEXITCODE -ne 0) { throw "Linking failed for simple_am_receiver" }
+    Write-Status "Built: $BinDir\simple_am_receiver.exe"
+
+    #==========================================================================
+    # 2. waterfall.exe (22 object files)
+    #==========================================================================
     Write-Status "Building waterfall..."
+    $kissObj = Build-Object "src\kiss_fft.c" @()
     $wwvClockObj = Build-Object "tools\wwv_clock.c" @()
     $channelFiltersObj = Build-Object "tools\channel_filters.c" @()
     $tickCombFilterObj = Build-Object "tools\tick_comb_filter.c" @()
@@ -196,24 +141,91 @@ try {
         "`"$waterfallTelemObj`"",
         "`"$kissObj`""
     )
-    $cmd = "$CC -o `"$BinDir\waterfall.exe`" $($waterfallObjs -join ' ') -L`"$SDL2Lib`" -lmingw32 -lSDL2main -lSDL2 -lm -lws2_32 -lwinmm"
-    Write-Host $cmd -ForegroundColor DarkGray
-    Invoke-Expression $cmd
+    $waterfallLdflags = @("-L`"$SDL2Lib`"", "-lmingw32", "-lSDL2main", "-lSDL2", "-lm", "-lws2_32", "-lwinmm")
+    $cmd = @($CC, "-o", "`"$BinDir\waterfall.exe`"") + $waterfallObjs + $waterfallLdflags
+    & $cmd[0] $cmd[1..($cmd.Length-1)]
     if ($LASTEXITCODE -ne 0) { throw "Linking failed for waterfall" }
     Write-Status "Built: $BinDir\waterfall.exe"
 
-    # Build DSP tests
-    Write-Status "Building test_dsp..."
-    $testDspObj = Build-Object "test\test_dsp.c" @()
-    
-    Write-Status "Linking test_test_dsp.exe..."
-    $cmd = "$CC -o `"$BinDir\test_test_dsp.exe`" `"$testDspObj`" -lm"
-    Write-Host $cmd -ForegroundColor DarkGray
-    Invoke-Expression $cmd
-    if ($LASTEXITCODE -ne 0) { throw "Linking failed for test_dsp" }
-    Write-Status "Built: $BinDir\test_test_dsp.exe"
+    #==========================================================================
+    # 3. wormhole.exe
+    #==========================================================================
+    Write-Status "Building wormhole..."
+    $wormholeObj = Build-Object "tools\wormhole.c" @("-I`"$SDL2Include`"")
 
-    Write-Status "CI Build complete."
+    Write-Status "Linking wormhole.exe..."
+    $wormholeLdflags = @("-L`"$SDL2Lib`"", "-lmingw32", "-lSDL2main", "-lSDL2", "-lm")
+    $cmd = @($CC, "-o", "`"$BinDir\wormhole.exe`"", "`"$wormholeObj`"") + $wormholeLdflags
+    & $cmd[0] $cmd[1..($cmd.Length-1)]
+    if ($LASTEXITCODE -ne 0) { throw "Linking failed for wormhole" }
+    Write-Status "Built: $BinDir\wormhole.exe"
+
+    #==========================================================================
+    # 4. signal_splitter.exe
+    #==========================================================================
+    Write-Status "Building signal_splitter..."
+    $signalSplitterObj = Build-Object "tools\signal_splitter.c" @()
+
+    Write-Status "Linking signal_splitter.exe..."
+    $cmd = @($CC, "-o", "`"$BinDir\signal_splitter.exe`"", "`"$signalSplitterObj`"", "`"$waterfallDspObj`"", "-lm", "-lws2_32")
+    & $cmd[0] $cmd[1..($cmd.Length-1)]
+    if ($LASTEXITCODE -ne 0) { throw "Linking failed for signal_splitter" }
+    Write-Status "Built: $BinDir\signal_splitter.exe"
+
+    #==========================================================================
+    # 5. test_tcp_commands.exe
+    #==========================================================================
+    Write-Status "Building test_tcp_commands..."
+    $tcpCmdObj = Build-Object "src\tcp_commands.c" @()
+    $testTcpObj = Build-Object "test\test_tcp_commands.c" @()
+    $sdrStubsObj = Build-Object "test\sdr_stubs.c" @()
+
+    Write-Status "Linking test_tcp_commands.exe..."
+    $cmd = @($CC, "-o", "`"$BinDir\test_tcp_commands.exe`"", "`"$testTcpObj`"", "`"$tcpCmdObj`"", "`"$sdrStubsObj`"", "-lm")
+    & $cmd[0] $cmd[1..($cmd.Length-1)]
+    if ($LASTEXITCODE -ne 0) { throw "Linking failed for test_tcp_commands" }
+    Write-Status "Built: $BinDir\test_tcp_commands.exe"
+
+    #==========================================================================
+    # 6. test_telemetry.exe
+    #==========================================================================
+    Write-Status "Building test_telemetry..."
+    $testTelemObj = Build-Object "test\test_telemetry.c" @()
+
+    Write-Status "Linking test_telemetry.exe..."
+    $cmd = @($CC, "-o", "`"$BinDir\test_telemetry.exe`"", "`"$testTelemObj`"", "`"$waterfallTelemObj`"", "-lws2_32", "-lm")
+    & $cmd[0] $cmd[1..($cmd.Length-1)]
+    if ($LASTEXITCODE -ne 0) { throw "Linking failed for test_telemetry" }
+    Write-Status "Built: $BinDir\test_telemetry.exe"
+
+    #==========================================================================
+    # 7. sdr_server.exe
+    #==========================================================================
+    Write-Status "Building sdr_server..."
+    $sdrStreamObj = Build-Object "src\sdr_stream.c" @()
+    $sdrDeviceObj = Build-Object "src\sdr_device.c" @()
+    $sdrServerObj = Build-Object "tools\sdr_server.c" @()
+
+    Write-Status "Linking sdr_server.exe..."
+    $serverLdflags = @("-L`"$SDRplayLib`"", "-lsdrplay_api", "-lws2_32", "-lm", "-lwinmm")
+    $cmd = @($CC, "-o", "`"$BinDir\sdr_server.exe`"", "`"$sdrServerObj`"", "`"$tcpCmdObj`"", "`"$sdrStreamObj`"", "`"$sdrDeviceObj`"") + $serverLdflags
+    & $cmd[0] $cmd[1..($cmd.Length-1)]
+    if ($LASTEXITCODE -ne 0) { throw "Linking failed for sdr_server" }
+    Write-Status "Built: $BinDir\sdr_server.exe"
+
+    #==========================================================================
+    # 8. telem_logger.exe
+    #==========================================================================
+    Write-Status "Building telem_logger..."
+    $telemLoggerObj = Build-Object "tools\telem_logger.c" @()
+
+    Write-Status "Linking telem_logger.exe..."
+    $cmd = @($CC, "-o", "`"$BinDir\telem_logger.exe`"", "`"$telemLoggerObj`"", "-lws2_32")
+    & $cmd[0] $cmd[1..($cmd.Length-1)]
+    if ($LASTEXITCODE -ne 0) { throw "Linking failed for telem_logger" }
+    Write-Status "Built: $BinDir\telem_logger.exe"
+
+    Write-Status "CI Build complete (8 tools)."
 }
 catch {
     Write-Host "BUILD FAILED: $_" -ForegroundColor Red
